@@ -77,14 +77,64 @@ def parse_candump_log(filepath: str) -> pd.DataFrame:
     return df
 
 
+def parse_pcap(filepath: str) -> pd.DataFrame:
+    """Parse .pcap / .pcapng files containing CAN frames (Linux SocketCAN linktype 227)."""
+    import dpkt
+
+    rows = []
+    opener = dpkt.pcapng.Reader if filepath.lower().endswith(".pcapng") else dpkt.pcap.Reader
+
+    with open(filepath, "rb") as f:
+        try:
+            reader = opener(f)
+        except Exception:
+            # pcapng reader may fail on plain pcap — fall back
+            f.seek(0)
+            reader = dpkt.pcap.Reader(f)
+
+        for ts, buf in reader:
+            # SocketCAN linktype = 227 (DLT_CAN_SOCKETCAN)
+            # Frame layout: 4-byte CAN ID (LE) | 1-byte DLC | 3-byte pad | 8-byte data
+            if len(buf) < 8:
+                continue
+            try:
+                import struct
+                can_id_raw, dlc = struct.unpack_from("<IB", buf, 0)
+                # Mask out flags: bit 31 = EFF (extended), bit 30 = RTR, bit 29 = ERR
+                extended = bool(can_id_raw & 0x80000000)
+                can_id   = can_id_raw & 0x1FFFFFFF
+                dlc      = min(dlc, 8)
+                data     = buf[8: 8 + dlc]
+                byte_vals = list(data) + [np.nan] * (8 - len(data))
+                rows.append({
+                    "Timestamp": float(ts),
+                    "ID":        format(can_id, "03X"),
+                    "Bus":       0,
+                    "DLC":       dlc,
+                    "Extended":  extended,
+                    **{f"B{i}": byte_vals[i] for i in range(8)},
+                })
+            except Exception:
+                continue
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    df = df.sort_values("Timestamp").reset_index(drop=True)
+    df["Delta"] = _compute_delta(df)
+    return df
+
+
 def parse_log_file(filepath: str) -> pd.DataFrame:
-    """Auto-detect format and parse. Supports .csv, .log, .rlog, .qlog."""
+    """Auto-detect format and parse. Supports .csv, .log, .rlog, .qlog, .pcap, .pcapng."""
     path = Path(filepath)
     suffix = path.suffix.lower()
     try:
         if suffix in (".rlog", ".qlog"):
             from core.openpilot_parser import parse_rlog
             return parse_rlog(filepath)
+        if suffix in (".pcap", ".pcapng"):
+            return parse_pcap(filepath)
         if suffix == ".log":
             return parse_candump_log(filepath)
         # Try SavvyCAN first

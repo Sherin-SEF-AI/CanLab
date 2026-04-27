@@ -416,7 +416,8 @@ class MainWindow(QMainWindow):
 
     def _open_log(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open CAN Log", "", "Log Files (*.csv *.log);;All Files (*)"
+            self, "Open CAN Log", "",
+            "Log Files (*.csv *.log *.pcap *.pcapng);;pcap (*.pcap *.pcapng);;All Files (*)"
         )
         if path:
             self._load_log_file(path)
