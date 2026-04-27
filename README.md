@@ -10,6 +10,8 @@
 > **The most complete open-source CAN bus reverse engineering platform ever built.**
 > 14 analysis tabs. Dual AI engines. Real-time ML signal detection. OBD-II live gauges. AUTOSAR ARXML export. All in a dark-themed desktop GUI.
 
+![CanLab Demo](docs/demo.gif)
+
 ---
 
 ## What Is CanLab?
