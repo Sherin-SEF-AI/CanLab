@@ -3,11 +3,11 @@
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python)](https://www.python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green?style=flat-square)](https://pypi.org/project/PyQt6/)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
-[![Release](https://img.shields.io/badge/Release-v1.1.0-brightgreen?style=flat-square)](https://github.com/Sherin-SEF-AI/CanLab/releases/tag/v1.1.0)
+[![Release](https://img.shields.io/badge/Release-v1.2.0-brightgreen?style=flat-square)](https://github.com/Sherin-SEF-AI/CanLab/releases/tag/v1.2.0)
 [![Groq](https://img.shields.io/badge/AI-Groq%20LLaMA-purple?style=flat-square)](https://groq.com)
 [![CAN Bus](https://img.shields.io/badge/Protocol-CAN%20%7C%20CAN%20FD%20%7C%20ISO--TP%20%7C%20J1939-red?style=flat-square)](https://en.wikipedia.org/wiki/CAN_bus)
 
-**14-module desktop CAN RE workstation with offline ML signal classification and dual AI engines.**
+**15-module desktop CAN RE workstation with offline ML signal classification, dual AI engines, and MitM gateway.**
 
 ![CanLab Demo](docs/demo.gif)
 
@@ -15,9 +15,9 @@
 
 > **SAFETY WARNING**
 >
-> The INJECTION tab contains a CAN fuzzer, signal injector, and replay engine.
+> The INJECTION and GATEWAY tabs contain a CAN fuzzer, signal injector, replay engine, and bidirectional bus bridge.
 > **These features must only be used on isolated bench setups** — benchtop ECUs, `vcan0`, or dedicated lab hardware.
-> Injecting frames on a live vehicle CAN bus can interfere with braking, steering, and airbag systems.
+> Injecting or forwarding frames on a live vehicle CAN bus can interfere with braking, steering, and airbag systems.
 > A safety disclaimer modal appears on first launch and must be accepted before the application starts.
 
 ---
@@ -34,6 +34,22 @@ Specifically:
 - **Counter and checksum auto-detection** — one button runs 9 checksum algorithms across all IDs with a 70/30 train/validation split and reports confidence scores.
 - **AUTOSAR round-trip** — import `.arxml`, edit signals visually, export back to AUTOSAR 4.3, Vector CANdb++, openpilot DBC, and Wireshark Lua dissector from the same UI.
 - **OBD-II live gauges** — 26-PID polling dashboard with auto-discover (Mode 01 PID 0x00 bitmask), no ELM327 script needed.
+- **MitM/Gateway** — bridge two CAN buses with ordered Pass/Block/Modify rules, byte-level rewrite, and live frame log.
+- **Video-to-Log sync** — load a dashcam or bench recording and scrub CAN signals in sync with the video.
+
+---
+
+## What's New in v1.2.0
+
+| Feature | Details |
+|---|---|
+| **GATEWAY tab** | Bidirectional CAN MitM bridge. Two independent buses, ordered filter rules (Pass/Block/Modify), byte rewrite, ID rewrite, live frame log |
+| **Video-to-Log sync** | TIMELINE tab now has a VIDEO SYNC sub-tab — load any video, click a signal spike to seek, scrub to move the signal playhead |
+| **pcap/pcapng import** | Load Wireshark captures directly (SocketCAN linktype 227 via dpkt) |
+| **Replay v2** | Loop checkbox, scrubber slider, 29-bit extended ID support, clean thread shutdown |
+| **ARXML round-trip** | DBC Builder can import and export AUTOSAR 4.3 System Template `.arxml` |
+| **CANdb++ export** | Exports Vector CANdb++ `.dbc` with `BA_DEF_` / `BA_` attribute blocks |
+| **Correlation heatmap fix** | DASHBOARD heatmap switched to matplotlib plasma colormap (was invisible on dark theme) |
 
 ---
 
@@ -41,10 +57,10 @@ Specifically:
 
 | Platform | File | Size |
 |---|---|---|
-| Linux x86_64 | [CanLab-1.1.0-linux-x86_64.tar.gz](https://github.com/Sherin-SEF-AI/CanLab/releases/download/v1.1.0/CanLab-1.1.0-linux-x86_64.tar.gz) | 184 MB |
+| Linux x86_64 | [CanLab-1.2.0-linux-x86_64.tar.gz](https://github.com/Sherin-SEF-AI/CanLab/releases/download/v1.2.0/CanLab-1.2.0-linux-x86_64.tar.gz) | ~190 MB |
 
 ```bash
-tar -xzf CanLab-1.1.0-linux-x86_64.tar.gz
+tar -xzf CanLab-1.2.0-linux-x86_64.tar.gz
 cd CanLab/
 ./CanLab
 ```
@@ -82,7 +98,7 @@ python3 main.py
 
 ---
 
-## What It Does — 14 Tabs
+## What It Does — 15 Tabs
 
 | # | Tab | What it does |
 |---|---|---|
@@ -90,16 +106,17 @@ python3 main.py
 | 2 | **SIGNALS** | DBC-decoded signal table — physical value, unit, min/max, entropy, suspected type. |
 | 3 | **PLOT** | Multi-signal time series. Per-byte traces, mouse-wheel zoom, live update. |
 | 4 | **AI ENGINE** | Send any ID to Groq LLaMA or Claude AI. ML context auto-injected. NL query across full dataset. Persistent memory across sessions. |
-| 5 | **DBC BUILDER** | Visual signal editor. Export: DBC, openpilot DBC, CANdb++, ARXML, Wireshark Lua, Python, C. |
+| 5 | **DBC BUILDER** | Visual signal editor. Export: DBC, openpilot DBC, CANdb++, ARXML, Wireshark Lua. Import: DBC, ARXML, CAN matrix. |
 | 6 | **CODE GEN** | Auto-generate Python or C parsing code from DBC definitions. |
 | 7 | **INTELLIGENCE** | Cross-ID Pearson correlation. Lag sweep. Cosine similarity embedding search. |
-| 8 | **INJECTION** | Signal inject, CAN fuzzer (random/sequential/mutation), trigger rules, replay with scrubber + loop. |
+| 8 | **INJECTION** | Signal inject, CAN fuzzer (random/sequential/mutation), trigger rules, replay with loop + scrubber. |
 | 9 | **DIAGNOSTICS** | UDS deep scan, ISO-TP sessions, J1939 PGN decoder, OBD-II Mode 01, bus health monitor. |
-| 10 | **DASHBOARD** | Animated half-arc gauges for any DBC-decoded signal. |
+| 10 | **DASHBOARD** | Correlation heatmap (matplotlib plasma), message timeline, physical overlay gauges. |
 | 11 | **AUTO-RE** | One-click counter/checksum detection across all IDs. 9 algorithms, confidence scoring. Entropy boundaries. |
-| 12 | **TIMELINE** | Scrubable multi-ID event timeline with frame density and annotation overlays. |
+| 12 | **TIMELINE** | Scrubable multi-ID event timeline + VIDEO SYNC sub-tab (dashcam/bench video ↔ signal playhead). |
 | 13 | **OBD-II** | 26-PID live gauge grid. Auto-discovers supported PIDs. Configurable polling rate. |
 | 14 | **ML INTEL** | Byte role classification, anomaly detection, change-point detection, signal embedding search. |
+| 15 | **GATEWAY** | Bidirectional CAN MitM bridge. Two independent buses, ordered Pass/Block/Modify rules, byte + ID rewrite, live log. |
 
 ---
 
@@ -121,7 +138,7 @@ python3 main.py
 ![OBD-II](docs/screenshots/13_obd_ii.png)
 
 <details>
-<summary>All 14 tab screenshots</summary>
+<summary>All tab screenshots</summary>
 
 ![SIGNALS](docs/screenshots/02_signals.png)
 ![PLOT](docs/screenshots/03_plot.png)
@@ -158,6 +175,7 @@ python3 main.py
 | SavvyCAN CSV | Default export from SavvyCAN |
 | candump log | `candump -l` output |
 | openpilot rlog | `.rlog` / `.bz2` via openpilot `cereal` |
+| pcap / pcapng | Wireshark captures with SocketCAN linktype 227 (via dpkt) |
 | CAN FD | Up to 64-byte payloads |
 
 ## Supported Hardware (via python-can)
@@ -218,12 +236,13 @@ canvasre/
 ├── core/                   Pure-logic modules (no UI, fully testable)
 │   ├── ai_client.py        Groq + Anthropic streaming workers
 │   ├── dbc_manager.py      DBC string builder, cantools decode, ARXML round-trip
-│   ├── log_parser.py       SavvyCAN CSV, candump, rlog parsers
+│   ├── log_parser.py       SavvyCAN CSV, candump, rlog, pcap/pcapng parsers
 │   ├── signal_classifier.py  Byte role classifier
 │   ├── checksum_guesser.py   9-algorithm checksum reverser
 │   ├── correlation_engine.py Pearson cross-ID correlation
 │   ├── anomaly_detector.py   Z-score + Isolation Forest
 │   ├── replay.py           ReplayWorker — loop, scrubber, extended ID
+│   ├── gateway.py          GatewayWorker — bidirectional MitM bridge
 │   ├── isotp.py            ISO-TP session layer
 │   ├── uds.py              UDS scanner + OBD-II Mode 01
 │   ├── j1939.py            J1939 PGN decoder
@@ -239,9 +258,9 @@ canvasre/
 
 ## Safety
 
-**Injection and fuzzing features are for isolated bench use only.**
+**Injection, fuzzing, and gateway features are for isolated bench use only.**
 
-Connecting CanLab to a vehicle's live CAN bus while using injection, replay, or fuzzing features can:
+Connecting CanLab to a vehicle's live CAN bus while using injection, replay, fuzzing, or gateway features can:
 - Disable ABS or ESC
 - Trigger unintended airbag deployment
 - Interfere with electric power steering
