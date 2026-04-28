@@ -31,6 +31,7 @@ from tabs.auto_re_tab import AutoRETab
 from tabs.timeline_tab import TimelineTab
 from tabs.obd_dashboard_tab import OBDDashboardTab
 from tabs.signal_intelligence_tab import SignalIntelligenceTab
+from tabs.gateway_tab import GatewayTab
 from ui.animations import PulsingDot, CountUpLabel
 from settings_dialog import (
     SettingsDialog, load_api_key, load_gh_token,
@@ -280,6 +281,7 @@ class MainWindow(QMainWindow):
             ("Code Gen",                 self._generate_code),
             ("Auto-discover OBD-II PIDs…", self._obd_discover),
             ("ML Signal Intelligence…",  self._open_ml_intel),
+            ("CAN Gateway…",             self._open_gateway),
         ]:
             a = QAction(text, self)
             a.triggered.connect(slot)
@@ -323,6 +325,7 @@ class MainWindow(QMainWindow):
         self.timeline_tab     = TimelineTab()
         self.obd_tab          = OBDDashboardTab()
         self.ml_intel_tab     = SignalIntelligenceTab()
+        self.gateway_tab      = GatewayTab()
 
         self.tabs.addTab(self.frames_tab,       "FRAMES")
         self.tabs.addTab(self.signals_tab,      "SIGNALS")
@@ -338,6 +341,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.timeline_tab,     "TIMELINE ★")
         self.tabs.addTab(self.obd_tab,          "OBD-II ★")
         self.tabs.addTab(self.ml_intel_tab,     "ML INTEL ★")
+        self.tabs.addTab(self.gateway_tab,      "GATEWAY ★")
 
         main_lay.addWidget(self.tabs, stretch=1)
 
@@ -741,6 +745,9 @@ class MainWindow(QMainWindow):
 
     def _open_ml_intel(self):
         self.tabs.setCurrentIndex(13)   # ML INTEL tab
+
+    def _open_gateway(self):
+        self.tabs.setCurrentIndex(14)   # GATEWAY tab
 
     def _open_settings(self):
         dlg = SettingsDialog(self)
