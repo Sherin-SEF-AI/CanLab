@@ -7,6 +7,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 from theme import COLORS, mono_font
 from core.state import get_state
@@ -126,7 +128,7 @@ class DashboardTab(QWidget):
         tabs.addTab(self._build_overlay_tab(),  "PHYSICAL OVERLAY")
         outer.addWidget(tabs)
 
-    # ── 3D Heatmap ────────────────────────────────────────────────────────────
+    # ── Correlation Heatmap ───────────────────────────────────────────────────
 
     def _build_heatmap_tab(self) -> QWidget:
         w   = QWidget()
@@ -134,19 +136,17 @@ class DashboardTab(QWidget):
         lay.setContentsMargins(6, 6, 6, 6)
 
         hdr = QHBoxLayout()
-        hdr.addWidget(QLabel("CORRELATION HEATMAP  (byte mean values per ID)", font=mono_font(9)))
+        hdr.addWidget(QLabel("CORRELATION HEATMAP  (normalised mean byte value per ID)", font=mono_font(9)))
         hdr.addStretch()
         self.btn_render_heatmap = QPushButton("Render")
         self.btn_render_heatmap.clicked.connect(self._render_heatmap)
         hdr.addWidget(self.btn_render_heatmap)
         lay.addLayout(hdr)
 
-        # 2D image heatmap using pyqtgraph ImageView
-        self.heatmap_view = pg.ImageView()
-        self.heatmap_view.ui.roiBtn.hide()
-        self.heatmap_view.ui.menuBtn.hide()
-        self.heatmap_view.getView().setBackgroundColor(COLORS["bg"])
-        lay.addWidget(self.heatmap_view)
+        self._heatmap_fig = Figure(facecolor="#0d0d0d")
+        self._heatmap_canvas = FigureCanvas(self._heatmap_fig)
+        self._heatmap_canvas.setStyleSheet("background:#0d0d0d;")
+        lay.addWidget(self._heatmap_canvas)
 
         self.lbl_heatmap_info = QLabel("")
         self.lbl_heatmap_info.setFont(mono_font(8))
@@ -161,27 +161,54 @@ class DashboardTab(QWidget):
         if not ids:
             return
 
-        # Build matrix: rows=IDs, cols=bytes, value=mean
+        # Build matrix: rows=IDs, cols=bytes, value=normalised mean
         matrix = []
         for can_id in ids:
             grp = self._state.get_frames_for_id(can_id)
             row = []
             for col in BYTE_COLS:
-                if col in grp.columns:
-                    row.append(float(grp[col].dropna().mean() if not grp[col].dropna().empty else 0))
-                else:
-                    row.append(0.0)
+                vals = grp[col].dropna() if col in grp.columns else []
+                row.append(float(vals.mean()) if len(vals) else 0.0)
             matrix.append(row)
 
-        arr = np.array(matrix, dtype=np.float32)  # (n_ids, 8)
-        # Normalize per-row for visibility
+        arr = np.array(matrix, dtype=np.float32)   # (n_ids, 8)
         row_max = arr.max(axis=1, keepdims=True)
         row_max[row_max == 0] = 1
         arr = arr / row_max
 
-        self.heatmap_view.setImage(arr.T, autoRange=True, autoLevels=True)
+        self._heatmap_fig.clear()
+        ax = self._heatmap_fig.add_subplot(111)
+        ax.set_facecolor("#0d0d0d")
+        self._heatmap_fig.patch.set_facecolor("#0d0d0d")
+
+        im = ax.imshow(arr, aspect="auto", cmap="plasma", vmin=0, vmax=1,
+                       interpolation="nearest")
+        cbar = self._heatmap_fig.colorbar(im, ax=ax)
+        cbar.ax.yaxis.set_tick_params(color="#00ff99")
+        cbar.outline.set_edgecolor("#00ff99")
+        plt_ticks = [t for t in cbar.ax.get_yticks()]
+        cbar.ax.set_yticklabels(
+            [f"{t:.1f}" for t in plt_ticks],
+            color="#00ff99", fontsize=7
+        )
+
+        ax.set_xticks(range(8))
+        ax.set_xticklabels([f"B{i}" for i in range(8)], color="#00ff99", fontsize=8)
+        ax.set_yticks(range(len(ids)))
+        ax.set_yticklabels(
+            [f"0x{i}" for i in ids],
+            color="#00ff99", fontsize=7,
+            fontfamily="monospace"
+        )
+        ax.set_xlabel("Byte", color="#00ff99", fontsize=8)
+        ax.set_ylabel("CAN ID", color="#00ff99", fontsize=8)
+        ax.tick_params(colors="#00ff99")
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#333333")
+
+        self._heatmap_canvas.draw()
         self.lbl_heatmap_info.setText(
-            f"{len(ids)} IDs × 8 bytes  |  normalized mean byte values"
+            f"{len(ids)} IDs × 8 bytes  |  plasma colormap  |  normalised per-row mean"
         )
 
     # ── Timeline ──────────────────────────────────────────────────────────────
