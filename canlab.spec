@@ -39,6 +39,7 @@ a = Analysis(
         "xml.etree.ElementTree", "json", "csv", "pathlib",
         "hashlib", "struct", "threading", "queue",
         # misc
+        "dpkt", "dpkt.pcap", "dpkt.pcapng",
         "keyring", "keyring.backends",
         "requests", "urllib3",
         "flask", "flask_cors",
