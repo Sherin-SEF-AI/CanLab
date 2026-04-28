@@ -2,7 +2,8 @@
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QProgressBar,
-    QTextEdit, QTabWidget,
+    QTextEdit, QTabWidget, QComboBox, QSpinBox, QLineEdit, QFileDialog,
+    QDoubleSpinBox,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QBrush
@@ -29,9 +30,10 @@ class DiagnosticsTab(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_obd_tab(),   "OBD-II / UDS")
-        tabs.addTab(self._build_deep_tab(),  "UDS DEEP SCAN")
+        tabs.addTab(self._build_obd_tab(),     "OBD-II / UDS")
+        tabs.addTab(self._build_deep_tab(),   "UDS DEEP SCAN")
         tabs.addTab(self._build_svc_tab(),    "UDS SERVICES")
+        tabs.addTab(self._build_secacc_tab(), "SECURITY ACCESS")
         tabs.addTab(self._build_load_tab(),   "BUS LOAD")
         tabs.addTab(self._build_health_tab(), "BUS HEALTH")
         outer.addWidget(tabs)
@@ -90,6 +92,249 @@ class DiagnosticsTab(QWidget):
         lay.addWidget(self.uds_log)
         self._state.uds_response.connect(self._on_uds_response)
         return w
+
+    # ── Security Access tab ───────────────────────────────────────────────────
+
+    def _build_secacc_tab(self) -> QWidget:
+        w   = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(6)
+
+        lay.addWidget(QLabel(
+            "UDS Security Access (service 0x27) — seed-key brute-force, "
+            "built-in algorithms, and pluggable Python scripts.",
+            font=mono_font(8),
+        ))
+
+        # ── Config ────────────────────────────────────────────────────────────
+        cfg_grp = QGroupBox("CONFIGURATION")
+        cg = QHBoxLayout(cfg_grp)
+
+        cg.addWidget(QLabel("ECU addr:", font=mono_font(8)))
+        self.sa_ecu_combo = QComboBox()
+        self.sa_ecu_combo.setFont(mono_font(8))
+        self.sa_ecu_combo.setEditable(True)
+        for addr in [f"0x{a:03X}" for a in range(0x7E0, 0x7E8)]:
+            self.sa_ecu_combo.addItem(addr)
+        cg.addWidget(self.sa_ecu_combo)
+
+        cg.addWidget(QLabel("Session:", font=mono_font(8)))
+        self.sa_session_combo = QComboBox()
+        self.sa_session_combo.setFont(mono_font(8))
+        self.sa_session_combo.addItem("Extended (0x03)", 0x03)
+        self.sa_session_combo.addItem("Programming (0x02)", 0x02)
+        self.sa_session_combo.addItem("Default (0x01)", 0x01)
+        cg.addWidget(self.sa_session_combo)
+
+        cg.addWidget(QLabel("Access level:", font=mono_font(8)))
+        self.sa_level_spin = QSpinBox()
+        self.sa_level_spin.setRange(1, 0x7F)
+        self.sa_level_spin.setSingleStep(2)
+        self.sa_level_spin.setValue(1)
+        self.sa_level_spin.setFont(mono_font(8))
+        cg.addWidget(self.sa_level_spin)
+
+        cg.addWidget(QLabel("Mode:", font=mono_font(8)))
+        self.sa_mode_combo = QComboBox()
+        self.sa_mode_combo.setFont(mono_font(8))
+        self.sa_mode_combo.addItems(["AUTO", "SCRIPT", "BRUTEFORCE"])
+        self.sa_mode_combo.currentTextChanged.connect(self._sa_on_mode_changed)
+        cg.addWidget(self.sa_mode_combo)
+
+        lay.addWidget(cfg_grp)
+
+        # ── Script / expression / brute-force options ─────────────────────────
+        opt_grp = QGroupBox("ALGORITHM OPTIONS")
+        og = QVBoxLayout(opt_grp)
+
+        script_row = QHBoxLayout()
+        script_row.addWidget(QLabel("Script (.py):", font=mono_font(8)))
+        self.sa_script_edit = QLineEdit()
+        self.sa_script_edit.setFont(mono_font(8))
+        self.sa_script_edit.setPlaceholderText("path/to/compute_key.py  (define compute_key(seed, level) -> bytes)")
+        script_row.addWidget(self.sa_script_edit, 1)
+        btn_browse = QPushButton("Browse…")
+        btn_browse.setFont(mono_font(8))
+        btn_browse.clicked.connect(self._sa_browse_script)
+        script_row.addWidget(btn_browse)
+        og.addLayout(script_row)
+
+        expr_row = QHBoxLayout()
+        expr_row.addWidget(QLabel("Custom expression:", font=mono_font(8)))
+        self.sa_expr_edit = QLineEdit()
+        self.sa_expr_edit.setFont(mono_font(8))
+        self.sa_expr_edit.setPlaceholderText("e.g.  _to_bytes(_to_int(seed) ^ 0xDEAD, len(seed))")
+        expr_row.addWidget(self.sa_expr_edit, 1)
+        og.addLayout(expr_row)
+
+        bf_row = QHBoxLayout()
+        bf_row.addWidget(QLabel("BF key length (bytes):", font=mono_font(8)))
+        self.sa_bf_len_spin = QSpinBox()
+        self.sa_bf_len_spin.setRange(1, 2)
+        self.sa_bf_len_spin.setValue(2)
+        self.sa_bf_len_spin.setFont(mono_font(8))
+        bf_row.addWidget(self.sa_bf_len_spin)
+        bf_row.addWidget(QLabel("BF delay (ms):", font=mono_font(8)))
+        self.sa_bf_delay_spin = QSpinBox()
+        self.sa_bf_delay_spin.setRange(10, 5000)
+        self.sa_bf_delay_spin.setValue(50)
+        self.sa_bf_delay_spin.setFont(mono_font(8))
+        bf_row.addWidget(self.sa_bf_delay_spin)
+        bf_row.addStretch()
+        og.addLayout(bf_row)
+        lay.addWidget(opt_grp)
+
+        # ── Brute-force progress ──────────────────────────────────────────────
+        self.sa_bf_progress = QProgressBar()
+        self.sa_bf_progress.setValue(0)
+        self.sa_bf_progress.setVisible(False)
+        lay.addWidget(self.sa_bf_progress)
+
+        # ── Controls ──────────────────────────────────────────────────────────
+        ctl = QHBoxLayout()
+        self.sa_btn_start = QPushButton("▶  Start")
+        self.sa_btn_start.setObjectName("btn_green")
+        self.sa_btn_start.clicked.connect(self._sa_start)
+        self.sa_btn_stop = QPushButton("■  Stop")
+        self.sa_btn_stop.clicked.connect(self._sa_stop)
+        self.sa_btn_stop.setEnabled(False)
+        self.sa_btn_history = QPushButton("Session History…")
+        self.sa_btn_history.clicked.connect(self._sa_show_history)
+        for b in [self.sa_btn_start, self.sa_btn_stop, self.sa_btn_history]:
+            ctl.addWidget(b)
+        ctl.addStretch()
+        lay.addLayout(ctl)
+
+        # ── Result banner ─────────────────────────────────────────────────────
+        self.sa_lbl_result = QLabel("")
+        self.sa_lbl_result.setFont(mono_font(10))
+        lay.addWidget(self.sa_lbl_result)
+
+        # ── Log ───────────────────────────────────────────────────────────────
+        lay.addWidget(QLabel("LOG", font=mono_font(8)))
+        self.sa_log = QTextEdit()
+        self.sa_log.setReadOnly(True)
+        self.sa_log.setFont(mono_font(8))
+        lay.addWidget(self.sa_log)
+
+        self._sa_worker = None
+        return w
+
+    def _sa_on_mode_changed(self, mode: str):
+        self.sa_bf_progress.setVisible(mode == "BRUTEFORCE")
+
+    def _sa_browse_script(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select seed-key script", "", "Python (*.py);;All (*)"
+        )
+        if path:
+            self.sa_script_edit.setText(path)
+
+    def _sa_start(self):
+        bus = self._state.can_bus
+        if bus is None:
+            self.sa_log.append("ERROR: CAN bus not connected.")
+            return
+        try:
+            ecu_text = self.sa_ecu_combo.currentText().strip()
+            ecu_addr = int(ecu_text, 16)
+        except ValueError:
+            self.sa_log.append("ERROR: invalid ECU address.")
+            return
+
+        from core.security_access import SecurityAccessWorker
+        self._sa_worker = SecurityAccessWorker(
+            bus          = bus,
+            ecu_addr     = ecu_addr,
+            session_type = self.sa_session_combo.currentData(),
+            access_level = self.sa_level_spin.value(),
+            mode         = self.sa_mode_combo.currentText(),
+            script_path  = self.sa_script_edit.text().strip(),
+            custom_expr  = self.sa_expr_edit.text().strip(),
+            bf_key_len   = self.sa_bf_len_spin.value(),
+            bf_delay_ms  = self.sa_bf_delay_spin.value(),
+        )
+        self._sa_worker.step_done.connect(lambda s: self.sa_log.append(s))
+        self._sa_worker.seed_received.connect(self._sa_on_seed)
+        self._sa_worker.key_accepted.connect(self._sa_on_accepted)
+        self._sa_worker.key_rejected.connect(self._sa_on_rejected)
+        self._sa_worker.lockout_detected.connect(self._sa_on_lockout)
+        self._sa_worker.bruteforce_progress.connect(self._sa_on_bf_progress)
+        self._sa_worker.error.connect(lambda e: self.sa_log.append(f"ERROR: {e}"))
+        self._sa_worker.finished.connect(self._sa_finished)
+
+        self.sa_lbl_result.setText("")
+        self.sa_log.clear()
+        self.sa_bf_progress.setValue(0)
+        self.sa_btn_start.setEnabled(False)
+        self.sa_btn_stop.setEnabled(True)
+        self._sa_worker.start()
+
+    def _sa_stop(self):
+        if self._sa_worker:
+            self._sa_worker.stop()
+            self._sa_worker = None
+        self.sa_btn_start.setEnabled(True)
+        self.sa_btn_stop.setEnabled(False)
+
+    def _sa_finished(self):
+        self.sa_btn_start.setEnabled(True)
+        self.sa_btn_stop.setEnabled(False)
+
+    def _sa_on_seed(self, ecu: int, level: int, seed: bytes):
+        amber = COLORS["amber"]
+        self.sa_log.append(
+            f"<b>Seed received</b>  ECU=0x{ecu:03X}  level={level}  "
+            f"seed=<span style='color:{amber}'>{seed.hex().upper()}</span>"
+        )
+
+    def _sa_on_accepted(self, ecu: int, level: int, seed: bytes, key: bytes, algo: str):
+        c = COLORS["green"]
+        self.sa_lbl_result.setText(
+            f"✓  KEY ACCEPTED   seed={seed.hex().upper()}   "
+            f"key={key.hex().upper()}   algo={algo}"
+        )
+        self.sa_lbl_result.setStyleSheet(f"color:{c}; font-weight:bold;")
+        self.sa_log.append(
+            f"<span style='color:{c}'><b>✓ KEY ACCEPTED</b>  "
+            f"algo={algo}  key={key.hex().upper()}</span>"
+        )
+
+    def _sa_on_rejected(self, ecu: int, level: int, nrc: int, desc: str):
+        c = COLORS["dim"]
+        self.sa_log.append(
+            f"<span style='color:{c}'>✗ key rejected  NRC=0x{nrc:02X} ({desc})</span>"
+        )
+
+    def _sa_on_lockout(self, ecu: int):
+        c = COLORS["error"]
+        self.sa_lbl_result.setText(f"⚠  LOCKOUT DETECTED on 0x{ecu:03X} — stop injecting")
+        self.sa_lbl_result.setStyleSheet(f"color:{c}; font-weight:bold;")
+        self.sa_log.append(f"<span style='color:{c}'><b>LOCKOUT 0x{ecu:03X}</b></span>")
+
+    def _sa_on_bf_progress(self, current: int, total: int):
+        self.sa_bf_progress.setMaximum(total)
+        self.sa_bf_progress.setValue(current)
+
+    def _sa_show_history(self):
+        from core.security_access import load_history
+        history = load_history()
+        if not history:
+            self.sa_log.append("No session history yet.")
+            return
+        self.sa_log.append(f"=== Session history ({len(history)} entries) ===")
+        for e in history[-20:]:
+            ts    = e.get("timestamp", "?")[:19]
+            ecu   = e.get("ecu_addr", "?")
+            level = e.get("level", "?")
+            algo  = e.get("algorithm", "?")
+            seed  = e.get("seed_hex", "?")
+            key   = e.get("key_hex", "?")
+            self.sa_log.append(
+                f"  {ts}  {ecu}  lvl={level}  {algo}  "
+                f"seed={seed}  key={key}"
+            )
 
     # ── Bus Load tab ──────────────────────────────────────────────────────────
 
