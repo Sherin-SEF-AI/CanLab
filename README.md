@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python)](https://www.python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green?style=flat-square)](https://pypi.org/project/PyQt6/)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
-[![Release](https://img.shields.io/badge/Release-v1.0.0-brightgreen?style=flat-square)](https://github.com/Sherin-SEF-AI/CanLab/releases/tag/v1.0.0)
+[![Release](https://img.shields.io/badge/Release-v1.1.0-brightgreen?style=flat-square)](https://github.com/Sherin-SEF-AI/CanLab/releases/tag/v1.1.0)
 [![Groq](https://img.shields.io/badge/AI-Groq%20LLaMA-purple?style=flat-square)](https://groq.com)
 [![CAN Bus](https://img.shields.io/badge/Protocol-CAN%20%7C%20CAN%20FD%20%7C%20ISO--TP%20%7C%20J1939-red?style=flat-square)](https://en.wikipedia.org/wiki/CAN_bus)
 
@@ -39,10 +39,10 @@ Specifically:
 
 | Platform | File | Size |
 |---|---|---|
-| Linux x86_64 | [CanLab-1.0.0-linux-x86_64.tar.gz](https://github.com/Sherin-SEF-AI/CanLab/releases/download/v1.0.0/CanLab-1.0.0-linux-x86_64.tar.gz) | 183 MB |
+| Linux x86_64 | [CanLab-1.1.0-linux-x86_64.tar.gz](https://github.com/Sherin-SEF-AI/CanLab/releases/download/v1.1.0/CanLab-1.1.0-linux-x86_64.tar.gz) | 184 MB |
 
 ```bash
-tar -xzf CanLab-1.0.0-linux-x86_64.tar.gz
+tar -xzf CanLab-1.1.0-linux-x86_64.tar.gz
 cd CanLab/
 ./CanLab
 ```
