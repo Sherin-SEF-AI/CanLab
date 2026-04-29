@@ -4,11 +4,11 @@
 import sys
 from pathlib import Path
 
-ROOT = Path("canvasre")
+ROOT = Path("canlab")
 
 a = Analysis(
     [str(ROOT / "main.py")],
-    pathex=["canvasre"],
+    pathex=["canlab"],
     binaries=[],
     datas=[
         (str(ROOT / "canlab.png"),             "."           ),
@@ -87,7 +87,7 @@ exe = EXE(
     console=False,          # no terminal window
     disable_windowed_traceback=False,
     argv_emulation=False,
-    icon="canvasre/canlab.png",
+    icon="canlab/canlab.png",
 )
 
 coll = COLLECT(

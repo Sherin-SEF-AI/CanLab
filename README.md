@@ -81,11 +81,11 @@ pip install -r requirements.txt
 export GROQ_API_KEY="gsk_..."
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-cd canvasre       # source root — all imports are relative to here
+cd canlab         # source root — all imports are relative to here
 python3 main.py
 ```
 
-> **Note on directory layout:** The repo root is `CanLab/`. The Python source lives in `canvasre/` (the original working name). The `cd canvasre` before `python3 main.py` is intentional — all module imports are relative to that directory.
+> **Note on directory layout:** The repo root is `CanLab/`. The Python source lives in `canlab/`. The `cd canlab` before `python3 main.py` is intentional — all module imports are relative to that directory.
 
 ---
 
@@ -228,7 +228,7 @@ GET  /api/dbc               # current DBC signal definitions
 ## Architecture
 
 ```
-canvasre/
+canlab/
 ├── main.py                 Entry point — safety disclaimer + QApplication
 ├── mainwindow.py           Main window, tab registration, menus, toolbar
 ├── theme.py                Dark theme QSS + mono_font

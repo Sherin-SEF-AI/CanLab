@@ -3,7 +3,7 @@
 import sys
 import os
 
-# Ensure canvasre/ is on sys.path when running as `python main.py`
+# Ensure canlab/ is on sys.path when running as `python main.py`
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PyQt6.QtWidgets import QApplication, QMessageBox, QCheckBox
