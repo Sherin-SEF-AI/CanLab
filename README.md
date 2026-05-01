@@ -9,7 +9,7 @@
 
 **15-module desktop CAN RE workstation with offline ML signal classification, dual AI engines, and MitM gateway.**
 
-![CanLab Demo](docs/demo.gif)
+https://github.com/user-attachments/assets/cb47f85b-2551-44b2-9939-4f529962fbe0
 
 ---
 
@@ -23,8 +23,6 @@
 ---
 
 ## Why CanLab
-
-https://github.com/user-attachments/assets/cb47f85b-2551-44b2-9939-4f529962fbe0
 
 Most CAN RE tools do one thing: SavvyCAN captures and filters, canutils decodes, Wireshark dissects. CanLab's gap is the **analysis loop** — the round-trip between raw frame capture, signal hypothesis, ML validation, AI explanation, and DBC output.
 
