@@ -33,6 +33,8 @@ a = Analysis(
         "sklearn.neighbors",
         "matplotlib", "matplotlib.backends.backend_qtagg",
         "matplotlib.backends.backend_agg",
+        # Image support (PIL/Pillow) — required by matplotlib
+        "PIL", "PIL.Image", "PIL.ImageDraw",
         # AI
         "groq", "anthropic",
         # stdlib extras
@@ -59,7 +61,6 @@ a = Analysis(
         "pyarrow", "pyarrow.lib",
         "llvmlite", "numba",
         "tensorflow", "keras",
-        "PIL", "Pillow",
         "zmq", "tornado",
         "pygments", "jedi", "parso",
         "fastapi", "uvicorn", "starlette",
