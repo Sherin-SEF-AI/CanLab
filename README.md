@@ -252,6 +252,38 @@ canlab/
 └── tabs/                   One file per tab
 ```
 
+##  Supported Hardware Guide
+
+Navigating the world of CAN bus hardware can be confusing. The hardware you need depends entirely on what you want to do: **Passive Sniffing** (just listening to the car) or **Active Interception** (Man-in-the-Middle routing). 
+
+CanLab relies on `python-can`, meaning it supports a massive variety of adapters. Here is a breakdown of what hardware unlocks which features in CanLab:
+
+### 1. Passive Sniffing & Logging (Single Channel)
+If you only want to plug into your OBD2 port to read traffic, log hex data, and use the offline Machine Learning tools to find signals, you only need a standard single-channel adapter.
+* **Supported Devices:**
+  * **CANable / CANable Pro** (Highly recommended, cheap, uses `slcan` or SocketCAN)
+  * **PCAN-USB** (PEAK-System)
+  * **Kvaser** adapters
+  * Any generic ELM327 / OBD2 dongle (Limited speeds, not recommended for raw high-speed CAN)
+  * Any Linux SocketCAN compatible adapter.
+* **Supported Features:** ✔️ Live Sniffing | ✔️ UDS Requests | ✔️ ML Signal Decoding | ✔️ Traffic Logging
+
+### 2. Man-in-the-Middle (MitM) & Active Routing (Dual Channel)
+To actively bypass OEM lockouts, drop specific packets, or inject synthetic steering/braking commands, you must physically cut the CAN lines and sit *between* two ECUs. This requires a microcontroller with at least **two CAN interfaces**.
+* **Supported Devices:**
+  * **Teensy 4.0 / 4.1** (DIY route: requires wiring two standard CAN transceivers to the Teensy's built-in CAN pins).
+  * **Macchina M2** (Commercial off-the-shelf: excellent dual-channel board built specifically for automotive hacking).
+  * **ESP32 with Dual CAN** (Ensure your specific board actually has two hardware CAN controllers).
+* **Supported Features:** ✔️ Live Sniffing | ✔️ ML Decoding | ✔️ **Hardware MitM Routing** | ✔️ **Rule-based Packet Dropping/Injection**
+
+### Feature Matrix
+
+| Hardware Type | Example Devices | Live Sniffing | ML Decoding | UDS Tools | MitM Interception |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| **Single-Channel USB** | CANable, PCAN, Kvaser | ✅ | ✅ | ✅ | ❌ |
+| **Dual-Channel Micro** | Teensy 4.x, Macchina M2 | ✅ | ✅ | ✅ | ✅ |
+
+> **A note for beginners:** If you are just getting started, buy a $30 CANable, plug it into your OBD2 port, and use CanLab's sniffing and ML tools to map out the network first. Do not attempt a Dual-Channel MitM setup until you know exactly which physical wires you need to intercept.
 ---
 
 ## Safety
