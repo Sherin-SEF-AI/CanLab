@@ -169,6 +169,53 @@ def _detect_checksum_byte(frames: pd.DataFrame, byte_idx: int,
     return max(candidates, key=lambda x: x["confidence"])
 
 
+def _detect_checksums_vectorized(frames: pd.DataFrame, msg_id_int: int = 0,
+                                 min_conf: float = 0.90) -> list[dict]:
+    """Vectorized replacement for per-byte _detect_checksum_byte over one ID.
+
+    Builds the (N,8) byte matrix once and computes every algorithm for every
+    byte with numpy, instead of iterrows × algorithms × bytes. XOR is its own
+    inverse and SUM/NIBBLE_SUM are cumulative, so "checksum over the other 7
+    bytes" is (total ⊕/− this byte) — no Python per-row loop needed.
+    """
+    cols = [c for c in BYTE_COLS if c in frames.columns]
+    if len(cols) < 2:
+        return []
+    mat = frames[BYTE_COLS].to_numpy(dtype=np.float64)   # NaN for missing bytes
+    valid = ~np.isnan(mat).any(axis=1)
+    mat = mat[valid].astype(np.int64)
+    n = len(mat)
+    if n < 5:
+        return []
+
+    total_xor = np.zeros(n, dtype=np.int64)
+    for k in range(8):
+        total_xor ^= mat[:, k]
+    total_sum = mat.sum(axis=1)
+    nib = (mat & 0x0F) + ((mat >> 4) & 0x0F)
+    total_nib = nib.sum(axis=1)
+    hy_const = (msg_id_int >> 4) & 0xFF
+
+    out = []
+    for k in range(8):
+        col = mat[:, k]
+        algos = {
+            "XOR8":       (total_xor ^ col),
+            "SUM8":       ((total_sum - col) & 0xFF),
+            "NIBBLE_SUM": ((total_nib - nib[:, k]) & 0xFF),
+        }
+        if msg_id_int > 0:
+            algos["HYUNDAI_XOR"] = ((total_xor ^ col) ^ hy_const)
+        best = None
+        for name, expected in algos.items():
+            conf = float(np.mean(expected == col))
+            if conf > min_conf and (best is None or conf > best["confidence"]):
+                best = {"algorithm": name, "confidence": round(conf, 3)}
+        if best:
+            out.append({"byte": k, "col": f"B{k}", **best})
+    return out
+
+
 # ── Main API ──────────────────────────────────────────────────────────────────
 
 def detect_counters_and_checksums(df: pd.DataFrame) -> dict:
@@ -204,14 +251,12 @@ def detect_counters_and_checksums(df: pd.DataFrame) -> dict:
             series = frames[col].dropna()
             if series.empty:
                 continue
-
             ctr = _detect_counter_byte(series)
             if ctr:
                 counters.append({"byte": i, "col": col, **ctr})
 
-            chk = _detect_checksum_byte(frames, i, mid_int)
-            if chk:
-                checksums.append({"byte": i, "col": col, **chk})
+        # Checksums for all 8 bytes in one vectorized pass (was iterrows per byte).
+        checksums = _detect_checksums_vectorized(frames, mid_int)
 
         if counters or checksums:
             results[can_id] = {"counters": counters, "checksums": checksums}
