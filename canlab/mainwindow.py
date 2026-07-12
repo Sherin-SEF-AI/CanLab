@@ -299,6 +299,10 @@ class MainWindow(QMainWindow):
             ("Auto-discover OBD-II PIDs…", self._obd_discover),
             ("ML Signal Intelligence…",  self._open_ml_intel),
             ("CAN Gateway…",             self._open_gateway),
+            ("Match against opendbc…",   self._match_opendbc),
+            ("Export decoded time-series…", self._export_timeseries),
+            ("Detect multiplexed signals…", self._detect_mux),
+            ("Calibrate signal from reference CSV…", self._calibrate_ref),
         ]:
             a = QAction(text, self)
             a.triggered.connect(slot)
@@ -438,7 +442,9 @@ class MainWindow(QMainWindow):
     def _open_log(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Open CAN Log", "",
-            "Log Files (*.csv *.log *.pcap *.pcapng);;pcap (*.pcap *.pcapng);;All Files (*)"
+            "CAN Logs (*.csv *.log *.pcap *.pcapng *.blf *.asc *.mf4 *.mdf);;"
+            "Vector BLF (*.blf);;Vector ASC (*.asc);;MDF4 (*.mf4 *.mdf);;"
+            "pcap (*.pcap *.pcapng);;All Files (*)"
         )
         if path:
             self._load_log_file(path)
@@ -624,6 +630,17 @@ class MainWindow(QMainWindow):
         self._live_worker.error.connect(self._on_live_error)
         self._live_worker.started.connect(self._on_worker_started)
         self._live_worker.start()
+
+        # Multi-bus recording: if extra buses are configured in Settings, spawn a
+        # MultiBusWorker and route each tagged frame through the same pipeline.
+        if self._multibus_config:
+            self._multibus_worker = MultiBusWorker(self._multibus_config)
+            self._multibus_worker.frame_received.connect(
+                lambda name, m: self._on_live_frame(m, bus_name=name))
+            self._multibus_worker.error.connect(
+                lambda name, e: self._on_live_error(f"[{name}] {e}"))
+            self._multibus_worker.start_all()
+
         self._act_connect.setEnabled(False)
         self._act_disconnect.setEnabled(True)
         self._state.can_connected.emit(True)
@@ -656,6 +673,9 @@ class MainWindow(QMainWindow):
         if self._live_worker:
             self._live_worker.stop()
             self._live_worker = None
+        if self._multibus_worker:
+            self._multibus_worker.stop_all()
+            self._multibus_worker = None
         self._state.can_bus      = None
         self._state.is_connected = False
         self._act_connect.setEnabled(True)
@@ -663,7 +683,7 @@ class MainWindow(QMainWindow):
         self._state.can_connected.emit(False)
         self._bus_load_meter.reset()
 
-    def _on_live_frame(self, msg):
+    def _on_live_frame(self, msg, bus_name=None):
         self._live_frame_count += 1
 
         # Bus load
@@ -688,7 +708,7 @@ class MainWindow(QMainWindow):
         row = {
             "Timestamp": msg.timestamp,
             "ID":        format(msg.arbitration_id, "03X"),
-            "Bus":       "live",
+            "Bus":       bus_name if bus_name is not None else "live",
             "DLC":       msg.dlc,
             "Delta":     0.0,
             **{f"B{i}": byte_data[i] for i in range(8)},
@@ -704,6 +724,103 @@ class MainWindow(QMainWindow):
         self._disconnect_can()
 
     # ── REST API ──────────────────────────────────────────────────────────────
+
+    def _match_opendbc(self):
+        if self._state.frames_df.empty:
+            QMessageBox.information(self, "opendbc", "Load a capture first.")
+            return
+        ids = set(self._state.frames_df["ID"].unique().tolist())
+        self.statusBar().showMessage("Matching against opendbc (fetching index)…")
+        from ui.compute_worker import ComputeWorker
+
+        def _work():
+            from core.opendbc_matcher import refresh_index, match_capture
+            refresh_index()                      # fetch+cache (network, best-effort)
+            return match_capture(ids, top_k=8)
+
+        self._opendbc_worker = ComputeWorker(_work)
+        self._opendbc_worker.done.connect(self._on_opendbc_done)
+        self._opendbc_worker.failed.connect(
+            lambda e: QMessageBox.warning(self, "opendbc", f"Match failed: {e}"))
+        self._opendbc_worker.start()
+
+    def _on_opendbc_done(self, matches):
+        self.statusBar().clearMessage()
+        if not matches:
+            QMessageBox.information(
+                self, "opendbc",
+                "No matches (index empty or no overlap). Requires network access "
+                "to fetch the opendbc library on first run.")
+            return
+        lines = [f"{m['score']*100:5.1f}%  {m['dbc']}   "
+                 f"({len(m['matched_ids'])} IDs, {m['message_count']} msgs)"
+                 for m in matches]
+        QMessageBox.information(self, "opendbc matches (by ID overlap)",
+                                "\n".join(lines))
+
+    def _export_timeseries(self):
+        if self._state.frames_df.empty or not self._state.dbc_signals:
+            QMessageBox.information(
+                self, "Export", "Need a loaded capture and DBC signals first.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export decoded time-series", "signals.csv",
+            "CSV (*.csv);;Parquet (*.parquet)")
+        if not path:
+            return
+        try:
+            from core.timeseries_export import export_timeseries
+            n = export_timeseries(self._state.frames_df, self._state.dbc_signals, path)
+            QMessageBox.information(self, "Export", f"Wrote {n} rows to {path}")
+        except Exception as e:
+            QMessageBox.warning(self, "Export", str(e))
+
+    def _detect_mux(self):
+        if self._state.frames_df.empty:
+            QMessageBox.information(self, "Multiplexers", "Load a capture first.")
+            return
+        from core.mux_detector import detect_all_multiplexers
+        res = detect_all_multiplexers(self._state.frames_df)
+        if not res:
+            QMessageBox.information(self, "Multiplexers",
+                                    "No multiplexed messages detected.")
+            return
+        lines = []
+        for can_id, r in sorted(res.items()):
+            modes = ", ".join(f"{v}:{r['modes'][v]}" for v in sorted(r["modes"]))
+            lines.append(f"0x{can_id}  selector=B{r['mux_byte']}  "
+                         f"score={r['score']}\n    modes {modes}")
+        QMessageBox.information(self, "Multiplexed signals", "\n".join(lines))
+
+    def _calibrate_ref(self):
+        if self._state.frames_df.empty:
+            QMessageBox.information(self, "Calibrate", "Load a capture first.")
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Reference CSV (columns: timestamp,value)", "",
+            "CSV (*.csv);;All Files (*)")
+        if not path:
+            return
+        try:
+            ref = pd.read_csv(path)
+            cols = [c.lower() for c in ref.columns]
+            tcol = ref.columns[cols.index("timestamp")] if "timestamp" in cols else ref.columns[0]
+            vcol = ref.columns[cols.index("value")] if "value" in cols else ref.columns[1]
+            from core.reference_calibrate import calibrate_against_reference
+            cand = calibrate_against_reference(
+                self._state.frames_df,
+                ref[tcol].to_numpy(), ref[vcol].to_numpy(), top_k=8)
+        except Exception as e:
+            QMessageBox.warning(self, "Calibrate", f"Failed: {e}")
+            return
+        if not cand:
+            QMessageBox.information(self, "Calibrate", "No candidate signal found.")
+            return
+        lines = [f"[{c['verdict']}] 0x{c['id']} bit{c['start_bit']} len{c['length']} "
+                 f"{c['byte_order']}  scale={c['scale']} offset={c['offset']}  "
+                 f"R2={c['r2']} (n={c['n']})" for c in cand]
+        QMessageBox.information(self, "Reference calibration (ranked)",
+                                "\n".join(lines))
 
     def _toggle_arm(self, checked: bool):
         from core.safety import set_armed
