@@ -42,7 +42,7 @@ def to_opendbc_string(signal_defs: list, msg_meta: Optional[dict] = None) -> str
     lines.append("")
     lines.append("NS_ :")
     lines.append("")
-    lines.append("BS_: 500000")
+    lines.append("BS_:")   # bit-timing section must be empty (or baud:btr1,btr2)
     lines.append("")
     lines.append("BU_: VECTOR__INDEPENDENT")
     lines.append("")
