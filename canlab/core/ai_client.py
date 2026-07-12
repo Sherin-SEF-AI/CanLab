@@ -4,6 +4,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 GROQ_DEFAULT_MODEL      = "llama-3.3-70b-versatile"
 ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-5"
+OLLAMA_DEFAULT_MODEL    = "llama3.1"
 
 
 SYSTEM_PROMPT = """You are an expert automotive CAN bus reverse engineer specializing in Hyundai/Kia vehicles.
@@ -137,9 +138,10 @@ class AIWorker(QThread):
         self.event_correlations = event_correlations or []
         self.repo_context       = repo_context
         self.provider           = provider
-        self.model              = model or (
-            GROQ_DEFAULT_MODEL if provider == "Groq" else ANTHROPIC_DEFAULT_MODEL
-        )
+        self.model              = model or {
+            "Groq":   GROQ_DEFAULT_MODEL,
+            "Ollama": OLLAMA_DEFAULT_MODEL,
+        }.get(provider, ANTHROPIC_DEFAULT_MODEL)
         self.groq_key           = groq_key
         self.ml_insights        = ml_insights
         self._full_response     = ""
@@ -147,6 +149,8 @@ class AIWorker(QThread):
     def run(self):
         if self.provider == "Groq":
             self._run_groq()
+        elif self.provider == "Ollama":
+            self._run_ollama()
         else:
             self._run_anthropic()
 
@@ -182,6 +186,44 @@ class AIWorker(QThread):
             self.error.emit("Anthropic rate limit exceeded. Wait a moment and retry.")
         except Exception as e:
             self.error.emit(str(e))
+
+    def _run_ollama(self):
+        """Stream from a local Ollama server (fully offline, no API key)."""
+        import os, json, requests
+        base = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+        try:
+            prompt = self._build_context()
+            resp = requests.post(
+                f"{base}/api/chat",
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user",   "content": prompt},
+                    ],
+                    "stream": True,
+                },
+                stream=True, timeout=180,
+            )
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                obj = json.loads(line)
+                text = obj.get("message", {}).get("content", "")
+                if text:
+                    self._full_response += text
+                    self.chunk_received.emit(text)
+                if obj.get("done"):
+                    break
+            self.finished.emit(self._full_response)
+        except requests.ConnectionError:
+            self.error.emit(
+                f"Cannot reach Ollama at {base}. Start it with 'ollama serve' "
+                f"and pull a model (e.g. 'ollama pull {self.model}')."
+            )
+        except Exception as e:
+            self.error.emit(f"Ollama error: {e}")
 
     def _run_groq(self):
         try:

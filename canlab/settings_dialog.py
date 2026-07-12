@@ -30,6 +30,13 @@ AI_MODELS = {
         "mixtral-8x7b-32768",
         "gemma2-9b-it",
     ],
+    "Ollama": [
+        "llama3.1",
+        "llama3.2",
+        "qwen2.5",
+        "mistral",
+        "gemma2",
+    ],
 }
 
 

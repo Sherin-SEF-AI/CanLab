@@ -533,7 +533,8 @@ class AIEngineTab(QWidget):
                 self._advance_queue(self._current_id)
             return
         active_key = self._groq_key if self._provider == "Groq" else self._api_key
-        if not active_key:
+        # Ollama is a local server — no API key required.
+        if self._provider != "Ollama" and not active_key:
             self.response_text.setPlainText(
                 f"ERROR: No {self._provider} API key configured.\nGo to Settings > API Keys."
             )
@@ -679,7 +680,7 @@ class AIEngineTab(QWidget):
         if not question:
             return
         active_key = self._groq_key if self._provider == "Groq" else self._api_key
-        if not active_key:
+        if self._provider != "Ollama" and not active_key:
             self.nl_response.setPlainText(
                 f"ERROR: No {self._provider} API key configured."
             )
