@@ -51,6 +51,25 @@ Specifically:
 
 ---
 
+## New Integrations
+
+| Capability | Module | What it does |
+|---|---|---|
+| **Reference-driven calibration** | `core/reference_calibrate.py` | Search (ID, byte-range, endianness) for the field that linearly explains a physical reference (OBD-II/GPS/OCR); least-squares scale/offset fit with a **PASS/UNCONFIRMED** R² gate. Tools → *Calibrate signal from reference CSV*. |
+| **Vision-OCR reference** | `core/vision_reference.py` | OCR a numeric gauge value from a dashcam video ROI into a reference series (opencv + rapidocr, no PyTorch). Feeds the calibrator. |
+| **opendbc matching** | `core/opendbc_matcher.py` | Match a capture's IDs against the real `commaai/opendbc` library (fetch+cache+parse, Jaccard scoring). Tools → *Match against opendbc*. |
+| **Multiplexer detection** | `core/mux_detector.py` | Detect mode-dependent (multiplexed) messages; DBC export emits `SG_ M`/`m<n>`. Tools → *Detect multiplexed signals*. |
+| **XCP-over-CAN** | `core/xcp.py` | Read-only XCP client + poll worker for live ECU internal measurements. |
+| **DoIP (ISO 13400)** | `core/doip.py` | Diagnostics over IP: vehicle discovery, routing activation, UDS-over-Ethernet. |
+| **More log formats** | `core/log_parser.py` | Vector **BLF**, Vector **ASC**, and **MDF4** (CANedge) import, in addition to CSV/candump/rlog/pcap. |
+| **Decoded time-series export** | `core/timeseries_export.py` | Export a Timestamp×signal matrix to CSV/Parquet for Grafana/InfluxDB/pandas. |
+| **Live web dashboard** | `core/rest_api.py` | Token-gated `GET /` serves a self-contained page that live-plots frames in a browser (phone-friendly remote monitoring). |
+| **Local LLM (Ollama)** | `core/ai_client.py` | Fully-offline AI analysis via a local Ollama server — no API key. |
+| **MCP server** | `mcp_server.py` | Exposes load_log / detectors / correlate / opendbc-match as MCP tools so Claude Code can drive the analysis loop. |
+| **Plugin SDK** | `docs/PLUGINS.md` | Documented `register(app)` API + example plugins on the sandboxed loader. |
+
+---
+
 ## Download
 
 | Platform | File | Size |
