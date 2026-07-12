@@ -10,6 +10,11 @@ verification score (R²). A candidate is only accepted (PASS) when the fit is
 strong — turning "here are candidate bytes" into "here is a confirmed signal
 with proven scale and offset".
 
+The fit is hardened by two refinements (see core.calibrate_refine, adapted from
+CSS Electronics' MIT-licensed RE skills): "signal unavailable" sentinel codes are
+masked out before fitting, and the fitted scale/offset are snapped to neat OEM
+values when that barely moves the decode.
+
 Public API:
     calibrate_against_reference(frames_df, ref_ts, ref_val, ...) -> list[dict]
     best_signal(frames_df, ref_ts, ref_val, ...) -> dict | None
@@ -18,6 +23,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+
+from core.calibrate_refine import mask_sentinels, snap_calibration
 
 BYTE_COLS = [f"B{i}" for i in range(8)]
 
@@ -146,16 +153,32 @@ def calibrate_against_reference(
                     r, v = _align_to_reference(fts, raw, ref_ts, ref_val, max_dt)
                     if len(r) < 10:
                         continue
+                    # Mask "signal unavailable" sentinels (0xFFFF, 0x3FFF, …) so a
+                    # handful of out-of-band codes don't wreck the fit.
+                    keep = mask_sentinels(r, length)
+                    if keep.sum() >= 10:
+                        r, v = r[keep], v[keep]
                     scale, offset, r2 = _linfit_r2(r, v)
                     if r2 <= 0:
                         continue
+
+                    # Snap the fitted line to a neat OEM scale/offset when that
+                    # barely moves the decode (0.09983 -> 0.1, offset -> 0).
+                    snap = snap_calibration(scale, offset, r, v)
+                    out_scale, out_offset, snapped = scale, offset, False
+                    if snap and snap["auto"]:
+                        out_scale, out_offset, snapped = snap["scale"], snap["offset"], True
+
                     results.append({
                         "id":        can_id,
                         "start_bit": start_bit,
                         "length":    length,
                         "byte_order": "big" if big_endian else "little",
-                        "scale":     round(scale, 6),
-                        "offset":    round(offset, 4),
+                        "scale":     round(out_scale, 6),
+                        "offset":    round(out_offset, 4),
+                        "raw_scale": round(scale, 6),
+                        "snapped":   snapped,
+                        "sentinels_masked": int((~keep).sum()),
                         "r2":        round(r2, 4),
                         "n":         int(len(r)),
                         "verdict":   "PASS" if r2 >= min_r2 else "UNCONFIRMED",

@@ -77,6 +77,20 @@ def detect_multiplexers() -> dict:
     return detect_all_multiplexers(_df())
 
 
+def calibrate(reference_csv: str, top_k: int = 8) -> list:
+    """Reference-driven calibration: find the CAN field that linearly explains a
+    physical reference. reference_csv has columns timestamp,value. Returns ranked
+    candidates with scale/offset (OEM-snapped), R², and PASS/UNCONFIRMED verdict."""
+    import pandas as pd
+    from core.reference_calibrate import calibrate_against_reference
+    ref = pd.read_csv(reference_csv)
+    cols = [c.lower() for c in ref.columns]
+    tcol = ref.columns[cols.index("timestamp")] if "timestamp" in cols else ref.columns[0]
+    vcol = ref.columns[cols.index("value")] if "value" in cols else ref.columns[1]
+    return calibrate_against_reference(_df(), ref[tcol].to_numpy(),
+                                       ref[vcol].to_numpy(), top_k=top_k)
+
+
 def byte_stats(can_id: str) -> dict:
     """Per-byte min/max/mean/unique-count for one CAN ID."""
     import numpy as np
@@ -99,7 +113,7 @@ def byte_stats(can_id: str) -> dict:
 
 def _register(mcp):
     for fn in (load_log, list_ids, detect_counters_checksums, correlate,
-               match_opendbc, detect_multiplexers, byte_stats):
+               match_opendbc, detect_multiplexers, calibrate, byte_stats):
         mcp.tool()(fn)
 
 

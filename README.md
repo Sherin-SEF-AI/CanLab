@@ -341,6 +341,13 @@ Use `vcan0` (virtual CAN) or a benchtop ECU for all testing. The application sho
 
 ---
 
+## Acknowledgements
+
+The calibration refinements in `core/calibrate_refine.py` (sentinel masking and
+OEM scale/offset snapping) are adapted from CSS Electronics'
+[CAN bus reverse engineering skills](https://github.com/CSS-Electronics/can-bus-reverse-engineering-skills)
+(MIT, © 2026 CSS Electronics).
+
 ## License
 
 MIT License. See [LICENSE](LICENSE).
