@@ -142,7 +142,18 @@ def _detect_checksum_byte(frames: pd.DataFrame, byte_idx: int,
         match_count = 0
         total       = 0
         for _, row in frames.iterrows():
-            data = [int(row.get(f"B{i}", 0) or 0) for i in range(8)]
+            # Skip rows with a missing byte (short DLC): int(NaN) would crash,
+            # and NaN-as-0 would corrupt the checksum comparison.
+            data = []
+            valid = True
+            for i in range(8):
+                v = row.get(f"B{i}")
+                if pd.isna(v):
+                    valid = False
+                    break
+                data.append(int(v))
+            if not valid:
+                continue
             expected = _hyundai_xor(data, byte_idx, msg_id_int)
             if expected == data[byte_idx]:
                 match_count += 1

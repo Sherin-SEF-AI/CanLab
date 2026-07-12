@@ -217,15 +217,22 @@ def fingerprint_vehicle(observed_ids: set,
           "quality":     "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN",
         }
     """
+    from core.canid import normalize_id
     periodicities = periodicities or {}
     dlc_map       = dlc_map or {}
 
+    # Normalize every ID to the canonical width so profiles that store IDs as
+    # 4-hex (e.g. Honda "0191") still intersect the app's 3-hex observed IDs.
+    observed_ids  = {normalize_id(i) for i in observed_ids}
+    periodicities = {normalize_id(k): v for k, v in periodicities.items()}
+    dlc_map       = {normalize_id(k): v for k, v in dlc_map.items()}
+
     candidates = []
     for model, profile in _PROFILES.items():
-        profile_ids  = profile["ids"]
-        optional_ids = profile.get("optional_ids", set())
-        hints        = profile.get("period_hints", {})
-        dlc_hints    = profile.get("dlc_hints", {})
+        profile_ids  = {normalize_id(i) for i in profile["ids"]}
+        optional_ids = {normalize_id(i) for i in profile.get("optional_ids", set())}
+        hints        = {normalize_id(k): v for k, v in profile.get("period_hints", {}).items()}
+        dlc_hints    = {normalize_id(k): v for k, v in profile.get("dlc_hints", {}).items()}
 
         id_score     = _id_coverage_score(observed_ids, profile_ids, optional_ids)
         period_score = _period_score(periodicities, hints)

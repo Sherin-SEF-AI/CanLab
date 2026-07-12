@@ -101,7 +101,10 @@ def load_dbc(filepath: str) -> list[dict]:
 
 def decode_frame(signal_defs: list[dict], can_id: str, frame_bytes: bytes) -> dict:
     """Decode a single frame using signal definitions for matching ID."""
-    matching = [s for s in signal_defs if s.get("message_id", "").upper() == can_id.upper()]
+    from core.canid import normalize_id
+    target = normalize_id(can_id)
+    matching = [s for s in signal_defs
+                if normalize_id(s.get("message_id", "")) == target]
     if not matching:
         return {}
     db = cantools.database.Database()

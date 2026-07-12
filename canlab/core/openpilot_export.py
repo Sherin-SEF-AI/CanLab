@@ -70,8 +70,10 @@ def to_opendbc_string(signal_defs: list, msg_meta: Optional[dict] = None) -> str
             unit    = sig.get("unit", "") or ""
             mux     = ""  # future: multiplexer support
 
+            # The signedness token (+/-) is mandatory: cantools/opendbc's SG_
+            # regex requires @[01][+-]; omitting it makes every file unparseable.
             lines.append(
-                f" SG_ {sname} {mux}: {start}|{length}{border} "
+                f" SG_ {sname} {mux}: {start}|{length}{border}{signed} "
                 f"({scale},{offset}) [{minv}|{maxv}] \"{unit}\" VECTOR__INDEPENDENT"
             )
 

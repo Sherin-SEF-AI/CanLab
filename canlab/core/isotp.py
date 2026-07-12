@@ -47,28 +47,109 @@ class ISOTPSession:
         if n <= 7:
             # Single Frame
             frame = bytes([n & 0x0F]) + data + bytes(7 - n)
+            try:
+                self._bus.send(can.Message(arbitration_id=self._tx_id,
+                                           data=frame, is_extended_id=False))
+            except Exception:
+                return None
         else:
-            # First Frame — only up to 4095 bytes supported here
+            # First Frame + Flow-Control handshake + Consecutive Frames.
+            # (Previously only the FF was sent, silently truncating every
+            #  request longer than 7 bytes.)
             hi = (n >> 8) & 0x0F
             lo = n & 0xFF
-            frame = bytes([0x10 | hi, lo]) + data[:6]
+            ff = bytes([0x10 | hi, lo]) + data[:6]
+            try:
+                self._bus.send(can.Message(arbitration_id=self._tx_id,
+                                           data=ff, is_extended_id=False))
+            except Exception:
+                return None
+            if not self._send_consecutive_frames(data, timeout):
+                return None
 
-        try:
-            msg = can.Message(
-                arbitration_id=self._tx_id,
-                data=frame,
-                is_extended_id=False,
-            )
-            self._bus.send(msg)
-        except Exception:
-            return None
+        # Response length is inferred from the ECU's own SF/FF, never from the
+        # request length.
+        return self._receive(None, timeout)
 
-        return self._receive(n if n > 7 else None, timeout)
+    def _send_consecutive_frames(self, data: bytes, timeout: float) -> bool:
+        """Transmit CFs for a multi-frame request, honouring the ECU's FC."""
+        import can
+        deadline = time.monotonic() + timeout
+        fc = self._wait_for_fc(deadline)
+        if fc is None:
+            return False
+        flow_status, block_size, st_min = fc
 
-    def _receive(self, expected_len: Optional[int], timeout: float) -> Optional[bytes]:
+        idx = 6            # next unsent data offset (6 went in the FF)
+        sn  = 1            # consecutive-frame sequence number
+        sent_in_block = 0
+        st = self._stmin_seconds(st_min)
+
+        while idx < len(data):
+            if flow_status == 0x2:      # OVFLW — abort
+                return False
+            if flow_status == 0x1:      # WAIT — re-wait for a fresh FC
+                fc = self._wait_for_fc(deadline)
+                if fc is None:
+                    return False
+                flow_status, block_size, st_min = fc
+                st = self._stmin_seconds(st_min)
+                sent_in_block = 0
+                continue
+
+            chunk = data[idx:idx + 7]
+            cf = bytes([0x20 | (sn & 0x0F)]) + chunk + bytes(7 - len(chunk))
+            try:
+                self._bus.send(can.Message(arbitration_id=self._tx_id,
+                                           data=cf, is_extended_id=False))
+            except Exception:
+                return False
+            idx += 7
+            sn = (sn + 1) & 0x0F
+            sent_in_block += 1
+
+            if idx >= len(data):
+                break
+            if block_size and sent_in_block >= block_size:
+                fc = self._wait_for_fc(deadline)
+                if fc is None:
+                    return False
+                flow_status, block_size, st_min = fc
+                st = self._stmin_seconds(st_min)
+                sent_in_block = 0
+            elif st > 0:
+                time.sleep(st)
+        return True
+
+    def _wait_for_fc(self, deadline: float):
+        """Block until a Flow Control frame arrives; return (fs, bs, stmin)."""
+        while time.monotonic() < deadline:
+            resp = self._bus.recv(timeout=0.05)
+            if resp is None or resp.arbitration_id != self._rx_id:
+                continue
+            raw = bytes(resp.data)
+            if raw and (raw[0] >> 4) & 0x0F == 0x3:
+                fs     = raw[0] & 0x0F
+                bs     = raw[1] if len(raw) > 1 else 0
+                st_min = raw[2] if len(raw) > 2 else 0
+                return fs, bs, st_min
+        return None
+
+    @staticmethod
+    def _stmin_seconds(st_min: int) -> float:
+        """Decode an ISO-TP STmin byte to seconds."""
+        if st_min <= 0x7F:
+            return st_min / 1000.0            # 0-127 ms
+        if 0xF1 <= st_min <= 0xF9:
+            return (st_min - 0xF0) / 10000.0  # 100-900 microseconds
+        return 0.0
+
+    def _receive(self, expected_len: Optional[int], timeout: float,
+                 passive: bool = False) -> Optional[bytes]:
         """
         Collect response frames. Handles SF, FF+CFs.
-        If expected_len is None we infer from the SF length byte.
+        If expected_len is None we infer from the SF/FF length byte.
+        When passive=True (sniffing), no Flow Control is transmitted.
         """
         import can
         deadline  = time.monotonic() + timeout
@@ -81,7 +162,12 @@ class ISOTPSession:
             if resp is None or resp.arbitration_id != self._rx_id:
                 continue
 
-            raw  = bytes(resp.data)
+            raw = bytes(resp.data)
+            if not raw:
+                continue
+            # A valid frame arrived — extend the deadline so a legitimately slow
+            # multi-frame transfer doesn't time out mid-stream.
+            deadline = time.monotonic() + timeout
             pci  = (raw[0] >> 4) & 0x0F
 
             if pci == 0x0:  # Single Frame
@@ -93,8 +179,9 @@ class ISOTPSession:
                 length = ((raw[0] & 0x0F) << 8) | raw[1]
                 total_len = length
                 payload   = bytearray(raw[2:])  # first 6 payload bytes
-                # Send Flow Control — CTS, BS=0, STmin=0
-                self._send_fc()
+                if not passive:
+                    # Send Flow Control — CTS, BS=0, STmin=0
+                    self._send_fc()
                 cf_index = 1
                 continue
 
@@ -103,7 +190,7 @@ class ISOTPSession:
                 if sn != (cf_index & 0x0F):
                     return None  # sequence error
                 payload   += bytearray(raw[1:])
-                cf_index  += 1
+                cf_index  = (cf_index + 1) & 0x0F
                 if total_len is not None and len(payload) >= total_len:
                     return bytes(payload[:total_len])
                 continue
@@ -132,4 +219,6 @@ def recv_isotp(bus, rx_id: int, timeout: float = 1.0) -> Optional[bytes]:
     """
     dummy_tx = rx_id - 8  # typical response offset reversed
     session  = ISOTPSession(bus, tx_id=dummy_tx, rx_id=rx_id)
-    return session._receive(None, timeout)
+    # passive=True: do not inject Flow Control while merely sniffing, which would
+    # otherwise put frames on the bus and could corrupt another tester's transfer.
+    return session._receive(None, timeout, passive=True)

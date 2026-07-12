@@ -136,7 +136,7 @@ class DashboardTab(QWidget):
         lay.setContentsMargins(6, 6, 6, 6)
 
         hdr = QHBoxLayout()
-        hdr.addWidget(QLabel("CORRELATION HEATMAP  (normalised mean byte value per ID)", font=mono_font(9)))
+        hdr.addWidget(QLabel("BYTE-VALUE HEATMAP  (normalised mean byte value per ID)", font=mono_font(9)))
         hdr.addStretch()
         self.btn_render_heatmap = QPushButton("Render")
         self.btn_render_heatmap.clicked.connect(self._render_heatmap)

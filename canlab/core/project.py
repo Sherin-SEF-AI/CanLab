@@ -39,7 +39,15 @@ def load_project(state, path: str):
         names = zf.namelist()
 
         if "frames.csv" in names:
-            df = pd.read_csv(io.StringIO(zf.read("frames.csv").decode()))
+            # Force ID to string: the column holds hex strings ("244", "0A6");
+            # without this, pandas re-infers all-numeric IDs as int64 and every
+            # later string comparison (get_frames_for_id, per-ID views) silently
+            # fails to match after a project is reloaded.
+            df = pd.read_csv(io.StringIO(zf.read("frames.csv").decode()),
+                             dtype={"ID": str})
+            if "ID" in df.columns:
+                from core.canid import normalize_id
+                df["ID"] = df["ID"].apply(normalize_id)
             state.frames_df = df
         else:
             state.frames_df = pd.DataFrame()
@@ -59,7 +67,12 @@ def load_project(state, path: str):
             state.repo_info   = meta.get("repo_info", {})
             state.repo_readme = meta.get("repo_readme", "")
             state.annotations = meta.get("annotations", {})
-            state.periodicities = {k: float(v) for k, v in meta.get("periodicities", {}).items()}
+            state.periodicities = {}
+            for k, v in meta.get("periodicities", {}).items():
+                try:
+                    state.periodicities[k] = float(v)
+                except (ValueError, TypeError):
+                    pass   # skip corrupt entries rather than aborting the load
             state.fingerprint = meta.get("fingerprint", {})
 
     state.project_path = path

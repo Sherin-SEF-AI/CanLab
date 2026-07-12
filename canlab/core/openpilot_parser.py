@@ -33,7 +33,9 @@ def parse_rlog(filepath: str) -> pd.DataFrame:
     """
     Parse an openpilot .rlog or .qlog file → standard CAN DataFrame.
 
-    Returns empty DataFrame if pycapnp is not installed or on parse error.
+    Raises RuntimeError if pycapnp is not installed, the cereal schema is
+    missing, or the log cannot be decoded. Returns an empty DataFrame only when
+    the log genuinely contains no CAN events.
     """
     if not _CAPNP_AVAILABLE:
         raise RuntimeError(
@@ -42,18 +44,22 @@ def parse_rlog(filepath: str) -> pd.DataFrame:
         )
 
     import capnp  # noqa: F811
-    # Load schema from openpilot or use raw reader
     path = Path(filepath)
-    rows = []
 
+    # openpilot logs are a concatenated stream of capnp-encoded Event messages.
+    # Decoding requires the cereal `log.capnp` schema. If parsing fails we raise
+    # rather than fabricating frames from arbitrary bytes (the old heuristic
+    # fallback emitted garbage "frames" that looked real).
     try:
-        # openpilot logs are a stream of framed capnp messages
-        # Each frame: 4-byte big-endian length + capnp data
-        # We try the official cereal schema; fall back to raw struct read.
         rows = _parse_with_cereal(path)
-    except Exception:
-        # Fallback: scan for known CAN address patterns
-        rows = _parse_raw_scan(path)
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            "openpilot cereal schema (log.capnp) not found. Install openpilot's "
+            "cereal or place log.capnp under canlab/resources/. An rlog cannot be "
+            "decoded without it."
+        ) from e
+    except Exception as e:
+        raise RuntimeError(f"Failed to parse openpilot rlog: {e}") from e
 
     if not rows:
         return pd.DataFrame()
@@ -82,83 +88,37 @@ def _parse_with_cereal(path: Path) -> list:
         str(Path(__file__).parent.parent / "resources" / "log.capnp"),
     ]
     schema_path = next((p for p in schema_candidates if os.path.exists(p)), None)
+    if not schema_path:
+        raise FileNotFoundError("cereal schema (log.capnp) not found")
 
+    log_capnp = capnp.load(schema_path)
     rows = []
-    with open(path, "rb") as f:
-        raw = f.read()
-
-    # Stream of framed capnp messages (4-byte LE size + data)
-    offset = 0
     ts_base = 0.0
 
-    if schema_path:
-        log_capnp = capnp.load(schema_path)
-        while offset + 4 < len(raw):
-            size = int.from_bytes(raw[offset:offset + 4], "little")
-            offset += 4
-            if offset + size > len(raw):
-                break
-            try:
-                event = log_capnp.Event.from_bytes(raw[offset:offset + size])
-                if event.which() == "can":
-                    for frame in event.can:
-                        ts = event.logMonoTime / 1e9
-                        if ts_base == 0.0:
-                            ts_base = ts
-                        dat = bytes(frame.dat)
-                        byte_dict = {f"B{i}": dat[i] if i < len(dat) else np.nan
-                                     for i in range(8)}
-                        rows.append({
-                            "Timestamp": ts - ts_base,
-                            "ID":        _normalize_id(frame.address),
-                            "Bus":       frame.src,
-                            "DLC":       len(dat),
-                            **byte_dict,
-                        })
-            except Exception:
-                pass
-            offset += size
-    else:
-        raise FileNotFoundError("cereal schema not found")
-
-    return rows
-
-
-def _parse_raw_scan(path: Path) -> list:
-    """
-    Fallback: scan raw bytes for candump-like patterns embedded in binary log.
-    Extracts any 4-byte aligned CAN frame records by heuristic.
-    """
+    # Use pycapnp's streaming reader over the concatenated message stream rather
+    # than a hand-rolled length-prefix framing (which did not match the real
+    # format).
     with open(path, "rb") as f:
-        raw = f.read()
-
-    rows = []
-    # Try to extract from simple framing without schema
-    offset = 0
-    ts_counter = 0.0
-
-    while offset + 16 <= len(raw):
-        # Check if this could be a CAN record: address < 0x800, dlc 1-8
-        try:
-            addr = int.from_bytes(raw[offset:offset + 4], "little")
-            dlc  = raw[offset + 4]
-            if 0 < addr < 0x800 and 0 < dlc <= 8:
-                dat = raw[offset + 5: offset + 5 + dlc]
-                byte_dict = {f"B{i}": dat[i] if i < len(dat) else np.nan
-                             for i in range(8)}
-                ts_counter += 0.001  # approximate 1ms spacing
-                rows.append({
-                    "Timestamp": ts_counter,
-                    "ID":        _normalize_id(addr),
-                    "Bus":       0,
-                    "DLC":       dlc,
-                    **byte_dict,
-                })
-                offset += 5 + dlc
+        for event in log_capnp.Event.read_multiple(f):
+            try:
+                if event.which() != "can":
+                    continue
+                ts = event.logMonoTime / 1e9
+                if ts_base == 0.0:
+                    ts_base = ts
+                for frame in event.can:
+                    dat = bytes(frame.dat)
+                    byte_dict = {f"B{i}": dat[i] if i < len(dat) else np.nan
+                                 for i in range(8)}
+                    rows.append({
+                        "Timestamp": ts - ts_base,
+                        "ID":        _normalize_id(frame.address),
+                        "Bus":       frame.src,
+                        "DLC":       len(dat),
+                        **byte_dict,
+                    })
+            except Exception:
                 continue
-        except Exception:
-            pass
-        offset += 1
 
     return rows
 

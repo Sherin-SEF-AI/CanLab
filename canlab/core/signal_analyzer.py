@@ -164,12 +164,17 @@ def analyze_all(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
-def compute_correlation_matrix(df: pd.DataFrame) -> pd.DataFrame:
+def compute_timing_dependency_matrix(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Combined dependency matrix using Pearson + Spearman + Mutual Information.
+    ID×ID *message-timing* dependency matrix.
 
-    Each cell = max(|pearson|, |spearman|, MI_normalized) across all ID pairs,
-    so nonlinear and bitfield correlations are captured.
+    NOTE: this correlates each ID's frame-*arrival* pattern (a histogram of when
+    its frames occur, binned across the capture window) — NOT the byte/signal
+    *values*. It surfaces IDs that tend to be transmitted together in time. For
+    byte-level value correlation, use core.correlation_engine instead.
+
+    Each cell = max(|Pearson|, |Spearman|, MI_normalized) of the two IDs' timing
+    histograms.
     """
     if df.empty:
         return pd.DataFrame()
@@ -207,6 +212,11 @@ def compute_correlation_matrix(df: pd.DataFrame) -> pd.DataFrame:
             matrix[j, i] = score
 
     return pd.DataFrame(matrix, index=id_list, columns=id_list)
+
+
+# Backwards-compatible alias. The old name implied signal-value correlation,
+# which this never computed; kept so existing callers keep working.
+compute_correlation_matrix = compute_timing_dependency_matrix
 
 
 def _dependency_score(a: np.ndarray, b: np.ndarray) -> float:

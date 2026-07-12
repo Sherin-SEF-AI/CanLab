@@ -71,7 +71,10 @@ class ZScoreBaseline:
 class IsolationForestBaseline:
     """Isolation Forest per ID.  Falls back to ZScoreBaseline if sklearn missing."""
 
-    def __init__(self, contamination: float = 0.05):
+    def __init__(self, contamination="auto"):
+        # "auto" uses the original Isolation Forest offset instead of asserting
+        # that 5% of the (supposedly clean) baseline is anomalous, which would
+        # otherwise flag ~5% of known-good frames.
         self._contamination = contamination
         self._models: dict[str, object]      = {}
         self._cols:   dict[str, list[str]]   = {}
@@ -99,7 +102,13 @@ class IsolationForestBaseline:
             return 0.0
         cols  = self._cols[can_id]
         model = self._models[can_id]
-        x = np.array([[float(row.get(c) or 0) for c in cols]])
+        # NaN-safe: a short-DLC byte is NaN; `nan or 0` is nan (NaN is truthy),
+        # and IsolationForest rejects NaN input.
+        vals = []
+        for c in cols:
+            v = row.get(c)
+            vals.append(0.0 if pd.isna(v) else float(v))
+        x = np.array([vals])
         # decision_function: negative scores → anomalous
         s = -float(model.decision_function(x)[0])
         return max(0.0, min(1.0, s + 0.5))

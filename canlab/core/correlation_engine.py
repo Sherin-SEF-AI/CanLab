@@ -75,21 +75,27 @@ def correlate_id_pair(frames_df: pd.DataFrame,
     if df1.empty or df2.empty:
         return []
 
-    t1 = df1["Timestamp"].values
-    t2 = df2["Timestamp"].values
     results = []
 
     for col1 in BYTE_COLS:
         if col1 not in df1.columns:
             continue
-        s1 = df1[col1].dropna().astype(float).values
+        # Drop NaN on (Timestamp, byte) TOGETHER so the value array stays
+        # index-aligned with its timestamp array. Dropping only the value series
+        # (as before) desynced values from timestamps and overran s1[i] on any
+        # short-DLC frame → IndexError / mismatched Pearson r.
+        sub1 = df1[["Timestamp", col1]].dropna()
+        s1 = sub1[col1].astype(float).values
+        t1 = sub1["Timestamp"].values
         if len(s1) < 20 or s1.std() < 0.1:
             continue
 
         for col2 in BYTE_COLS:
             if col2 not in df2.columns:
                 continue
-            s2 = df2[col2].dropna().astype(float).values
+            sub2 = df2[["Timestamp", col2]].dropna()
+            s2 = sub2[col2].astype(float).values
+            t2 = sub2["Timestamp"].values
             if len(s2) < 20 or s2.std() < 0.1:
                 continue
 

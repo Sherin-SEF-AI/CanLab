@@ -64,6 +64,15 @@ def signals_to_lua_dissector(signal_defs: List[dict]) -> str:
         '    if not can_id_fi then return end',
         '    local can_id = can_id_fi.value',
         '',
+        '    -- Signal bit offsets are relative to the CAN *data* field, not the',
+        '    -- full capture buffer. Extract the payload as its own tvb so the',
+        '    -- offsets line up.',
+        '    local data_buf = buffer',
+        '    if can_data_field then',
+        '        local can_data_fi = can_data_field()',
+        '        if can_data_fi then data_buf = can_data_fi.range:tvb() end',
+        '    end',
+        '',
         '    local subtree = tree:add(canlab_proto, buffer(), "CANLAB: " .. string.format("0x%03X", can_id))',
         '',
     ]
@@ -89,7 +98,7 @@ def signals_to_lua_dissector(signal_defs: List[dict]) -> str:
                 f'        -- {sname}: start={start} len={length} bo={bo}'
             )
             lines += [
-                f'        local raw_{safe} = extract_bits(buffer, {start}, {length}, "{bo}", {str(signed).lower()})',
+                f'        local raw_{safe} = extract_bits(data_buf, {start}, {length}, "{bo}", {str(signed).lower()})',
                 f'        local val_{safe} = raw_{safe} * {scale} + {offset}',
                 f'        subtree:add({field_var}, val_{safe}):append_text(" {unit}")',
             ]
