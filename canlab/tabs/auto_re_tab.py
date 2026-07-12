@@ -84,9 +84,21 @@ class AutoRETab(QWidget):
         self.btn_run_ctr.setEnabled(False)
         self.lbl_ctr_status.setText("Analysing…")
 
+        # Run the (heavy, iterrows-based) detection off the GUI thread so the
+        # window stays responsive and the "Analysing…" label can repaint.
         from core.counter_checksum_detector import detect_counters_and_checksums
-        results = detect_counters_and_checksums(df)
+        from ui.compute_worker import ComputeWorker
+        self._ctr_worker = ComputeWorker(detect_counters_and_checksums, df)
+        self._ctr_worker.done.connect(self._on_counter_checksum_done)
+        self._ctr_worker.failed.connect(self._on_counter_checksum_failed)
+        self._ctr_worker.start()
 
+    def _on_counter_checksum_failed(self, err: str):
+        self.lbl_ctr_status.setText(f"Error: {err}")
+        self.lbl_ctr_status.setStyleSheet(f"color:{COLORS['error']}")
+        self.btn_run_ctr.setEnabled(True)
+
+    def _on_counter_checksum_done(self, results: dict):
         rows = []
         for can_id, data in results.items():
             for ctr in data["counters"]:
@@ -183,8 +195,23 @@ class AutoRETab(QWidget):
         self.lbl_entropy_status.setText("Computing bit entropies…")
 
         from core.entropy_boundary import suggest_signals, detect_signal_boundaries
-        self._entropy_results = detect_signal_boundaries(df)
-        suggestions = suggest_signals(df)
+        from ui.compute_worker import ComputeWorker
+
+        def _compute(frames):
+            return detect_signal_boundaries(frames), suggest_signals(frames)
+
+        self._entropy_worker = ComputeWorker(_compute, df)
+        self._entropy_worker.done.connect(self._on_entropy_done)
+        self._entropy_worker.failed.connect(self._on_entropy_failed)
+        self._entropy_worker.start()
+
+    def _on_entropy_failed(self, err: str):
+        self.lbl_entropy_status.setText(f"Error: {err}")
+        self.lbl_entropy_status.setStyleSheet(f"color:{COLORS['error']}")
+        self.btn_run_entropy.setEnabled(True)
+
+    def _on_entropy_done(self, result):
+        self._entropy_results, suggestions = result
 
         self.entropy_table.setRowCount(len(suggestions))
         for r, s in enumerate(suggestions):
@@ -294,8 +321,19 @@ class AutoRETab(QWidget):
         self.btn_run_corr.setEnabled(False)
         self.lbl_corr_status.setText("Computing correlation matrix…")
 
-        from core.signal_analyzer import compute_correlation_matrix
-        corr_df = compute_correlation_matrix(df)
+        from core.signal_analyzer import compute_timing_dependency_matrix
+        from ui.compute_worker import ComputeWorker
+        self._corr_worker = ComputeWorker(compute_timing_dependency_matrix, df)
+        self._corr_worker.done.connect(self._on_correlation_done)
+        self._corr_worker.failed.connect(self._on_correlation_failed)
+        self._corr_worker.start()
+
+    def _on_correlation_failed(self, err: str):
+        self.lbl_corr_status.setText(f"Error: {err}")
+        self.lbl_corr_status.setStyleSheet(f"color:{COLORS['error']}")
+        self.btn_run_corr.setEnabled(True)
+
+    def _on_correlation_done(self, corr_df):
         if corr_df.empty:
             self.lbl_corr_status.setText("Not enough data.")
             self.btn_run_corr.setEnabled(True)

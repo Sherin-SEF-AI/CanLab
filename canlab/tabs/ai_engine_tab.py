@@ -512,14 +512,33 @@ class AIEngineTab(QWidget):
 
         return "\n".join(lines)
 
+    def _advance_queue(self, hex_id: str):
+        """Remove hex_id from the queue and process the next one (or finish)."""
+        if hex_id in self._queue:
+            self._queue.remove(hex_id)
+        done = self.queue_progress.maximum() - len(self._queue)
+        self.queue_progress.setValue(done)
+        if self._queue:
+            QTimer.singleShot(500, self._process_next_in_queue)
+        else:
+            self.queue_progress.setVisible(False)
+
     def _run_analysis(self, from_queue=False):
+        # Remember whether this run came from the batch queue so error/early-exit
+        # paths can still advance it (otherwise one failure freezes the queue
+        # with the progress bar stuck visible).
+        self._current_from_queue = from_queue
         if not self._current_id:
+            if from_queue:
+                self._advance_queue(self._current_id)
             return
         active_key = self._groq_key if self._provider == "Groq" else self._api_key
         if not active_key:
             self.response_text.setPlainText(
                 f"ERROR: No {self._provider} API key configured.\nGo to Settings > API Keys."
             )
+            if from_queue:
+                self._advance_queue(self._current_id)
             return
         frames  = self._state.get_frames_for_id(self._current_id)
         context = self.context_input.toPlainText()
@@ -596,14 +615,8 @@ class AIEngineTab(QWidget):
         if from_queue:
             self._save_to_memory_silent(full_response)
 
-        if from_queue and self._current_id in self._queue:
-            self._queue.remove(self._current_id)
-            done = self.queue_progress.maximum() - len(self._queue)
-            self.queue_progress.setValue(done)
-            if self._queue:
-                QTimer.singleShot(500, self._process_next_in_queue)
-            else:
-                self.queue_progress.setVisible(False)
+        if from_queue:
+            self._advance_queue(self._current_id)
 
     def _on_error(self, err: str):
         self._spinner.stop()
@@ -613,6 +626,9 @@ class AIEngineTab(QWidget):
         self.btn_analyze.setEnabled(True)
         flash_widget(self.response_text, COLORS.get("error", "#ff4444"), 600)
         self._update_queue_item(self._current_id, "error")
+        # Keep the batch queue moving instead of stalling on one failure.
+        if getattr(self, "_current_from_queue", False):
+            self._advance_queue(self._current_id)
 
     # ── Memory ────────────────────────────────────────────────────────────────
 

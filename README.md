@@ -109,7 +109,7 @@ python3 main.py
 | 7 | **INTELLIGENCE** | Cross-ID Pearson correlation. Lag sweep. Cosine similarity embedding search. |
 | 8 | **INJECTION** | Signal inject, CAN fuzzer (random/sequential/mutation), trigger rules, replay with loop + scrubber. |
 | 9 | **DIAGNOSTICS** | UDS deep scan, ISO-TP sessions, J1939 PGN decoder, OBD-II Mode 01, bus health monitor. |
-| 10 | **DASHBOARD** | Correlation heatmap (matplotlib plasma), message timeline, physical overlay gauges. |
+| 10 | **DASHBOARD** | Byte-value heatmap (matplotlib plasma), message timeline, physical overlay gauges. |
 | 11 | **AUTO-RE** | One-click counter/checksum detection across all IDs. 9 algorithms, confidence scoring. Entropy boundaries. |
 | 12 | **TIMELINE** | Scrubable multi-ID event timeline + VIDEO SYNC sub-tab (dashcam/bench video ↔ signal playhead). |
 | 13 | **OBD-II** | 26-PID live gauge grid. Auto-discovers supported PIDs. Configurable polling rate. |
@@ -189,9 +189,14 @@ python3 main.py
 | Standard DBC | Yes | Yes |
 | openpilot DBC | Yes (via opendbc cross-reference) | Yes |
 | Vector CANdb++ | No | Yes (BA\_DEF\_ attribute blocks) |
-| AUTOSAR ARXML 4.3 | Yes | Yes |
-| Wireshark Lua dissector | No | Yes |
+| AUTOSAR ARXML 4.3 | Yes | Experimental¹ |
+| Wireshark Lua dissector | No | Yes (little-endian²) |
 | Excel/CSV CAN matrix | Yes | No |
+
+¹ ARXML export round-trips within CanLab but is **not yet validated against the
+full AUTOSAR 4.3 schema** — do not rely on it in external AUTOSAR toolchains yet.
+² The Lua dissector currently decodes little-endian (Intel) signals; big-endian
+(Motorola) signals are not yet decoded.
 
 ---
 
@@ -211,14 +216,26 @@ Configure in **Settings > API Keys**. Groq's free tier is sufficient for hundred
 
 ## REST API
 
-Start via **Tools > Start REST API**. Default port 5000.
+Start via the **REST API** toolbar toggle. Binds to **127.0.0.1:8765** (loopback
+only). On start, the app shows a per-session **access token** — every request
+must send it as an `X-API-Token` header.
 
 ```bash
 GET  /frames            # last 200 loaded frames (append ?n=N to change limit)
 GET  /signals           # decoded DBC signals
 GET  /status            # connection state, frame count, repo URL, fingerprint
 GET  /memory            # AI memory entries
-POST /inject            # inject a raw CAN frame  {"id":"0x200","data":"01 02 03 04 05 06 07 08"}
+POST /inject            # inject a raw CAN frame  {"id":"0x200","data":"01 02 …","extended":false}
+```
+
+`POST /inject` additionally requires the global **ARM TX** toggle to be enabled;
+with TX disarmed it returns `409`. Example:
+
+```bash
+curl -X POST http://127.0.0.1:8765/inject \
+  -H "X-API-Token: <token shown on start>" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"0x200","data":"01 02 03 04 05 06 07 08"}'
 ```
 
 ---
@@ -297,6 +314,11 @@ Connecting CanLab to a vehicle's live CAN bus while using injection, replay, fuz
 - Cause unintended acceleration or braking
 
 Use `vcan0` (virtual CAN) or a benchtop ECU for all testing. The application shows a safety acknowledgement dialog on first launch.
+
+**Safety guards built in:**
+- **ARM TX toggle** — a global transmit gate (in the toolbar) that is **disarmed by default**. Injection, replay, fuzzing, gateway forwarding, and `POST /inject` all refuse to send until you explicitly arm it.
+- **UDS service scan** probes only read-only services by default; destructive services (ECUReset, ClearDTC, RoutineControl, RequestDownload, …) are skipped unless you tick "Include destructive services" and confirm.
+- **REST API** is loopback-only and token-authenticated.
 
 ---
 

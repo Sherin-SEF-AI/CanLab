@@ -3,7 +3,7 @@ import pandas as pd
 from PyQt6.QtCore import QThread, pyqtSignal
 
 GROQ_DEFAULT_MODEL      = "llama-3.3-70b-versatile"
-ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-4-6"
+ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-5"
 
 
 SYSTEM_PROMPT = """You are an expert automotive CAN bus reverse engineer specializing in Hyundai/Kia vehicles.

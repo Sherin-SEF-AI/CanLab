@@ -33,8 +33,19 @@ class FramesTab(QWidget):
         self._filter_bus = ""
         self._last_bytes: dict = {}
         self._build_ui()
-        self._state.frames_updated.connect(self._refresh)
+        # Coalesce rapid live-capture updates (frames_updated fires every ~50
+        # frames) into at most one full table rebuild per interval, so capture
+        # doesn't thrash the UI rebuilding thousands of QTableWidgetItems.
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(300)
+        self._refresh_timer.timeout.connect(self._refresh)
+        self._state.frames_updated.connect(self._schedule_refresh)
         self._state.id_selected.connect(self._filter_by_id)
+
+    def _schedule_refresh(self):
+        if not self._refresh_timer.isActive():
+            self._refresh_timer.start()
 
     def _build_ui(self):
         lay = QVBoxLayout(self)

@@ -618,13 +618,28 @@ class MainWindow(QMainWindow):
         self._state.can_connected.emit(True)
 
     def _on_worker_started(self):
-        # Share bus with state so injection + diagnostics can use it
-        QTimer.singleShot(500, self._share_bus)
+        # Share the bus handle with state so injection + diagnostics can use it.
+        # The Bus object is created inside the worker thread and may not exist
+        # immediately, so poll for it rather than assuming it's ready after a
+        # fixed 500 ms (slow USB/Panda opens raced that and left can_bus=None).
+        self._share_bus_attempts = 0
+        self._poll_share_bus()
 
-    def _share_bus(self):
-        if self._live_worker:
-            self._state.can_bus      = self._live_worker.get_bus()
+    def _poll_share_bus(self):
+        if not self._live_worker:
+            return
+        bus = self._live_worker.get_bus()
+        if bus is not None:
+            self._state.can_bus      = bus
             self._state.is_connected = True
+            return
+        self._share_bus_attempts += 1
+        if self._share_bus_attempts < 50:      # retry up to ~5 s
+            QTimer.singleShot(100, self._poll_share_bus)
+        else:
+            self.statusBar().showMessage(
+                "CAN bus handle not ready — injection/diagnostics unavailable", 5000
+            )
 
     def _disconnect_can(self):
         if self._live_worker:

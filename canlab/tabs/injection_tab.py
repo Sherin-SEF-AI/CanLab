@@ -485,7 +485,6 @@ class InjectionTab(QWidget):
             self.btn_trig_start.setText("Disable Triggers")
             self.btn_trig_start.setStyleSheet(f"color:{COLORS['error']}")
             self._trigger_timer.start()
-            self._state.frames_updated.connect(self._check_live_triggers)
         else:
             self.btn_trig_start.setText("Enable Triggers")
             self.btn_trig_start.setStyleSheet("")
@@ -524,7 +523,9 @@ class InjectionTab(QWidget):
         )
 
     def _poll_triggers(self):
-        pass  # triggers run on frames_updated signal
+        # Driven by the 200 ms timer while triggers are active. (Previously a
+        # no-op, so the timer did nothing.)
+        self._check_live_triggers()
 
     # ── Safety Scan sub-tab ───────────────────────────────────────────────────
 

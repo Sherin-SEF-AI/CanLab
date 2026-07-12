@@ -3,7 +3,7 @@ import pandas as pd
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QTreeWidget, QTreeWidgetItem,
-    QPushButton, QFileDialog, QLabel,
+    QPushButton, QFileDialog, QLabel, QMessageBox,
 )
 from PyQt6.QtCore import Qt
 from theme import COLORS, mono_font
@@ -97,6 +97,7 @@ class PlotTab(QWidget):
 
         self.glw = pg.GraphicsLayoutWidget()
         self.glw.setBackground(COLORS["bg"])
+        self.glw.scene().sigMouseMoved.connect(self._on_mouse_moved)
         right_lay.addWidget(self.glw)
 
         splitter.addWidget(right)
@@ -109,6 +110,20 @@ class PlotTab(QWidget):
         df = self._state.frames_df
         if df.empty:
             return
+
+        # During live capture frames_updated fires constantly but the set of IDs
+        # rarely changes. Rebuilding the tree every time discarded the user's
+        # checkbox selections and thrashed the UI. Only rebuild when the ID set
+        # (or the DBC signal set) actually changes, and preserve checks across it.
+        current_ids = tuple(sorted(df["ID"].unique()))
+        dbc_sig_count = len(self._state.dbc_signals)
+        signature = (current_ids, dbc_sig_count)
+        if signature == getattr(self, "_tree_signature", None):
+            return
+        self._tree_signature = signature
+
+        checked = self._checked_keys()
+
         self.sig_tree.blockSignals(True)
         self.sig_tree.clear()
         for can_id in sorted(df["ID"].unique()):
@@ -135,7 +150,37 @@ class PlotTab(QWidget):
                 child.setFont(0, mono_font())
                 parent.addChild(child)
             self.sig_tree.addTopLevelItem(parent)
+
+        # Restore previously-checked items that still exist after the rebuild.
+        if checked:
+            self._restore_checks(checked)
         self.sig_tree.blockSignals(False)
+
+    def _iter_tree_items(self):
+        root = self.sig_tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            parent = root.child(i)
+            yield parent
+            for j in range(parent.childCount()):
+                yield parent.child(j)
+
+    def _checked_keys(self) -> set:
+        keys = set()
+        for item in self._iter_tree_items():
+            data = item.data(0, Qt.ItemDataRole.UserRole)
+            if data and item.checkState(0) == Qt.CheckState.Checked:
+                kind, can_id, detail = data
+                keys.add((kind, can_id, str(detail)))
+        return keys
+
+    def _restore_checks(self, checked: set):
+        for item in self._iter_tree_items():
+            data = item.data(0, Qt.ItemDataRole.UserRole)
+            if not data:
+                continue
+            kind, can_id, detail = data
+            if (kind, can_id, str(detail)) in checked:
+                item.setCheckState(0, Qt.CheckState.Checked)
 
     def _on_item_checked(self, item: QTreeWidgetItem, col: int):
         data = item.data(0, Qt.ItemDataRole.UserRole)
@@ -295,13 +340,25 @@ class PlotTab(QWidget):
     # ── Mouse / export ────────────────────────────────────────────────────────
 
     def _on_mouse_moved(self, pos):
-        pass  # cursor label update handled per-PlotItem if needed
+        # Report data coordinates for whichever sub-plot the cursor is over.
+        for entry in self._plot_items.values():
+            pi = entry[0]
+            if pi.sceneBoundingRect().contains(pos):
+                pt = pi.getViewBox().mapSceneToView(pos)
+                self.lbl_cursor.setText(f"x: {pt.x():.3f}  y: {pt.y():.3f}")
+                return
+        self.lbl_cursor.setText("x: — y: —")
 
     def _screenshot(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save Screenshot", "plot.png", "PNG (*.png)")
-        if path:
-            exporter = pg.exporters.ImageExporter(self.glw.scene())
+        if not path:
+            return
+        try:
+            import pyqtgraph.exporters as pg_exporters   # not auto-imported by pyqtgraph
+            exporter = pg_exporters.ImageExporter(self.glw.scene())
             exporter.export(path)
+        except Exception as e:
+            QMessageBox.warning(self, "Screenshot", f"Could not save screenshot: {e}")
 
     def add_event_markers(self, events: list[dict]):
         for pi, curve, color, label in self._plot_items.values():

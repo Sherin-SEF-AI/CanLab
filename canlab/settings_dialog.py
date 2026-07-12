@@ -19,8 +19,8 @@ KEYRING_AI_MODEL    = "ai_model"
 # Provider → available models
 AI_MODELS = {
     "Anthropic": [
-        "claude-sonnet-4-6",
-        "claude-opus-4-7",
+        "claude-sonnet-5",
+        "claude-opus-4-8",
         "claude-haiku-4-5-20251001",
     ],
     "Groq": [
@@ -83,9 +83,9 @@ def save_ai_model(model: str):
 
 def load_ai_model() -> str:
     try:
-        return keyring.get_password(KEYRING_SERVICE, KEYRING_AI_MODEL) or "claude-sonnet-4-6"
+        return keyring.get_password(KEYRING_SERVICE, KEYRING_AI_MODEL) or "claude-sonnet-5"
     except Exception:
-        return "claude-sonnet-4-6"
+        return "claude-sonnet-5"
 
 
 class SettingsDialog(QDialog):
@@ -154,7 +154,7 @@ class SettingsDialog(QDialog):
         self.model_combo.setFont(mono_font(9))
         model_g_lay.addWidget(self.model_combo, 1, 1)
         hint_model = QLabel(
-            "Groq default: llama-3.3-70b-versatile  ·  Anthropic default: claude-sonnet-4-6"
+            "Groq default: llama-3.3-70b-versatile  ·  Anthropic default: claude-sonnet-5"
         )
         hint_model.setFont(mono_font(7))
         hint_model.setObjectName("label_dim")
