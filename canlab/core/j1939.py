@@ -178,12 +178,63 @@ def parse_j1939_id(arb_id: int) -> dict:
     }
 
 
+# FMI (Failure Mode Identifier) short names — SAE J1939-73 Appendix A.
+_FMI_NAMES = {
+    0: "Above normal (most severe)", 1: "Below normal (most severe)",
+    2: "Erratic/intermittent", 3: "Voltage above normal", 4: "Voltage below normal",
+    5: "Current below normal/open", 6: "Current above normal/grounded",
+    7: "Mechanical system not responding", 8: "Abnormal frequency/pulse width",
+    9: "Abnormal update rate", 10: "Abnormal rate of change",
+    11: "Root cause not known", 12: "Bad intelligent device", 13: "Out of calibration",
+    14: "Special instructions", 15: "Above normal (least severe)",
+    16: "Above normal (moderate)", 17: "Below normal (least severe)",
+    18: "Below normal (moderate)", 19: "Received network data in error",
+    31: "Condition exists",
+}
+
+
+def decode_dm1(data: bytes) -> dict:
+    """Decode a DM1 (active DTCs, PGN 0xFECA) frame.
+
+    Returns {"lamps": {...}, "dtcs": [{"spn","fmi","fmi_name","cm","oc"}]}.
+    Each DTC is 4 bytes after the 2-byte lamp header: SPN (19 bits), FMI (5),
+    CM (1), OC (7) per SAE J1939-73.
+    """
+    if len(data) < 2:
+        return {"lamps": {}, "dtcs": []}
+    lamp = data[0]
+    lamps = {
+        "malfunction": (lamp >> 6) & 0x03,   # MIL
+        "red_stop":    (lamp >> 4) & 0x03,
+        "amber_warn":  (lamp >> 2) & 0x03,
+        "protect":     lamp & 0x03,
+    }
+    dtcs = []
+    body = data[2:]
+    for i in range(0, len(body) - 3, 4):
+        b2, b3, b4, b5 = body[i], body[i + 1], body[i + 2], body[i + 3]
+        if (b2, b3, b4, b5) in ((0, 0, 0, 0), (0xFF, 0xFF, 0xFF, 0xFF)):
+            continue   # no/!available DTC slot
+        spn = b2 | (b3 << 8) | ((b4 & 0xE0) << 11)   # 19-bit SPN
+        fmi = b4 & 0x1F
+        cm  = (b5 >> 7) & 0x01
+        oc  = b5 & 0x7F
+        dtcs.append({
+            "spn": spn, "fmi": fmi, "fmi_name": _FMI_NAMES.get(fmi, f"FMI {fmi}"),
+            "cm": cm, "oc": oc,
+        })
+    return {"lamps": lamps, "dtcs": dtcs}
+
+
 def decode_pgn(pgn: int, data: bytes) -> dict:
     """
     Decode SPN values from `data` (8 bytes) for the given PGN.
 
     Returns {spn_name: (value, unit)} or {} if PGN unknown / data too short.
+    DM1 (0xFECA) is decoded into structured DTCs via decode_dm1.
     """
+    if pgn == 0xFECA:
+        return decode_dm1(data)
     info = _PGN_DB.get(pgn)
     if not info or not info.get("spns"):
         return {}

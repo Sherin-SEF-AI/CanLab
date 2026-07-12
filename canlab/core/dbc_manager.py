@@ -56,8 +56,16 @@ def signals_to_dbc_string(signal_defs: list[dict]) -> str:
             mn     = sig.get("min_val") or 0
             mx     = sig.get("max_val") or 0
             unit   = sig.get("unit", "")
+            # Multiplexing: "M" marks the multiplexor selector, "m<n>" marks a
+            # signal that is only present when the selector equals n.
+            if sig.get("mux_role") == "M":
+                mux = " M"
+            elif sig.get("mux_value") is not None:
+                mux = f" m{int(sig['mux_value'])}"
+            else:
+                mux = ""
             lines.append(
-                f" SG_ {sname} : {start}|{length}{bo}{signed}"
+                f" SG_ {sname}{mux} : {start}|{length}{bo}{signed}"
                 f" ({scale},{offset}) [{mn}|{mx}] \"{unit}\" Vector__XXX"
             )
         lines.append("")

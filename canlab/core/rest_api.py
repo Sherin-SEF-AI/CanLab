@@ -21,10 +21,57 @@ import secrets
 import ipaddress
 
 
+_DASHBOARD_HTML = """<!doctype html>
+<html><head><meta charset="utf-8"><title>CANLAB Live</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+ body{margin:0;font:13px ui-monospace,Menlo,Consolas,monospace;background:#0d0d0d;color:#d0d0d0}
+ header{padding:10px 14px;background:#111;border-bottom:1px solid #1f3a24;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+ h1{font-size:15px;margin:0;color:#3fd07a;letter-spacing:1px}
+ input{background:#0d0d0d;color:#d0d0d0;border:1px solid #333;border-radius:3px;padding:4px 6px;font:inherit}
+ .stat{color:#888}.stat b{color:#3fd07a}
+ table{border-collapse:collapse;width:100%}
+ th,td{padding:3px 8px;text-align:left;border-bottom:1px solid #181818;white-space:nowrap}
+ th{position:sticky;top:0;background:#111;color:#3fd07a}
+ td.b{color:#9fd0ff}#wrap{overflow:auto;max-height:calc(100vh - 52px)}
+ .err{color:#ff6b6b}
+</style></head><body>
+<header>
+ <h1>CANLAB LIVE</h1>
+ <label>X-API-Token <input id="tok" size="34" placeholder="paste token shown on start"></label>
+ <span class="stat">frames <b id="fc">-</b></span>
+ <span class="stat">bus <b id="cx">-</b></span>
+ <span class="stat" id="msg"></span>
+</header>
+<div id="wrap"><table><thead><tr id="hdr"></tr></thead><tbody id="rows"></tbody></table></div>
+<script>
+const $=id=>document.getElementById(id);
+const cols=["Timestamp","ID","Bus","DLC","B0","B1","B2","B3","B4","B5","B6","B7"];
+$("hdr").innerHTML=cols.map(c=>`<th>${c}</th>`).join("");
+$("tok").value=localStorage.getItem("canlab_tok")||"";
+async function tick(){
+ const t=$("tok").value.trim(); localStorage.setItem("canlab_tok",t);
+ if(!t){$("msg").textContent="enter token";$("msg").className="err";return;}
+ try{
+  const h={"X-API-Token":t};
+  const st=await fetch("/status",{headers:h}); if(st.status===401){$("msg").textContent="invalid token";return;}
+  const s=await st.json(); $("fc").textContent=s.frame_count; $("cx").textContent=s.connected?"connected":"off"; $("msg").textContent="";
+  const fr=await(await fetch("/frames?n=60",{headers:h})).json();
+  $("rows").innerHTML=fr.slice().reverse().map(r=>"<tr>"+cols.map(c=>{
+    let v=r[c]; if(v==null)v="";
+    else if(c==="Timestamp")v=(+v).toFixed(3);
+    else if(c[0]==="B"&&v!=="")v=(+v).toString(16).padStart(2,"0").toUpperCase();
+    return `<td class="${c[0]==='B'?'b':''}">${v}</td>`;}).join("")+"</tr>").join("");
+ }catch(e){$("msg").textContent=String(e);$("msg").className="err";}
+}
+setInterval(tick,1000); tick();
+</script></body></html>"""
+
+
 def _build_app(state_getter, token: str):
     try:
         from fastapi import FastAPI, HTTPException, Header, Depends
-        from fastapi.responses import JSONResponse
+        from fastapi.responses import JSONResponse, HTMLResponse
         from pydantic import BaseModel
     except ImportError:
         return None
@@ -34,15 +81,21 @@ def _build_app(state_getter, token: str):
             raise HTTPException(status_code=401,
                                 detail="Missing or invalid X-API-Token header")
 
-    app = FastAPI(title="CANLAB REST API", version="1.1",
-                  dependencies=[Depends(require_token)])
+    # Data endpoints require the token (per-route); the "/" dashboard shell is
+    # open (it's just static HTML that asks the user to paste the token).
+    app = FastAPI(title="CANLAB REST API", version="1.2")
+    auth = [Depends(require_token)]
+
+    @app.get("/", response_class=HTMLResponse)
+    def dashboard():
+        return _DASHBOARD_HTML
 
     class InjectRequest(BaseModel):
         id:   str            # hex, e.g. "018"
         data: str            # hex bytes space-separated, e.g. "01 02 03 04 05 06 07 08"
         extended: bool = False
 
-    @app.get("/frames")
+    @app.get("/frames", dependencies=auth)
     def get_frames(n: int = 200):
         state = state_getter()
         if state.frames_df.empty:
@@ -51,12 +104,12 @@ def _build_app(state_getter, token: str):
         tail = state.frames_df.tail(n)
         return JSONResponse(content=tail.to_dict(orient="records"))
 
-    @app.get("/signals")
+    @app.get("/signals", dependencies=auth)
     def get_signals():
         state = state_getter()
         return JSONResponse(content=state.dbc_signals)
 
-    @app.get("/status")
+    @app.get("/status", dependencies=auth)
     def get_status():
         state = state_getter()
         return JSONResponse(content={
@@ -66,12 +119,12 @@ def _build_app(state_getter, token: str):
             "fingerprint":  state.fingerprint,
         })
 
-    @app.get("/memory")
+    @app.get("/memory", dependencies=auth)
     def get_memory():
         state = state_getter()
         return JSONResponse(content=state.ai_memory)
 
-    @app.post("/inject")
+    @app.post("/inject", dependencies=auth)
     def inject_frame(req: InjectRequest):
         import can
         from core.safety import is_armed
