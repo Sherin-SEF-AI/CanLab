@@ -178,9 +178,14 @@ def decode_pid(pid: int, data: bytes) -> float | None:
         return None
 
 
-def supported_pids_from_mask(pid00_data: bytes) -> list[int]:
-    """Parse the 4-byte bit-mask response from PID 0x00 into a list of PIDs 1–32."""
-    if len(pid00_data) < 4:
+def supported_pids_from_mask(mask_data: bytes, base: int = 0x00) -> list[int]:
+    """Parse a 4-byte 'supported PIDs' bit-mask into a list of PID numbers.
+
+    ``base`` is the query PID (0x00, 0x20, 0x40, 0x60, 0x80, 0xA0, 0xC0). Bit i
+    (MSB first) of the mask means PID ``base + i`` is supported, so this decodes
+    the continuation windows too, not just PIDs 1–32.
+    """
+    if len(mask_data) < 4:
         return []
-    mask = (pid00_data[0] << 24) | (pid00_data[1] << 16) | (pid00_data[2] << 8) | pid00_data[3]
-    return [i for i in range(1, 33) if mask & (1 << (32 - i))]
+    mask = (mask_data[0] << 24) | (mask_data[1] << 16) | (mask_data[2] << 8) | mask_data[3]
+    return [base + i for i in range(1, 33) if mask & (1 << (32 - i))]

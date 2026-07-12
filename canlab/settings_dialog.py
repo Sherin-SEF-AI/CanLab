@@ -495,9 +495,11 @@ class SettingsDialog(QDialog):
 
     def get_can_settings(self) -> dict:
         return {
-            "interface": self.iface_combo.currentText(),
-            "channel":   self.channel_edit.text(),
-            "bitrate":   int(self.bitrate_combo.currentText()),
+            "interface":   self.iface_combo.currentText(),
+            "channel":     self.channel_edit.text(),
+            "bitrate":     int(self.bitrate_combo.currentText()),
+            "fd":          self.chk_canfd.isChecked(),
+            "data_bitrate": int(self.fd_bitrate_combo.currentText()),
         }
 
     def get_github_url(self) -> str:

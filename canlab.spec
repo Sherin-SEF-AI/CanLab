@@ -25,6 +25,9 @@ a = Analysis(
         # PyQt6
         "PyQt6", "PyQt6.QtCore", "PyQt6.QtWidgets", "PyQt6.QtGui",
         "PyQt6.QtNetwork", "PyQt6.QtTest", "PyQt6.sip",
+        # QtMultimedia — used by the TIMELINE tab's video sync. TimelineTab is
+        # imported at startup, so omitting these crashes the bundled binary.
+        "PyQt6.QtMultimedia", "PyQt6.QtMultimediaWidgets",
         # cantools / can
         "cantools", "cantools.database", "cantools.database.can",
         "can", "can.interfaces", "can.interfaces.socketcan",

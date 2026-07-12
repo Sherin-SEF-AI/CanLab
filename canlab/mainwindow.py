@@ -43,7 +43,8 @@ class LiveCANWorker(QThread):
     frame_received = pyqtSignal(object)
     error          = pyqtSignal(str)
 
-    def __init__(self, interface, channel, bitrate, bus=None, parent=None):
+    def __init__(self, interface, channel, bitrate, bus=None, parent=None,
+                 fd=False, data_bitrate=None):
         """
         If `bus` is provided (e.g. PandaBus), it is used directly instead of
         creating a new python-can Bus. This is the pluggable-backend entry point.
@@ -52,6 +53,8 @@ class LiveCANWorker(QThread):
         self._interface   = interface
         self._channel     = channel
         self._bitrate     = bitrate
+        self._fd          = fd
+        self._data_bitrate = data_bitrate
         self._injected_bus = bus   # pre-created Bus (Panda, virtual, etc.)
         self._running     = True
         self._bus         = None
@@ -64,11 +67,16 @@ class LiveCANWorker(QThread):
             if self._injected_bus is not None:
                 self._bus = self._injected_bus
             else:
-                self._bus = can.interface.Bus(
+                kwargs = dict(
                     channel=self._channel,
                     bustype=self._interface,
                     bitrate=self._bitrate,
                 )
+                if self._fd:
+                    kwargs["fd"] = True
+                    if self._data_bitrate:
+                        kwargs["data_bitrate"] = self._data_bitrate
+                self._bus = can.interface.Bus(**kwargs)
             while self._running:
                 msg = self._bus.recv(timeout=0.1)
                 if msg:
@@ -586,6 +594,8 @@ class MainWindow(QMainWindow):
         iface   = self._can_settings["interface"]
         channel = self._can_settings["channel"]
         bitrate = self._can_settings["bitrate"]
+        fd            = self._can_settings.get("fd", False)
+        data_bitrate  = self._can_settings.get("data_bitrate")
 
         # Panda backend support
         injected_bus = None
@@ -608,7 +618,8 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.warning(self, "Panda Error", str(e))
 
-        self._live_worker = LiveCANWorker(iface, channel, bitrate, bus=injected_bus)
+        self._live_worker = LiveCANWorker(iface, channel, bitrate, bus=injected_bus,
+                                          fd=fd, data_bitrate=data_bitrate)
         self._live_worker.frame_received.connect(self._on_live_frame)
         self._live_worker.error.connect(self._on_live_error)
         self._live_worker.started.connect(self._on_worker_started)
