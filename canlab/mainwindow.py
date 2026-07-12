@@ -220,6 +220,15 @@ class MainWindow(QMainWindow):
         self._act_disconnect.setEnabled(False)
         tb.addSeparator()
 
+        # Global transmit safety gate — disarmed by default. Nothing (injection,
+        # replay, fuzz, gateway) can write to the bus until the user arms it.
+        self._act_arm = QAction("ARM TX: OFF", self)
+        self._act_arm.setCheckable(True)
+        self._act_arm.setToolTip("Arm/disarm bus transmit. Off = no frames can be sent.")
+        self._act_arm.toggled.connect(self._toggle_arm)
+        tb.addAction(self._act_arm)
+        tb.addSeparator()
+
         # AI + DBC
         act("Run AI RE",  self._run_ai_re,     "AI-analyze all unknown IDs")
         act("Export DBC", self._export_dbc,    "Export DBC file")
@@ -584,7 +593,11 @@ class MainWindow(QMainWindow):
             try:
                 from core.panda_backend import PandaBus, is_available
                 if is_available():
-                    injected_bus = PandaBus(bus_index=0, bitrate=bitrate)
+                    injected_bus = PandaBus(
+                        bus_index=0, bitrate=bitrate,
+                        safety_model=getattr(self._state, "panda_safety_model",
+                                             "SAFETY_NOOUTPUT"),
+                    )
                 else:
                     QMessageBox.warning(
                         self, "Panda",
@@ -666,6 +679,27 @@ class MainWindow(QMainWindow):
 
     # ── REST API ──────────────────────────────────────────────────────────────
 
+    def _toggle_arm(self, checked: bool):
+        from core.safety import set_armed
+        if checked:
+            ok = QMessageBox.warning(
+                self, "Arm Bus Transmit",
+                "Arming enables injection, replay, fuzzing, and gateway forwarding "
+                "to write frames onto the connected bus.\n\n"
+                "Only arm on an isolated bench setup — never on a vehicle you are "
+                "driving. Arm transmit now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if ok != QMessageBox.StandardButton.Yes:
+                self._act_arm.setChecked(False)   # reverts text via toggled
+                return
+        set_armed(checked)
+        self._act_arm.setText("ARM TX: ON" if checked else "ARM TX: OFF")
+        self.statusBar().showMessage(
+            "Bus transmit ARMED" if checked else "Bus transmit disarmed", 3000
+        )
+
     def _toggle_rest_api(self):
         if not self._state.rest_api_running:
             self._start_rest_api()
@@ -682,8 +716,17 @@ class MainWindow(QMainWindow):
             self._rest_api_server.start()
             self._state.rest_api_running = True
             self._act_rest.setText(f"REST API: ON :{self._state.rest_api_port}")
+            token = self._rest_api_server.token
             self.statusBar().showMessage(
-                f"REST API running on port {self._state.rest_api_port}", 4000
+                f"REST API running on 127.0.0.1:{self._state.rest_api_port}", 4000
+            )
+            QMessageBox.information(
+                self, "REST API — Access Token",
+                "The REST API is running on 127.0.0.1:"
+                f"{self._state.rest_api_port}.\n\n"
+                "Every request (including POST /inject) requires this header:\n\n"
+                f"    X-API-Token: {token}\n\n"
+                "Keep it secret — anyone with this token can inject CAN frames.",
             )
         except Exception as e:
             QMessageBox.warning(self, "REST API", f"Could not start: {e}")

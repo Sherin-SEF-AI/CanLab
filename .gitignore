@@ -42,3 +42,7 @@ htmlcov/
 
 # Claude memory (project-local)
 .claude/
+
+# Nested third-party repo (CSS Electronics skills) — keep out of this repo
+can-bus-reverse-engineering-skills/
+can-bus-reverse-engineering-skills

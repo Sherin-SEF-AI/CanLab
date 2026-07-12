@@ -9,6 +9,7 @@ from PyQt6.QtGui import QColor, QBrush, QFont
 
 from theme import COLORS, mono_font
 from core.state import get_state
+from core.canid import normalize_id
 
 
 _DIR_OPTIONS    = ["A→B", "B→A", "Both"]
@@ -239,12 +240,12 @@ class GatewayTab(QWidget):
         except ValueError:
             mod_val = 0
         rule = {
-            "id":        self.rule_id.text().strip().upper().lstrip("0X"),
+            "id":        normalize_id(self.rule_id.text()),
             "direction": self.rule_dir.currentText(),
             "action":    self.rule_action.currentText(),
             "mod_byte":  self.rule_byte.value(),
             "mod_val":   mod_val,
-            "new_id":    self.rule_new_id.text().strip().upper().lstrip("0X"),
+            "new_id":    normalize_id(self.rule_new_id.text()) if self.rule_new_id.text().strip() else "",
             "label":     self.rule_label.text().strip() or f"Rule {len(self._rules)+1}",
         }
         self._rules.append(rule)

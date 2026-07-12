@@ -181,13 +181,15 @@ class OBDDashboardTab(QWidget):
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return
         from core.obd2_poller import OBD2Poller
-        disc = OBD2Poller(bus=bus, pids=[], discover_only=True)
-        disc.pids_discovered.connect(self._on_pids_discovered)
-        disc.error.connect(lambda e: QMessageBox.warning(self, "Discover Error", e))
-        disc.start()
+        # Store on self: a local QThread is garbage-collected when this method
+        # returns, crashing with "QThread: Destroyed while thread is running".
+        self._discover_worker = OBD2Poller(bus=bus, pids=[], discover_only=True)
+        self._discover_worker.pids_discovered.connect(self._on_pids_discovered)
+        self._discover_worker.error.connect(lambda e: QMessageBox.warning(self, "Discover Error", e))
+        self._discover_worker.start()
         self.btn_discover.setText("Discovering…")
         self.btn_discover.setEnabled(False)
-        disc.finished.connect(lambda: (
+        self._discover_worker.finished.connect(lambda: (
             self.btn_discover.setText("Auto-discover…"),
             self.btn_discover.setEnabled(True),
         ))

@@ -18,6 +18,7 @@ Profile JSON format:
 """
 import json
 import os
+import re
 import urllib.request
 from pathlib import Path
 from typing import Callable, Optional
@@ -45,11 +46,29 @@ def list_local_profiles() -> list[dict]:
     return profiles
 
 
+def _safe_profile_id(pid) -> str:
+    """Reduce a profile id to a bare, traversal-free filename stem.
+
+    A remotely-fetched profile controls ``id``; without sanitization an id like
+    ``"../../.canlab/plugins/evil"`` would let a community profile write files
+    outside the profiles directory (e.g. an auto-loaded plugin). Keep only safe
+    characters and never allow path separators or ``..``.
+    """
+    pid = str(pid) if pid is not None else "unknown"
+    pid = re.sub(r"[^A-Za-z0-9._-]", "_", pid)   # drop path separators & other chars
+    pid = re.sub(r"\.+", ".", pid)               # collapse dot runs (no "..")
+    pid = pid.strip("._-") or "unknown"          # no leading/trailing dots
+    return pid[:128]
+
+
 def save_profile(profile: dict) -> Path:
-    """Save a profile dict to ~/.canlab/profiles/<id>.json."""
+    """Save a profile dict to ~/.canlab/profiles/<id>.json (sandboxed)."""
     PROFILES_DIR.mkdir(parents=True, exist_ok=True)
-    pid  = profile.get("id", "unknown")
-    dest = PROFILES_DIR / f"{pid}.json"
+    pid  = _safe_profile_id(profile.get("id", "unknown"))
+    dest = (PROFILES_DIR / f"{pid}.json").resolve()
+    # Defense in depth: the resolved path must stay inside PROFILES_DIR.
+    if PROFILES_DIR.resolve() not in dest.parents:
+        raise ValueError(f"Unsafe profile id: {profile.get('id')!r}")
     dest.write_text(json.dumps(profile, indent=2))
     return dest
 

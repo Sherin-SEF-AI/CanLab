@@ -137,6 +137,12 @@ class GatewayWorker(QThread):
         self.wait(3000)
 
     def run(self):
+        from core.safety import require_armed, BusNotArmedError
+        try:
+            require_armed()
+        except BusNotArmedError as e:
+            self.error.emit(str(e))
+            return
         try:
             bus_a = _open_bus(self._cfg_a)
             bus_b = _open_bus(self._cfg_b)
@@ -178,12 +184,17 @@ class GatewayWorker(QThread):
                     self._maybe_emit_stats()
                     continue
 
-                if action == "Modify" and matched_rule:
+                # Apply id/byte rewrites for any matched non-Block rule so that a
+                # non-empty new_id rewrites the arbitration ID for Pass rules too
+                # (per the rule schema), not only for Modify.
+                if matched_rule:
                     new_arb, new_data = _apply_rule(matched_rule, arb_id, data)
+
+                if action == "Modify":
                     self._stats["modified"] += 1
                     self.frame_modified.emit(src, new_arb, new_data)
                 else:
-                    self.frame_forwarded.emit(src, arb_id, data)
+                    self.frame_forwarded.emit(src, new_arb, new_data)
 
                 # Forward to the opposite bus
                 dest_bus = bus_b if src == "A→B" else bus_a

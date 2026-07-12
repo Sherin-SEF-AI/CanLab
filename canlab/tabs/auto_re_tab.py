@@ -18,6 +18,7 @@ from PyQt6.QtGui import QColor, QBrush
 
 from theme import COLORS, mono_font
 from core.state import get_state
+from core.canid import normalize_id
 
 
 class AutoRETab(QWidget):
@@ -218,7 +219,7 @@ class AutoRETab(QWidget):
         id_item = self.entropy_table.item(row, 0)
         if not id_item:
             return
-        can_id = id_item.text().lstrip("0x")
+        can_id = normalize_id(id_item.text())
         df = self._state.frames_df
         if df.empty or can_id not in df["ID"].values:
             return

@@ -64,29 +64,48 @@ class PandaBus:
             "SAFETY_ALLOUTPUT":  panda.Panda.SAFETY_ALLOUTPUT,
             "SAFETY_ELM327":     panda.Panda.SAFETY_ELM327,
         }
+        self._safety_model = safety_model
         sm = safety_map.get(safety_model, panda.Panda.SAFETY_NOOUTPUT)
         self._p.set_safety_mode(sm)
 
         self._running = True
-        self._rx_buf  = []
+        self._rx_buf  = []   # frames pulled from a batch but not yet returned
 
     def recv(self, timeout: float = 0.1) -> Optional[_FakeMessage]:
-        """Block up to `timeout` seconds and return first available message."""
+        """Block up to `timeout` seconds and return the next available message.
+
+        can_recv() returns a whole batch; buffer every matching frame so none
+        are dropped between successive recv() calls.
+        """
+        if self._rx_buf:
+            return self._rx_buf.pop(0)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             msgs = self._p.can_recv()
             for addr, _, dat, src in msgs:
                 if src == self._bus_index:
-                    return _FakeMessage(
+                    self._rx_buf.append(_FakeMessage(
                         arbitration_id=addr,
                         data=bytes(dat),
                         timestamp=time.time(),
-                    )
+                    ))
+            if self._rx_buf:
+                return self._rx_buf.pop(0)
             time.sleep(0.005)
         return None
 
     def send(self, msg) -> None:
-        """Send a message (accepts python-can Message or _FakeMessage)."""
+        """Send a message (accepts python-can Message or _FakeMessage).
+
+        In SAFETY_NOOUTPUT mode the Panda hardware silently drops all TX. Raise
+        instead of pretending the send succeeded, so injection/replay/fuzz
+        surface the misconfiguration rather than appearing to work.
+        """
+        if self._safety_model == "SAFETY_NOOUTPUT":
+            raise RuntimeError(
+                "Panda is in SAFETY_NOOUTPUT mode — transmit is disabled by the "
+                "hardware. Select an output-capable safety mode to send frames."
+            )
         arb_id = msg.arbitration_id
         data   = bytes(msg.data)
         self._p.can_send(arb_id, data, self._bus_index)

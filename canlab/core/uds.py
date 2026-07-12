@@ -38,6 +38,27 @@ UDS_SERVICES = {
 
 FUNCTIONAL_REQUEST_ID = 0x7DF
 
+# UDS services that can change ECU/vehicle state. Probing these — even with a
+# reserved subfunction — can reset ECUs, clear diagnostics, start routines,
+# begin a firmware download, or (via SecurityAccess) trip an attempt lockout.
+# The service scan SKIPS these unless explicitly run with allow_unsafe=True.
+DESTRUCTIVE_SERVICES = {
+    0x11: "ECUReset",
+    0x14: "ClearDiagnosticInformation",
+    0x27: "SecurityAccess (lockout risk)",
+    0x28: "CommunicationControl",
+    0x2C: "DynamicallyDefineDataIdentifier",
+    0x2E: "WriteDataByIdentifier",
+    0x2F: "InputOutputControlByIdentifier",
+    0x31: "RoutineControl",
+    0x34: "RequestDownload",
+    0x35: "RequestUpload",
+    0x36: "TransferData",
+    0x37: "RequestTransferExit",
+    0x38: "RequestFileTransfer",
+    0x3D: "WriteMemoryByAddress",
+}
+
 # UDS Data Identifiers for ECU information
 UDS_DATA_IDS = {
     0xF186: "ActiveDiagnosticSession",
@@ -86,12 +107,16 @@ class UDSScanner(QThread):
     error        = pyqtSignal(str)
 
     def __init__(self, bus, mode: str = "PID", ecu_addr: int = 0x7DF,
-                 parent=None):
+                 parent=None, allow_unsafe: bool = False):
         super().__init__(parent)
         self._bus      = bus
         self._mode     = mode       # "PID" | "DTC" | "DEEP" | "SERVICES"
         self._ecu_addr = ecu_addr   # 0x7DF = functional, 0x7E0-0x7EF = physical
         self._running  = True
+        # When False (default) the SERVICES scan skips DESTRUCTIVE_SERVICES so a
+        # "which services are supported" probe cannot reset ECUs or clear DTCs
+        # on a live bus.
+        self._allow_unsafe = allow_unsafe
 
     def stop(self):
         self._running = False
@@ -278,10 +303,19 @@ class UDSScanner(QThread):
         against the functional address.
         """
         import time
-        self.status.emit("Scanning supported UDS services (0x10–0x3E)…")
+        if self._allow_unsafe:
+            self.status.emit("Scanning ALL UDS services (0x10–0x3E) — UNSAFE mode…")
+        else:
+            self.status.emit("Scanning read-only UDS services (0x10–0x3E; "
+                             "destructive services skipped)…")
         for svc_id in range(0x10, 0x3F):
             if not self._running:
                 break
+            if not self._allow_unsafe and svc_id in DESTRUCTIVE_SERVICES:
+                self.status.emit(f"  ⚠ skipped {DESTRUCTIVE_SERVICES[svc_id]} "
+                                 f"(0x{svc_id:02X}) — enable unsafe scan to probe")
+                self.service_result.emit(FUNCTIONAL_REQUEST_ID, svc_id, False, b"")
+                continue
             resp = self._send_and_recv(
                 bytes([0x02, svc_id, 0x00, 0, 0, 0, 0, 0]),
                 timeout=0.15,

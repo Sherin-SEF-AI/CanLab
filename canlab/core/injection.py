@@ -44,8 +44,8 @@ class InjectionWorker(QThread):
     tick     = pyqtSignal(str, float)   # sig_name, value
 
     def __init__(self, bus, sig: dict, value: float,
-                 period_ms: int = 10, apply_checksum: bool = True,
-                 apply_counter: bool = True, parent=None):
+                 period_ms: int = 10, apply_checksum: bool = False,
+                 apply_counter: bool = False, parent=None):
         super().__init__(parent)
         self._bus            = bus
         self._sig            = sig
@@ -62,6 +62,7 @@ class InjectionWorker(QThread):
     def run(self):
         import time
         import can
+        from core.safety import require_armed, BusNotArmedError
         try:
             mid_str = self._sig.get("message_id", "0")
             mid = int(mid_str, 16) if mid_str else 0
@@ -70,6 +71,7 @@ class InjectionWorker(QThread):
 
         while self._running:
             try:
+                require_armed()
                 data = pack_signal(self._value, self._sig)
                 if self._apply_counter:
                     self._counter = (self._counter + 1) & 0x0F
@@ -85,10 +87,13 @@ class InjectionWorker(QThread):
                 self.tick.emit(
                     self._sig.get("signal_name", "?"), self._value
                 )
+            except BusNotArmedError as e:
+                self.error.emit(str(e))
+                self._running = False
+                break
             except Exception as e:
                 self.error.emit(str(e))
-            import time as _t
-            _t.sleep(self._period_ms / 1000.0)
+            time.sleep(self._period_ms / 1000.0)
 
     def set_value(self, v: float):
         self._value = v

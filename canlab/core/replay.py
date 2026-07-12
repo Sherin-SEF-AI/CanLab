@@ -17,7 +17,7 @@ class ReplayWorker(QThread):
         super().__init__(parent)
         self._bus      = bus
         self._df       = frames_df.copy()
-        self._speed    = max(0.1, speed)
+        self._speed    = min(max(0.1, speed), 100.0)   # clamp: no unbounded flood
         self._running  = True
         self._paused   = False
         self._loop     = loop
@@ -38,7 +38,7 @@ class ReplayWorker(QThread):
         return self._paused
 
     def set_speed(self, speed: float):
-        self._speed = max(0.1, speed)
+        self._speed = min(max(0.1, speed), 100.0)
 
     def seek(self, idx: int):
         """Jump playback to frame index idx on the next loop iteration check."""
@@ -46,9 +46,16 @@ class ReplayWorker(QThread):
 
     def run(self):
         import can
+        from core.safety import require_armed, BusNotArmedError
         rows = self._df.sort_values("Timestamp").reset_index(drop=True)
         n    = len(rows)
         if n == 0:
+            self.finished.emit()
+            return
+        try:
+            require_armed()
+        except BusNotArmedError as e:
+            self.error.emit(str(e))
             self.finished.emit()
             return
 
@@ -79,7 +86,15 @@ class ReplayWorker(QThread):
                 elapsed = time.monotonic() - t0_real
                 wait = target_offset - elapsed
                 if wait > 0:
-                    time.sleep(wait)
+                    # Interruptible: a long inter-frame gap must not block stop().
+                    end = time.monotonic() + wait
+                    while self._running:
+                        remaining = end - time.monotonic()
+                        if remaining <= 0:
+                            break
+                        time.sleep(min(0.05, remaining))
+                if not self._running:
+                    break
 
                 try:
                     raw_id = row.get("ID", "0")

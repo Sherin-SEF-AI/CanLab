@@ -106,6 +106,8 @@ class TestSequenceWorker(QThread):
         if step.step_type == StepType.INJECT:
             try:
                 import can
+                from core.safety import require_armed
+                require_armed()
                 data = bytearray(8)
                 data[step.byte_idx] = step.value & 0xFF
                 msg = can.Message(

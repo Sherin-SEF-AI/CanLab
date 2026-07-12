@@ -23,8 +23,8 @@ class BusHealthMeter:
     the current health dict and emit it.
     """
 
-    def __init__(self, window_seconds: float = 5.0):
-        self._load_meter     = BusLoadMeter(bitrate=500_000, window=window_seconds)
+    def __init__(self, window_seconds: float = 5.0, bitrate: int = 500_000):
+        self._load_meter     = BusLoadMeter(bitrate=bitrate, window_ms=int(window_seconds * 1000))
         self._window         = window_seconds
         self._error_frames   = 0
         self._bus_off_events = 0
@@ -36,6 +36,7 @@ class BusHealthMeter:
         self._last_seen: dict[str, float] = {}
         self._periods:   dict[str, float] = {}   # estimated period per ID (seconds)
         self._gap_alerts: list[str]       = []
+        self._last_ts:    float           = 0.0   # most recent frame timestamp seen
 
     def add_frame(self, dlc: int, timestamp: float, can_id: str = "",
                   is_error: bool = False):
@@ -50,6 +51,8 @@ class BusHealthMeter:
             if dlc == 0:
                 self._bus_off_events += 1
             return  # error frames don't count toward load
+
+        self._last_ts = timestamp
 
         # Load meter
         load = self._load_meter.add_frame(dlc, timestamp)
@@ -73,9 +76,14 @@ class BusHealthMeter:
         """
         Check for IDs that have gone silent (gap > 3× estimated period).
         Returns list of IDs that appear to have dropped off the bus.
+
+        ``now`` defaults to the timestamp of the most recently ingested frame so
+        that gap detection uses the same time base the frames were stamped with
+        (log time or wall-clock) — never a monotonic clock, which would not be
+        comparable to the stored per-ID timestamps.
         """
         if now is None:
-            now = time.monotonic()
+            now = self._last_ts
         silent = []
         for can_id, last_ts in self._last_seen.items():
             period = self._periods.get(can_id, 1.0)

@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
 from theme import COLORS, mono_font
 from core.state import get_state
+from core.canid import normalize_id
 from core.dbc_manager import signals_to_dbc_string, load_dbc, decode_frame, validate_signals
 
 BYTE_COLS = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
@@ -254,7 +255,7 @@ class DBCBuilderTab(QWidget):
 
     def _collect_form(self) -> dict:
         return {
-            "message_id":   self.f_msg_id.text().lstrip("0x").upper() or "000",
+            "message_id":   normalize_id(self.f_msg_id.text()) or "000",
             "message_name": self.f_msg_name.text() or "MSG",
             "signal_name":  self.f_sig_name.text() or "Signal",
             "unit":         self.f_unit.text(),

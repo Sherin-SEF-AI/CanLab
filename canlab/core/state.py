@@ -83,6 +83,7 @@ class AppState(QObject):
         self.notes_by_signal:   dict         = {}   # "{msg_id}/{sig_name}" -> str
         self.fuzz_running:      bool         = False
         self.active_backend:    str          = "python-can"
+        self.panda_safety_model: str         = "SAFETY_NOOUTPUT"
         self.community_profiles: list        = []
         self.community_profiles_url: str     = (
             "https://raw.githubusercontent.com/commaai/opendbc/master/"
@@ -148,7 +149,8 @@ class AppState(QObject):
     def get_frames_for_id(self, hex_id: str) -> pd.DataFrame:
         if self.frames_df.empty:
             return pd.DataFrame()
-        return self.frames_df[self.frames_df["ID"] == hex_id].copy()
+        from core.canid import normalize_id
+        return self.frames_df[self.frames_df["ID"] == normalize_id(hex_id)].copy()
 
     def get_unique_ids(self) -> list:
         if self.frames_df.empty:

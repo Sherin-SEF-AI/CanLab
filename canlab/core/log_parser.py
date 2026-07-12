@@ -196,12 +196,9 @@ def parse_candump_fd(filepath: str) -> pd.DataFrame:
 
 
 def _normalize_id(val) -> str:
-    try:
-        if isinstance(val, str):
-            return format(int(val, 16), "03X")
-        return format(int(val), "03X")
-    except (ValueError, TypeError):
-        return str(val).upper()
+    # Kept for backwards compatibility; canonical logic lives in core.canid.
+    from core.canid import normalize_id
+    return normalize_id(val)
 
 
 def _compute_delta(df: pd.DataFrame) -> pd.Series:

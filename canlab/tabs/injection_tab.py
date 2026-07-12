@@ -10,6 +10,7 @@ from PyQt6.QtGui import QColor, QBrush
 
 from theme import COLORS, mono_font
 from core.state import get_state
+from core.canid import normalize_id
 
 
 class InjectionTab(QWidget):
@@ -451,7 +452,7 @@ class InjectionTab(QWidget):
 
     def _add_trigger_rule(self):
         rule = {
-            "id":      self.trig_id.text().strip().lstrip("0x"),
+            "id":      normalize_id(self.trig_id.text()),
             "byte":    self.trig_byte.value(),
             "op":      self.trig_op.currentText(),
             "value":   self.trig_val.value(),

@@ -21,14 +21,16 @@ class FuzzWorker(QThread):
 
     def __init__(self, bus, target_id: int, dlc: int = 8,
                  strategy: str = "boundary", rate_hz: float = 10.0,
-                 max_iter: int = 0, parent=None):
+                 max_iter: int = 1000, parent=None):
         super().__init__(parent)
         self._bus       = bus
         self._target_id = target_id
         self._dlc       = dlc
         self._strategy  = strategy
         self._rate_hz   = max(0.1, min(rate_hz, 100.0))
-        self._max_iter  = max_iter   # 0 = unlimited
+        # Bounded by default: 0 means unlimited, but callers should pass an
+        # explicit cap. Unbounded fuzzing of a live bus is hazardous.
+        self._max_iter  = max_iter
         self._abort     = False
         self._iter      = 0
         self._bv_idx    = 0
@@ -41,8 +43,10 @@ class FuzzWorker(QThread):
 
     def run(self):
         import can
+        from core.safety import require_armed, BusNotArmedError
         interval = 1.0 / self._rate_hz
         try:
+            require_armed()
             while not self._abort:
                 data = self._next_payload()
                 msg  = can.Message(
@@ -65,7 +69,14 @@ class FuzzWorker(QThread):
                 self.progress.emit(self._iter)
                 if self._max_iter and self._iter >= self._max_iter:
                     break
-                time.sleep(interval)
+                # Interruptible sleep so stop() responds promptly even at low rates.
+                slept = 0.0
+                while slept < interval and not self._abort:
+                    step = min(0.05, interval - slept)
+                    time.sleep(step)
+                    slept += step
+        except BusNotArmedError as e:
+            self.error.emit(str(e))
         except Exception as e:
             self.error.emit(str(e))
 

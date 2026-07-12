@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QProgressBar,
     QTextEdit, QTabWidget, QComboBox, QSpinBox, QLineEdit, QFileDialog,
-    QDoubleSpinBox,
+    QDoubleSpinBox, QCheckBox, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QBrush
@@ -428,11 +428,14 @@ class DiagnosticsTab(QWidget):
             self.uds_log.append("ERROR: CAN bus not connected.")
             return
         from core.uds import UDSScanner
-        worker = UDSScanner(bus, mode="DTC")
-        worker.dtc_result.connect(self._on_dtc_result)
-        worker.status.connect(lambda s: self.uds_log.append(s))
-        worker.error.connect(lambda e: self.uds_log.append(f"ERROR: {e}"))
-        worker.start()
+        # Store on self: a local QThread is garbage-collected the moment this
+        # method returns, aborting with "QThread: Destroyed while thread is
+        # still running".
+        self._dtc_worker = UDSScanner(bus, mode="DTC")
+        self._dtc_worker.dtc_result.connect(self._on_dtc_result)
+        self._dtc_worker.status.connect(lambda s: self.uds_log.append(s))
+        self._dtc_worker.error.connect(lambda e: self.uds_log.append(f"ERROR: {e}"))
+        self._dtc_worker.start()
 
     def _on_dtc_result(self, dtcs: list):
         if not dtcs:
@@ -563,6 +566,13 @@ class DiagnosticsTab(QWidget):
         self.btn_svc_stop.setEnabled(False)
         ctl.addWidget(self.btn_svc_scan)
         ctl.addWidget(self.btn_svc_stop)
+        self.svc_unsafe = QCheckBox("Include destructive services (unsafe)")
+        self.svc_unsafe.setToolTip(
+            "Off: only read-only services are probed. On: also probes ECUReset, "
+            "ClearDTC, RoutineControl, RequestDownload, etc. — never do this on a "
+            "vehicle you are driving."
+        )
+        ctl.addWidget(self.svc_unsafe)
         ctl.addStretch()
         lay.addLayout(ctl)
 
@@ -586,7 +596,19 @@ class DiagnosticsTab(QWidget):
             self.svc_status.setText("ERROR: CAN bus not connected.")
             return
         from core.uds import UDSScanner, UDS_SERVICES
-        self._svc_worker = UDSScanner(bus, mode="SERVICES")
+        unsafe = self.svc_unsafe.isChecked()
+        if unsafe:
+            ok = QMessageBox.warning(
+                self, "Unsafe UDS Scan",
+                "This will actively invoke destructive UDS services (ECUReset, "
+                "ClearDTC, RoutineControl, RequestDownload, …) on the bus.\n\n"
+                "Only continue on an isolated bench setup. Proceed?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if ok != QMessageBox.StandardButton.Yes:
+                return
+        self._svc_worker = UDSScanner(bus, mode="SERVICES", allow_unsafe=unsafe)
         self._svc_worker.service_result.connect(self._on_svc_result)
         self._svc_worker.status.connect(lambda s: self.svc_status.setText(s))
         self._svc_worker.error.connect(lambda e: self.svc_status.setText(f"ERROR: {e}"))

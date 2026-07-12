@@ -404,6 +404,9 @@ class SettingsDialog(QDialog):
         backend = getattr(state, "active_backend", "python-can")
         self.radio_panda.setChecked(backend == "panda")
         self.radio_pycan.setChecked(backend != "panda")
+        self.panda_safety_combo.setCurrentText(
+            getattr(state, "panda_safety_model", "SAFETY_NOOUTPUT")
+        )
 
     def _save(self):
         api_key  = self.api_key_edit.text().strip()
@@ -425,6 +428,7 @@ class SettingsDialog(QDialog):
             state.community_profiles_url = comm_url
 
         state.active_backend = "panda" if self.radio_panda.isChecked() else "python-can"
+        state.panda_safety_model = self.panda_safety_combo.currentText()
         state.canfd_enabled  = self.chk_canfd.isChecked()
         state.canfd_toggled.emit(state.canfd_enabled)
 
