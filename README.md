@@ -1,4 +1,4 @@
-# CanLab — CAN Bus Reverse-Engineering Workstation
+# CanLab -- CAN Bus Reverse-Engineering Workstation
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python)](https://www.python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green?style=flat-square)](https://pypi.org/project/PyQt6/)
