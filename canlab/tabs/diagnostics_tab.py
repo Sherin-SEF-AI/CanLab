@@ -446,9 +446,27 @@ class DiagnosticsTab(QWidget):
 
     def _clear_dtc(self):
         import can
+        from core.safety import is_armed
         bus = self._get_bus()
         if bus is None:
             self.uds_log.append("ERROR: CAN bus not connected.")
+            return
+        # ClearDiagnosticInformation (0x14) writes to the bus and clears ECU
+        # fault memory — it must respect the global ARM-TX gate like every other
+        # transmit, and be confirmed, rather than firing on a single click.
+        if not is_armed():
+            QMessageBox.warning(self, "Disarmed",
+                                "Clear DTC transmits to the bus. Enable ARM TX first.")
+            return
+        confirm = QMessageBox.question(
+            self, "Clear DTCs?",
+            "This sends UDS ClearDiagnosticInformation (0x14) and erases stored "
+            "fault codes on responding ECUs. Only do this on a bench setup. "
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
             return
         try:
             data = bytes([0x04, 0x14, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00])

@@ -16,9 +16,31 @@ Exposes:
   POST /inject         → inject a raw CAN frame (token required)
   GET  /memory         → AI memory entries
 """
+import math
 import threading
 import secrets
 import ipaddress
+
+
+def _json_safe(obj):
+    """Recursively replace NaN/Inf (and numpy scalars) with JSON-valid values.
+
+    Frames carry NaN in byte columns for short-DLC messages; ``float('nan')`` is
+    not valid JSON, so ``JSONResponse`` raised ``ValueError`` and every
+    ``/frames`` and ``/signals`` request 500'd once any short frame was present
+    (which is almost always). NaN becomes null; missing bytes read as absent.
+    """
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    # numpy scalar → python scalar (numpy ints/floats aren't JSON-serializable)
+    item = getattr(obj, "item", None)
+    if callable(item) and obj.__class__.__module__ == "numpy":
+        return _json_safe(obj.item())
+    return obj
 
 
 _DASHBOARD_HTML = """<!doctype html>
@@ -102,27 +124,27 @@ def _build_app(state_getter, token: str):
             return JSONResponse(content=[])
         n = max(0, min(int(n), len(state.frames_df)))
         tail = state.frames_df.tail(n)
-        return JSONResponse(content=tail.to_dict(orient="records"))
+        return JSONResponse(content=_json_safe(tail.to_dict(orient="records")))
 
     @app.get("/signals", dependencies=auth)
     def get_signals():
         state = state_getter()
-        return JSONResponse(content=state.dbc_signals)
+        return JSONResponse(content=_json_safe(state.dbc_signals))
 
     @app.get("/status", dependencies=auth)
     def get_status():
         state = state_getter()
-        return JSONResponse(content={
+        return JSONResponse(content=_json_safe({
             "connected":    state.is_connected,
             "frame_count":  len(state.frames_df),
             "repo_url":     state.repo_url,
             "fingerprint":  state.fingerprint,
-        })
+        }))
 
     @app.get("/memory", dependencies=auth)
     def get_memory():
         state = state_getter()
-        return JSONResponse(content=state.ai_memory)
+        return JSONResponse(content=_json_safe(state.ai_memory))
 
     @app.post("/inject", dependencies=auth)
     def inject_frame(req: InjectRequest):

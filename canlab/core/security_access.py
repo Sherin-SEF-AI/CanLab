@@ -149,6 +149,11 @@ class SecurityAccessWorker(QThread):
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _isotp_send(self, data: bytes, timeout: float = 1.0) -> Optional[bytes]:
+        """Send a PCI-less service payload; return the PCI-less response payload.
+
+        ``data`` must NOT carry an ISO-TP length byte or padding — ISOTPSession
+        builds those. Likewise the returned payload starts at the response SID.
+        """
         if not self._running:
             return None
         try:
@@ -161,9 +166,9 @@ class SecurityAccessWorker(QThread):
 
     def _open_session(self) -> bool:
         self.step_done.emit(f"Opening {SESSION_NAMES.get(self._session_type,'?')} session (0x{self._session_type:02X})…")
-        resp = self._isotp_send(bytes([0x02, SVC_SESSION, self._session_type, 0, 0, 0, 0, 0]))
-        if resp and len(resp) >= 2 and resp[1] == 0x50:
-            self.step_done.emit(f"  Session opened: 0x{resp[1]:02X}")
+        resp = self._isotp_send(bytes([SVC_SESSION, self._session_type]))
+        if resp and len(resp) >= 2 and resp[0] == 0x50:
+            self.step_done.emit(f"  Session opened: 0x{resp[0]:02X}")
             return True
         if resp:
             self.step_done.emit(f"  Session failed: {resp.hex().upper()}")
@@ -172,26 +177,26 @@ class SecurityAccessWorker(QThread):
         return False
 
     def _send_tester_present(self):
-        self._isotp_send(bytes([0x02, SVC_TP, 0x00, 0, 0, 0, 0, 0]), timeout=0.3)
+        self._isotp_send(bytes([SVC_TP, 0x00]), timeout=0.3)
 
     def _request_seed(self) -> Optional[bytes]:
         subfunc = self._access_level | 0x01 if (self._access_level & 1 == 0) else self._access_level
         self.step_done.emit(f"Requesting seed — SecurityAccess 0x27 subfunction 0x{subfunc:02X}…")
-        resp = self._isotp_send(bytes([0x02, SVC_SECACC, subfunc, 0, 0, 0, 0, 0]))
+        resp = self._isotp_send(bytes([SVC_SECACC, subfunc]))
         if resp is None:
             self.step_done.emit("  No response to seed request")
             return None
-        if len(resp) < 3:
+        if len(resp) < 2:
             self.step_done.emit(f"  Short response: {resp.hex().upper()}")
             return None
-        if resp[1] == 0x7F:
-            nrc = resp[3] if len(resp) > 3 else 0
+        if resp[0] == 0x7F:
+            nrc = resp[2] if len(resp) > 2 else 0
             desc = _nrc_name(nrc)
             self.step_done.emit(f"  Negative response: NRC 0x{nrc:02X} ({desc})")
             if nrc == NRC_EXCEEDED_ATTEMPTS:
                 self.lockout_detected.emit(self._ecu_addr)
             return None
-        if resp[1] == 0x67:
+        if resp[0] == 0x67:
             seed = bytes(resp[2:])
             self.step_done.emit(f"  Seed received: {seed.hex().upper()}")
             self.seed_received.emit(self._ecu_addr, self._access_level, seed)
@@ -208,14 +213,14 @@ class SecurityAccessWorker(QThread):
             subfunc = self._access_level
         else:
             subfunc = self._access_level + 1
-        payload = bytes([len(key) + 2, SVC_SECACC, subfunc]) + key
+        payload = bytes([SVC_SECACC, subfunc]) + key
         resp    = self._isotp_send(payload)
-        if resp is None:
+        if resp is None or len(resp) < 1:
             return False, 0
-        if resp[1] == 0x67:
+        if resp[0] == 0x67:
             return True, 0
-        if resp[1] == 0x7F:
-            nrc = resp[3] if len(resp) > 3 else 0
+        if resp[0] == 0x7F:
+            nrc = resp[2] if len(resp) > 2 else 0
             return False, nrc
         return False, 0
 

@@ -290,8 +290,10 @@ class TimelineTab(QWidget):
 
         if kind == "dbc":
             from core.dbc_manager import decode_frame
+            from core.canid import normalize_id
+            nmid   = normalize_id(mid)
             sigs   = [s for s in self._state.dbc_signals
-                      if s.get("message_id", "").upper() == mid.upper()]
+                      if normalize_id(s.get("message_id", "")) == nmid]
             frames = df[df["ID"] == mid].sort_values("Timestamp")
             if frames.empty or not sigs:
                 return None, None, name

@@ -223,16 +223,28 @@ POST /inject      # inject a frame — requires token AND ARM TX
 ## Testing
 
 ```bash
-python -m pytest tests/ -q        # 136 passed, 1 skipped (MDF needs asammdf)
+python -m pytest tests/ -q        # 148 passed, 2 skipped (MDF needs asammdf; MCP needs the official SDK)
 ```
 
-Tests cover ID normalization, ISO-TP multi-frame transmit, the ARM safety gate,
-UDS destructive-service classification, OBD-II PID decoding, ML NaN-safety,
-BLF/ASC import, opendbc matching, reference calibration + refinements, multiplexer
-detection, J1939 DM1, XCP, DoIP, the REST auth model, and an import smoke test of
-every tab.
+Tests cover ID normalization, ISO-TP single/multi-frame transmit (PCI framing),
+the ARM safety gate (including mid-run disarm), UDS destructive-service
+classification and DTC/PID decoding, OBD-II PID decoding, ML NaN-safety,
+BLF/ASC/candump-FD import, opendbc matching, reference calibration + refinements,
+multiplexer detection, J1939 DM1, XCP, DoIP, the REST auth + NaN-safe JSON model,
+DBC round-trip (message length + extended-ID), big-endian/signed injection
+packing, the lazy live-frame store, the vectorized correlation aligner, and an
+import smoke test of every tab.
 
 ---
+
+## Recent fixes
+
+A deep-audit pass fixed a batch of protocol/correctness, safety, and performance
+defects (ISO-TP framing, UDS/DTC/OBD decoding, cantools ≥ 40 DBC decoding, DBC
+round-trip, replay DLC, REST NaN-safe JSON, per-frame ARM-TX re-checks, injection
+byte-order packing, plugin consent, and an O(n²)→O(n) live-capture store). See
+[docs/AUDIT_FIXES.md](docs/AUDIT_FIXES.md) for the full list; each item has a
+regression test in `tests/test_audit_fixes.py`.
 
 ## Honest limitations
 

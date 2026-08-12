@@ -133,7 +133,9 @@ class SignalsTab(QWidget):
 
             dbc_status = ""
             can_id = str(row.get("ID", ""))
-            if any(s.get("message_id","").upper() == can_id.upper()
+            from core.canid import normalize_id
+            nid = normalize_id(can_id)
+            if any(normalize_id(s.get("message_id", "")) == nid
                    for s in self._state.dbc_signals):
                 dbc_status = "OK"
 

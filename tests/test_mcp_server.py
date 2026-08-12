@@ -33,7 +33,10 @@ def test_requires_load_first():
 
 
 def test_fastmcp_registration():
-    pytest.importorskip("mcp")
+    # Skip cleanly when the official MCP SDK (which provides
+    # mcp.server.fastmcp.FastMCP) isn't installed — some PyPI builds published
+    # under the same distribution name lack this submodule.
+    pytest.importorskip("mcp.server.fastmcp")
     from mcp.server.fastmcp import FastMCP
     m = FastMCP("canlab-test")
     mcp_server._register(m)   # must not raise

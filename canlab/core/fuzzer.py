@@ -48,6 +48,9 @@ class FuzzWorker(QThread):
         try:
             require_armed()
             while not self._abort:
+                # Re-check every iteration so disarming ARM TX halts the fuzz
+                # immediately rather than only preventing the next run.
+                require_armed()
                 data = self._next_payload()
                 msg  = can.Message(
                     arbitration_id=self._target_id,

@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QTabWidget, QToolBar, QStatusBar, QLabel, QFileDialog,
     QMessageBox, QLineEdit, QPushButton, QProgressBar, QMenu,
 )
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSettings
 from PyQt6.QtGui import QFont, QColor, QAction
 
 from theme import COLORS, mono_font
@@ -86,7 +86,9 @@ class LiveCANWorker(QThread):
 
     def stop(self):
         self._running = False
-        if self._bus:
+        self.wait(2000)   # let run() exit its recv loop before shutting the bus
+        # Don't shut down a caller-injected bus (Panda/virtual) we didn't open.
+        if self._bus and self._injected_bus is None:
             try:
                 self._bus.shutdown()
             except Exception:
@@ -119,6 +121,7 @@ class MultiBusWorker(QThread):
     def stop_all(self):
         for w in self._workers:
             w.stop()
+            w.wait(2000)
         self._workers.clear()
 
 
@@ -136,6 +139,7 @@ class MainWindow(QMainWindow):
         self._frame_rate_timer = QTimer()
         self._live_frame_count = 0
         self._live_rows: list  = []
+        self._live_last_ts: dict = {}   # ID -> last timestamp, for live Delta
         self._bus_load_meter   = BusLoadMeter()
         self._rest_api_server  = None
         self._plugins          = []
@@ -450,15 +454,32 @@ class MainWindow(QMainWindow):
             self._load_log_file(path)
 
     def _load_log_file(self, path: str):
-        try:
-            df = parse_log_file(path)
-            if df.empty:
+        # Parse off the GUI thread: large BLF/pcap/CSV captures take seconds and
+        # would otherwise freeze the whole window (including the ability to
+        # cancel). A busy indicator shows while the worker runs.
+        self.statusBar().showMessage(f"Loading {os.path.basename(path)}…")
+        from ui.compute_worker import ComputeWorker
+        worker = ComputeWorker(parse_log_file, path)
+        self._log_workers = getattr(self, "_log_workers", [])
+        self._log_workers.append(worker)
+
+        def _done(df):
+            self.statusBar().clearMessage()
+            self._log_workers.remove(worker)
+            if df is None or df.empty:
                 QMessageBox.warning(self, "Empty", "No frames found in file.")
                 return
             self._state.load_frames(df, os.path.basename(path))
             self._correlate_annotations(df)
-        except Exception as e:
-            QMessageBox.critical(self, "Parse Error", str(e))
+
+        def _failed(err):
+            self.statusBar().clearMessage()
+            self._log_workers.remove(worker)
+            QMessageBox.critical(self, "Parse Error", err)
+
+        worker.done.connect(_done)
+        worker.failed.connect(_failed)
+        worker.start()
 
     def _load_dbc_file(self, path: str):
         try:
@@ -676,6 +697,11 @@ class MainWindow(QMainWindow):
         if self._multibus_worker:
             self._multibus_worker.stop_all()
             self._multibus_worker = None
+        # Flush any buffered live frames so they aren't lost on disconnect.
+        if self._live_rows:
+            self._state.append_frames(pd.DataFrame(self._live_rows))
+            self._live_rows.clear()
+        self._live_last_ts.clear()
         self._state.can_bus      = None
         self._state.is_connected = False
         self._act_connect.setEnabled(True)
@@ -704,13 +730,19 @@ class MainWindow(QMainWindow):
         if 0x7E8 <= msg.arbitration_id <= 0x7EF:
             self._state.uds_response.emit(msg.arbitration_id, bytes(msg.data))
 
-        byte_data = list(msg.data) + [None] * (8 - len(msg.data))
+        data = bytes(msg.data)[:8]
+        byte_data = list(data) + [None] * (8 - len(data))
+        can_id = format(msg.arbitration_id, "03X")
+        # Per-ID inter-frame delta so live frames show real timing, not 0.0.
+        prev_ts = self._live_last_ts.get(can_id)
+        delta = (msg.timestamp - prev_ts) if prev_ts is not None else 0.0
+        self._live_last_ts[can_id] = msg.timestamp
         row = {
             "Timestamp": msg.timestamp,
-            "ID":        format(msg.arbitration_id, "03X"),
+            "ID":        can_id,
             "Bus":       bus_name if bus_name is not None else "live",
             "DLC":       msg.dlc,
-            "Delta":     0.0,
+            "Delta":     delta,
             **{f"B{i}": byte_data[i] for i in range(8)},
         }
         self._live_rows.append(row)
@@ -884,9 +916,45 @@ class MainWindow(QMainWindow):
     # ── Plugins ───────────────────────────────────────────────────────────────
 
     def _load_plugins(self):
+        """Discover plugins and activate only user-approved ones.
+
+        Plugins run with full app privileges, so we never auto-execute an
+        unseen or edited plugin. Approval is trust-on-first-use, keyed by the
+        file's SHA-256 and persisted in QSettings; editing a plugin re-prompts.
+        """
         from core.plugin_loader import discover_plugins, activate_plugins
         self._plugins = discover_plugins()
-        activated = activate_plugins(self._plugins, self)
+        if not self._plugins:
+            return
+
+        settings = QSettings("CanLab", "CanLab")
+        approved = set(settings.value("approved_plugins", [], type=list) or [])
+
+        pending = [p for p in self._plugins
+                   if p.get("fingerprint")
+                   and f"{p['path']}::{p['fingerprint']}" not in approved]
+        if pending:
+            listing = "\n".join(f"  • {p['name']} v{p['version']}  ({p['path']})"
+                                for p in pending)
+            reply = QMessageBox.question(
+                self, "Approve plugins?",
+                "CanLab found plugin(s) that will run with full app "
+                "privileges:\n\n" + listing +
+                "\n\nOnly approve plugins you trust. Load them now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                for p in pending:
+                    approved.add(f"{p['path']}::{p['fingerprint']}")
+                settings.setValue("approved_plugins", sorted(approved))
+            else:
+                # Leave unapproved plugins discovered-but-disabled.
+                for p in pending:
+                    p["enabled"] = False
+
+        to_run = [p for p in self._plugins if p.get("enabled")]
+        activated = activate_plugins(to_run, self)
         if activated:
             self.statusBar().showMessage(
                 f"Plugins loaded: {', '.join(activated)}", 5000
@@ -1071,9 +1139,23 @@ class MainWindow(QMainWindow):
             self.lbl_total_frames.animate_to(total)
 
     def closeEvent(self, event):
+        # Stop and join every background thread before the window (and its C++
+        # objects) are torn down. A running QThread destroyed with its parent
+        # raises "QThread: Destroyed while thread is still running" and can crash
+        # on exit.
         self._stop_rest_api()
         if self._live_worker:
             self._live_worker.stop()
+            self._live_worker.wait(2000)
+            self._live_worker = None
+        if self._multibus_worker:
+            self._multibus_worker.stop_all()
+            self._multibus_worker = None
+        for w in getattr(self, "_log_workers", []):
+            w.wait(2000)
+        opendbc = getattr(self, "_opendbc_worker", None)
+        if opendbc is not None:
+            opendbc.wait(2000)
         event.accept()
 
 

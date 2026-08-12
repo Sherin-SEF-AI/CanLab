@@ -18,17 +18,27 @@ LAG_OFFSETS_MS = [-50, -25, -12, 0, 12, 25, 50]
 def _align(s1: np.ndarray, t1: np.ndarray,
            s2: np.ndarray, t2: np.ndarray,
            max_dt: float = 0.1) -> tuple[np.ndarray, np.ndarray]:
-    """Nearest-neighbour align s2 onto t1 timestamps."""
-    v1, v2 = [], []
-    j = 0
-    for i in range(len(t1)):
-        ts = t1[i]
-        while j < len(t2) - 1 and abs(t2[j + 1] - ts) < abs(t2[j] - ts):
-            j += 1
-        if abs(t2[j] - ts) <= max_dt:
-            v1.append(s1[i])
-            v2.append(s2[j])
-    return np.array(v1, dtype=float), np.array(v2, dtype=float)
+    """Nearest-neighbour align s2 onto t1 timestamps (vectorized).
+
+    For each t1[i], pick the s2 sample whose timestamp is closest, keeping it
+    only if within max_dt. Uses searchsorted instead of the old per-row Python
+    while-loop, which dominated runtime on large captures (called per byte-pair
+    over hundreds of ID pairs). Requires t2 sorted ascending — callers sort by
+    Timestamp before calling.
+    """
+    if len(t1) == 0 or len(t2) == 0:
+        return np.array([], dtype=float), np.array([], dtype=float)
+
+    idx = np.searchsorted(t2, t1)
+    idx_left  = np.clip(idx - 1, 0, len(t2) - 1)
+    idx_right = np.clip(idx,     0, len(t2) - 1)
+    d_left  = np.abs(t2[idx_left]  - t1)
+    d_right = np.abs(t2[idx_right] - t1)
+    nearest = np.where(d_left <= d_right, idx_left, idx_right)
+    dist    = np.minimum(d_left, d_right)
+
+    keep = dist <= max_dt
+    return s1[keep].astype(float), s2[nearest[keep]].astype(float)
 
 
 def _best_r_with_lag(s1: np.ndarray, t1: np.ndarray,

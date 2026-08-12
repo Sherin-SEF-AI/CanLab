@@ -31,25 +31,41 @@ class ISOTPSession:
     Mimics the python-can recv() API (returns None on timeout).
     """
 
-    def __init__(self, bus, tx_id: int, rx_id: int):
-        self._bus   = bus
-        self._tx_id = tx_id
-        self._rx_id = rx_id
+    def __init__(self, bus, tx_id: int, rx_id: int, extended_id: bool = False,
+                 padding: int = 0x00):
+        self._bus      = bus
+        self._tx_id    = tx_id
+        self._rx_id    = rx_id
+        self._ext      = bool(extended_id)
+        self._padding  = padding & 0xFF
+
+    def _pad(self, frame: bytes) -> bytes:
+        """Pad a CAN frame out to 8 bytes with the configured padding byte."""
+        if len(frame) >= 8:
+            return frame[:8]
+        return frame + bytes([self._padding]) * (8 - len(frame))
 
     def send(self, data: bytes, timeout: float = 1.0) -> Optional[bytes]:
         """
-        Send `data` (UDS request bytes) and return the fully assembled response,
-        or None on timeout / error.
+        Send `data` and return the fully assembled response, or None on
+        timeout / error.
+
+        ``data`` is the *service payload only* — e.g. ``b"\\x01\\x0C"`` for OBD-II
+        mode 01 PID 0x0C, or ``b"\\x22\\xF1\\x90"`` for UDS ReadDataByIdentifier.
+        This method adds the ISO-TP PCI byte(s) and pads the frame itself.
+        Callers must NOT prepend a length byte or pad the payload: doing so
+        produced a double PCI (``03 02 01 0C``) that no ECU answers, and pushed
+        8-byte padded requests down the multi-frame path as a bogus First Frame.
         """
         import can
         n = len(data)
 
         if n <= 7:
             # Single Frame
-            frame = bytes([n & 0x0F]) + data + bytes(7 - n)
+            frame = self._pad(bytes([n & 0x0F]) + data)
             try:
                 self._bus.send(can.Message(arbitration_id=self._tx_id,
-                                           data=frame, is_extended_id=False))
+                                           data=frame, is_extended_id=self._ext))
             except Exception:
                 return None
         else:
@@ -58,10 +74,10 @@ class ISOTPSession:
             #  request longer than 7 bytes.)
             hi = (n >> 8) & 0x0F
             lo = n & 0xFF
-            ff = bytes([0x10 | hi, lo]) + data[:6]
+            ff = self._pad(bytes([0x10 | hi, lo]) + data[:6])
             try:
                 self._bus.send(can.Message(arbitration_id=self._tx_id,
-                                           data=ff, is_extended_id=False))
+                                           data=ff, is_extended_id=self._ext))
             except Exception:
                 return None
             if not self._send_consecutive_frames(data, timeout):
@@ -98,10 +114,10 @@ class ISOTPSession:
                 continue
 
             chunk = data[idx:idx + 7]
-            cf = bytes([0x20 | (sn & 0x0F)]) + chunk + bytes(7 - len(chunk))
+            cf = self._pad(bytes([0x20 | (sn & 0x0F)]) + chunk)
             try:
                 self._bus.send(can.Message(arbitration_id=self._tx_id,
-                                           data=cf, is_extended_id=False))
+                                           data=cf, is_extended_id=self._ext))
             except Exception:
                 return False
             idx += 7
@@ -176,6 +192,8 @@ class ISOTPSession:
                 return bytes(payload)
 
             if pci == 0x1:  # First Frame
+                if len(raw) < 2:
+                    continue
                 length = ((raw[0] & 0x0F) << 8) | raw[1]
                 total_len = length
                 payload   = bytearray(raw[2:])  # first 6 payload bytes
@@ -200,12 +218,12 @@ class ISOTPSession:
     def _send_fc(self):
         """Send a Flow Control CTS frame."""
         import can
-        fc = bytes([FC_CTS, BLOCK_SIZE, ST_MIN, 0, 0, 0, 0, 0])
+        fc = self._pad(bytes([FC_CTS, BLOCK_SIZE, ST_MIN]))
         try:
             msg = can.Message(
                 arbitration_id=self._tx_id,
                 data=fc,
-                is_extended_id=False,
+                is_extended_id=self._ext,
             )
             self._bus.send(msg)
         except Exception:

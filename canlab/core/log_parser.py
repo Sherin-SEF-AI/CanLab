@@ -17,9 +17,72 @@ Supported capture formats:
 """
 
 
+def _hexbyte(v):
+    """Parse one SavvyCAN data-byte token (hex string) to an int, or NaN."""
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return np.nan
+    s = str(v).strip()
+    if not s:
+        return np.nan
+    try:
+        return int(s, 16) & 0xFF
+    except ValueError:
+        return np.nan
+
+
+def _bytes_are_hex(df: pd.DataFrame, cols: list) -> bool:
+    """Decide whether SavvyCAN data-byte columns are hex or decimal.
+
+    Real SavvyCAN pads each data byte to exactly two hex digits (``00``–``FF``).
+    The bundled decimal sample uses variable-width decimal (``0``, ``150``). So:
+    a hex letter anywhere ⇒ hex; a token wider than 2 chars or a bare single
+    digit ⇒ decimal; otherwise (all tokens exactly two digits) default to hex,
+    which is SavvyCAN's actual format.
+    """
+    import re
+    letter = re.compile(r"[A-Fa-f]")
+    sample_tokens = []
+    for c in cols:
+        vals = df[c].dropna().astype(str).head(2000).tolist()
+        sample_tokens.extend(vals)
+        if len(sample_tokens) >= 4000:
+            break
+    saw_two_digit = False
+    for tok in sample_tokens:
+        tok = tok.strip()
+        if not tok:
+            continue
+        if letter.search(tok):
+            return True                 # definitely hex
+        if len(tok) > 2 or len(tok) == 1:
+            return False                # decimal (SavvyCAN always pads to 2)
+        saw_two_digit = True
+    # All tokens were exactly two digits with no letters: treat as hex
+    # (SavvyCAN) when we actually saw such tokens; empty ⇒ harmless default.
+    return saw_two_digit
+
+
 def parse_savvycan_csv(filepath: str) -> pd.DataFrame:
-    """Parse GVRET SavvyCAN CSV format."""
-    df = pd.read_csv(filepath, skipinitialspace=True)
+    """Parse GVRET SavvyCAN CSV format.
+
+    SavvyCAN writes a trailing comma after the last data byte (``…,00,``), so
+    every data row has one more field than the 14-column header. Without
+    ``index_col=False`` pandas silently promotes the first column (Time Stamp)
+    to the row index and shifts every remaining column left by one — real IDs
+    land in the timestamp column, the ID column fills with the Extended flag,
+    and the whole capture decodes as garbage. ``index_col=False`` keeps the
+    columns aligned; the extra trailing field is dropped as an unnamed column.
+    """
+    # Read the ID and data-byte columns as strings. Otherwise an all-numeric ID
+    # column (e.g. "018", "111") is inferred as int64 — dropping the leading zero
+    # and turning "018" into decimal 18, which normalize_id then renders as
+    # 0x12 ("012"). Byte columns must stay strings so hex tokens survive.
+    str_cols = {c: str for c in ("ID", "D1", "D2", "D3", "D4",
+                                 "D5", "D6", "D7", "D8")}
+    df = pd.read_csv(filepath, skipinitialspace=True, index_col=False,
+                     dtype=str_cols)
+    # Drop the phantom column created by SavvyCAN's trailing comma, if present.
+    df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]]
     df.columns = [c.strip() for c in df.columns]
 
     col_map = {
@@ -41,9 +104,16 @@ def parse_savvycan_csv(filepath: str) -> pd.DataFrame:
         df["ID"] = df["ID"].apply(_normalize_id)
 
     byte_cols = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
+    present = [c for c in byte_cols if c in df.columns]
+    as_hex = _bytes_are_hex(df, present)
     for col in byte_cols:
         if col not in df.columns:
             df[col] = np.nan
+        elif as_hex:
+            # Real SavvyCAN writes data bytes in hex ("0A", "FF"). Parsing them
+            # with to_numeric read "10" as decimal 10 (not 0x10) and turned any
+            # value with a hex letter into NaN — corrupting every byte.
+            df[col] = df[col].map(_hexbyte)
         else:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -51,6 +121,8 @@ def parse_savvycan_csv(filepath: str) -> pd.DataFrame:
         df["Bus"] = 0
     if "DLC" not in df.columns:
         df["DLC"] = 8
+    else:
+        df["DLC"] = pd.to_numeric(df["DLC"], errors="coerce").fillna(8).astype(int)
 
     df = df.dropna(subset=["Timestamp", "ID"])
     df = df.sort_values("Timestamp").reset_index(drop=True)
@@ -277,6 +349,11 @@ def parse_log_file(filepath: str) -> pd.DataFrame:
         if suffix in (".mf4", ".mdf"):
             return parse_mdf(filepath)
         if suffix == ".log":
+            # candump marks CAN FD frames with a double '##' (id##flags+data).
+            # The classic parser's single-'#' regex mangles those, so detect FD
+            # frames up front and use the FD-aware parser when present.
+            if _candump_has_fd(filepath):
+                return parse_candump_fd(filepath)
             return parse_candump_log(filepath)
         # Try SavvyCAN first
         with open(filepath) as f:
@@ -287,6 +364,21 @@ def parse_log_file(filepath: str) -> pd.DataFrame:
         return parse_candump_log(filepath)
     except Exception as e:
         raise ValueError(f"Failed to parse {filepath}: {e}") from e
+
+
+def _candump_has_fd(filepath: str, sniff_lines: int = 2000) -> bool:
+    """True if any of the first sniff_lines candump lines is a CAN FD frame."""
+    fd_re = re.compile(r"\)\s+\S+\s+[0-9A-Fa-f]+##")
+    try:
+        with open(filepath) as f:
+            for i, line in enumerate(f):
+                if i >= sniff_lines:
+                    break
+                if fd_re.search(line):
+                    return True
+    except Exception:
+        return False
+    return False
 
 
 def parse_candump_fd(filepath: str) -> pd.DataFrame:

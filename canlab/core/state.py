@@ -47,7 +47,14 @@ class AppState(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.frames_df:        pd.DataFrame = pd.DataFrame()
+        # Frames are stored as a base DataFrame plus a list of appended live
+        # chunks; `frames_df` (property below) concatenates them lazily and
+        # caches the result. This keeps live append() at O(chunk) instead of the
+        # O(n) full-DataFrame copy the old concat-per-batch did (which made long
+        # captures O(n²) and eventually froze the UI).
+        self._frames_base:   pd.DataFrame = pd.DataFrame()
+        self._frame_chunks:  list         = []
+        self._frames_cache:  pd.DataFrame = None
         self.selected_id:      str          = ""
         self.sources:          list         = []
         self.can_bus           = None
@@ -107,6 +114,29 @@ class AppState(QObject):
         # Signal Intelligence
         self._embedding_index: dict = {}       # id -> np.ndarray, built by signal_intelligence_tab
 
+    # ── frames_df storage (lazy base + chunks) ────────────────────────────────
+
+    @property
+    def frames_df(self) -> pd.DataFrame:
+        if self._frames_cache is not None:
+            return self._frames_cache
+        if not self._frame_chunks:
+            self._frames_cache = self._frames_base
+        else:
+            parts = ([self._frames_base] if not self._frames_base.empty
+                     else []) + self._frame_chunks
+            self._frames_cache = (pd.concat(parts, ignore_index=True)
+                                  if parts else pd.DataFrame())
+        return self._frames_cache
+
+    @frames_df.setter
+    def frames_df(self, df: pd.DataFrame):
+        # Direct assignment (project load, transforms) replaces everything and
+        # collapses any pending live chunks.
+        self._frames_base  = df if df is not None else pd.DataFrame()
+        self._frame_chunks = []
+        self._frames_cache = self._frames_base
+
     def select_id(self, hex_id: str):
         self.selected_id = hex_id
         self.id_selected.emit(hex_id)
@@ -120,10 +150,12 @@ class AppState(QObject):
         self.frames_updated.emit()
 
     def append_frames(self, new_df: pd.DataFrame):
-        if self.frames_df.empty:
-            self.frames_df = new_df
-        else:
-            self.frames_df = pd.concat([self.frames_df, new_df], ignore_index=True)
+        if new_df is None or new_df.empty:
+            return
+        # O(chunk): just stash the chunk and invalidate the cache. The full
+        # DataFrame is rebuilt lazily on the next read (throttled by the UI).
+        self._frame_chunks.append(new_df)
+        self._frames_cache = None
         self.frames_updated.emit()
 
     def set_repo_context(self, info: dict, readme: str, url: str):
