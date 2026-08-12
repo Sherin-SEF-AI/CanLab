@@ -6,21 +6,9 @@ Response IDs          : 0x7E8 – 0x7EF (ECU 0 – ECU 7)
 """
 from PyQt6.QtCore import QThread, pyqtSignal
 
-# OBD-II PID names (Mode 01)
-OBD2_PIDS = {
-    0x00: ("Supported PIDs 01-20", None, None),
-    0x04: ("Engine Load",          1/2.55, "%"),
-    0x05: ("Coolant Temp",         -40,    "°C"),   # offset
-    0x0B: ("MAP Pressure",         1,      "kPa"),
-    0x0C: ("Engine RPM",           0.25,   "rpm"),
-    0x0D: ("Vehicle Speed",        1,      "km/h"),
-    0x0F: ("Intake Air Temp",      -40,    "°C"),
-    0x11: ("Throttle Position",    1/2.55, "%"),
-    0x1C: ("OBD Standard",         1,      ""),
-    0x1F: ("Run Time Since Start", 1,      "s"),
-    0x21: ("MIL Distance",         1,      "km"),
-    0x2F: ("Fuel Level",           1/2.55, "%"),
-}
+# OBD-II Mode 01 PIDs live in core.obd2_pids (single source of truth, with
+# correct one- and two-byte decoders). This module used to keep a second,
+# narrower copy in which every multi-byte PID decoded as a single byte.
 
 # UDS service names
 UDS_SERVICES = {
@@ -85,6 +73,30 @@ UDS_SESSIONS = {
 }
 
 
+def _printable(payload: bytes) -> str:
+    """Render a DID payload as ASCII, keeping only printable characters.
+
+    VIN/part-number DIDs are ASCII; version DIDs are often packed binary. Using
+    ``errors="replace"`` alone filled the UI with U+FFFD for binary payloads.
+    """
+    text = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in payload).strip()
+    return text if any(c.isalnum() for c in text) else ""
+
+
+_DTC_PREFIX = {0: "P", 1: "C", 2: "B", 3: "U"}
+
+
+def decode_dtc(high: int, mid: int, low: int) -> str:
+    """Decode a 3-byte ISO 15031-6 / ISO 14229 DTC into its printable code.
+
+    Bits 7-6 of the high byte select the system letter (P/C/B/U); bits 5-4 are
+    the first digit; the remaining nibble and the middle byte are the last three
+    digits. The low byte is the fault-type/failure byte, not part of the code.
+    """
+    prefix = _DTC_PREFIX[(high >> 6) & 0x03]
+    return f"{prefix}{(high >> 4) & 0x03}{high & 0x0F:X}{mid:02X}"
+
+
 class _FakeMsg:
     """Lightweight stand-in for can.Message with arbitration_id and data."""
     __slots__ = ("arbitration_id", "data")
@@ -134,9 +146,12 @@ class UDSScanner(QThread):
 
     def _send_to(self, arb_id: int, data: bytes, timeout: float = 0.5):
         """
-        Send to specific ECU and receive via ISO-TP reassembly.
-        Returns a _FakeMsg with .data = full assembled payload, .arbitration_id = rx_id.
-        Single-frame replies behave identically to the previous version.
+        Send a *service payload* to a specific ECU and receive via ISO-TP.
+
+        ``data`` carries no ISO-TP PCI byte and no padding — e.g. ``b"\\x3E\\x00"``
+        for TesterPresent. The session builds the PCI. Returns a _FakeMsg whose
+        ``.data`` is the assembled *service payload* of the response (also PCI-less),
+        so ``resp.data[0]`` is the response SID.
         """
         if not self._running:
             return None
@@ -153,86 +168,110 @@ class UDSScanner(QThread):
 
     def _send_and_recv(self, data: bytes, timeout: float = 0.5):
         """
-        Send to functional address 0x7DF and receive via ISO-TP reassembly.
-        Scans rx IDs 0x7E8–0x7EF; reassembles multi-frame responses.
+        Broadcast a *service payload* to the functional address 0x7DF and return
+        the first response from 0x7E8–0x7EF.
+
+        Like :meth:`_send_to`, ``data`` is PCI-less and the returned ``.data`` is
+        the assembled PCI-less service payload. Both helpers used to disagree
+        about whether the PCI byte was present, which shifted every field index
+        by one on the multi-frame path.
         """
         if not self._running:
             return None
         try:
             import can, time
-            msg = can.Message(
+            from core.isotp import ISOTPSession
+
+            n = len(data)
+            if n > 7:
+                # Multi-frame functional requests need a per-ECU FC handshake,
+                # which broadcast addressing cannot provide.
+                self.error.emit("Functional (broadcast) requests must fit in a "
+                                "single frame; use a physical ECU address.")
+                return None
+            frame = bytes([n & 0x0F]) + data
+            frame = frame + bytes(8 - len(frame))
+            self._bus.send(can.Message(
                 arbitration_id=FUNCTIONAL_REQUEST_ID,
-                data=data,
+                data=frame,
                 is_extended_id=False,
-            )
-            self._bus.send(msg)
+            ))
+
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 resp = self._bus.recv(timeout=0.05)
-                if resp and 0x7E8 <= resp.arbitration_id <= 0x7EF:
-                    pci = (resp.data[0] >> 4) & 0x0F if resp.data else 0xFF
-                    if pci == 0x1:   # First Frame — reassemble via ISO-TP
-                        from core.isotp import ISOTPSession
-                        rx_id   = resp.arbitration_id
-                        session = ISOTPSession(self._bus, tx_id=rx_id - 0x08, rx_id=rx_id)
-                        session._send_fc()
-                        length  = ((resp.data[0] & 0x0F) << 8) | resp.data[1]
-                        payload = bytearray(resp.data[2:])
-                        cf_idx  = 1
-                        while time.monotonic() < deadline and len(payload) < length:
-                            cf = self._bus.recv(timeout=0.05)
-                            if cf and cf.arbitration_id == rx_id:
-                                payload += bytearray(cf.data[1:])
-                                cf_idx  += 1
-                        return _FakeMsg(rx_id, bytes(payload[:length]))
-                    return resp  # single-frame — backward compatible
+                if not resp or not (0x7E8 <= resp.arbitration_id <= 0x7EF):
+                    continue
+                raw = bytes(resp.data)
+                if not raw:
+                    continue
+                pci = (raw[0] >> 4) & 0x0F
+                rx_id = resp.arbitration_id
+
+                if pci == 0x0:                      # Single Frame
+                    length = raw[0] & 0x0F
+                    return _FakeMsg(rx_id, raw[1:1 + length])
+
+                if pci == 0x1:                      # First Frame — reassemble
+                    if len(raw) < 2:
+                        continue
+                    session = ISOTPSession(self._bus, tx_id=rx_id - 0x08, rx_id=rx_id)
+                    session._send_fc()
+                    length  = ((raw[0] & 0x0F) << 8) | raw[1]
+                    payload = bytearray(raw[2:])
+                    while time.monotonic() < deadline and len(payload) < length:
+                        cf = self._bus.recv(timeout=0.05)
+                        if cf and cf.arbitration_id == rx_id and cf.data:
+                            payload += bytearray(bytes(cf.data)[1:])
+                    return _FakeMsg(rx_id, bytes(payload[:length]))
         except Exception as e:
             self.error.emit(str(e))
         return None
 
     def _scan_pids(self):
+        """Query every known Mode 01 PID and emit decoded physical values.
+
+        Uses the canonical :mod:`core.obd2_pids` table (26 PIDs with correct
+        one- and two-byte decoders) rather than a second, narrower copy that
+        decoded every multi-byte PID as a single byte.
+        """
+        from core.obd2_pids import PID_TABLE, decode_pid
+
         self.status.emit("Scanning OBD-II PIDs…")
-        for pid, (name, scale, unit) in OBD2_PIDS.items():
+        for pid, entry in PID_TABLE.items():
             if not self._running:
                 break
-            if pid == 0x00:
-                continue
-            data   = bytes([0x02, 0x01, pid, 0x00, 0x00, 0x00, 0x00, 0x00])
-            resp   = self._send_and_recv(data)
+            resp = self._send_and_recv(bytes([0x01, pid]))
             if resp is None:
                 continue
-            raw = resp.data
-            if len(raw) < 4 or raw[1] != 0x41 or raw[2] != pid:
+            raw = bytes(resp.data)
+            # Positive Mode 01 response: 41 <pid> <A> [B ...]
+            if len(raw) < 3 or raw[0] != 0x41 or raw[1] != pid:
                 continue
-            try:
-                a = raw[3]
-                b = raw[4] if len(raw) > 4 else 0
-                if pid == 0x05 or pid == 0x0F:
-                    value = float(a) + float(scale)
-                elif pid == 0x0C:
-                    value = ((a * 256 + b) * 0.25)
-                else:
-                    value = float(a) * (scale if isinstance(scale, float) else 1.0)
-                self.pid_result.emit(pid, name, round(value, 2), unit or "")
-            except Exception:
-                pass
+            value = decode_pid(pid, raw[2:])
+            if value is not None:
+                self.pid_result.emit(pid, entry["name"], round(value, 2),
+                                     entry.get("unit", ""))
 
     def _read_dtc(self):
+        """UDS ReadDTCInformation, subfunction 0x02 (reportDTCByStatusMask)."""
         self.status.emit("Reading DTCs (service 0x19)…")
-        data = bytes([0x03, 0x19, 0x02, 0xFF, 0x00, 0x00, 0x00, 0x00])
-        resp = self._send_and_recv(data, timeout=0.5)
+        resp = self._send_and_recv(bytes([0x19, 0x02, 0xFF]), timeout=0.5)
         dtcs = []
         if resp:
-            raw = resp.data
-            i   = 3
-            while i + 1 < len(raw):
-                hi, lo = raw[i], raw[i + 1]
-                if hi == 0 and lo == 0:
-                    break
-                prefix = {0: "P", 1: "C", 2: "B", 3: "U"}[(hi >> 6) & 0x03]
-                code   = f"{prefix}{(hi & 0x3F):02X}{lo:02X}"
-                dtcs.append(code)
-                i += 3
+            raw = bytes(resp.data)
+            # Response: 59 02 <statusAvailabilityMask> then 4-byte records of
+            # [DTC_high, DTC_mid, DTC_low, statusOfDTC]. The old code started at
+            # the mask byte and strode 3, so every code after the first was
+            # decoded from misaligned bytes.
+            if len(raw) >= 3 and raw[0] == 0x59:
+                i = 3
+                while i + 2 < len(raw):
+                    hi, mid, lo = raw[i], raw[i + 1], raw[i + 2]
+                    if hi == 0 and mid == 0 and lo == 0:
+                        break
+                    dtcs.append(decode_dtc(hi, mid, lo))
+                    i += 4
         self.dtc_result.emit(dtcs)
 
     def _deep_scan(self):
@@ -250,7 +289,7 @@ class UDSScanner(QThread):
             if not self._running:
                 return
             # TesterPresent (0x3E 0x00)
-            resp = self._send_to(ecu_id, bytes([0x02, 0x3E, 0x00, 0, 0, 0, 0, 0]))
+            resp = self._send_to(ecu_id, bytes([0x3E, 0x00]))
             if resp:
                 active_ecus.append(ecu_id)
                 self.status.emit(f"  ECU found: 0x{ecu_id:03X} → response 0x{resp.arbitration_id:03X}")
@@ -267,7 +306,7 @@ class UDSScanner(QThread):
 
             # Open extended session (0x10 0x03)
             self.status.emit(f"Opening extended session on 0x{ecu_id:03X}…")
-            self._send_to(ecu_id, bytes([0x02, 0x10, 0x03, 0, 0, 0, 0, 0]))
+            self._send_to(ecu_id, bytes([0x10, 0x03]))
             time.sleep(0.1)
 
             # Read each DataIdentifier
@@ -276,25 +315,22 @@ class UDSScanner(QThread):
                     return
                 hi = (did >> 8) & 0xFF
                 lo = did & 0xFF
-                resp = self._send_to(
-                    ecu_id,
-                    bytes([0x03, 0x22, hi, lo, 0, 0, 0, 0]),
-                    timeout=0.3,
-                )
-                if resp and len(resp.data) >= 4:
+                resp = self._send_to(ecu_id, bytes([0x22, hi, lo]), timeout=0.3)
+                if resp and len(resp.data) >= 3:
                     raw = bytes(resp.data)
-                    if raw[1] == 0x62:   # positive response
-                        payload = raw[4:]
+                    # Positive response: 62 <DID_hi> <DID_lo> <data...>. The
+                    # payload is PCI-less, so the SID is at index 0 — the old
+                    # code checked index 1 and never matched, which is why the
+                    # ECU-info scan reported nothing on real hardware.
+                    if raw[0] == 0x62 and raw[1] == hi and raw[2] == lo:
+                        payload = raw[3:]
                         hex_str = payload.hex().upper()
-                        try:
-                            decoded = payload.decode("ascii", errors="replace").strip()
-                        except Exception:
-                            decoded = ""
+                        decoded = _printable(payload)
                         self.ecu_result.emit(ecu_id, did_name, hex_str, decoded)
                 time.sleep(0.05)
 
             # Return to default session
-            self._send_to(ecu_id, bytes([0x02, 0x10, 0x01, 0, 0, 0, 0, 0]))
+            self._send_to(ecu_id, bytes([0x10, 0x01]))
             time.sleep(0.05)
 
     def _scan_services(self):
@@ -316,16 +352,16 @@ class UDSScanner(QThread):
                                  f"(0x{svc_id:02X}) — enable unsafe scan to probe")
                 self.service_result.emit(FUNCTIONAL_REQUEST_ID, svc_id, False, b"")
                 continue
-            resp = self._send_and_recv(
-                bytes([0x02, svc_id, 0x00, 0, 0, 0, 0, 0]),
-                timeout=0.15,
-            )
+            resp = self._send_and_recv(bytes([svc_id, 0x00]), timeout=0.15)
             supported = False
             resp_data = b""
             if resp:
                 raw = bytes(resp.data)
-                # Not a "service not supported" negative response (0x7F xx 0x11)
-                if not (len(raw) >= 3 and raw[1] == 0x7F and raw[3] == 0x11):
+                # Negative response is 7F <sid> <nrc>; NRC 0x11 = serviceNotSupported.
+                # Indices are PCI-less now, so the NRC sits at raw[2], not raw[3].
+                not_supported = (len(raw) >= 3 and raw[0] == 0x7F
+                                 and raw[2] in (0x11, 0x7F))
+                if not not_supported:
                     supported = True
                     resp_data = raw
             self.service_result.emit(

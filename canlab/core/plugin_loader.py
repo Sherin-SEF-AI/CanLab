@@ -12,11 +12,25 @@ listing plugins (e.g. opening the Settings panel) cannot run arbitrary code —
 only explicit activation does.
 """
 import ast
+import hashlib
 import importlib.util
 from pathlib import Path
 
 
 PLUGIN_DIR = Path.home() / ".canlab" / "plugins"
+
+
+def plugin_fingerprint(path: str) -> str:
+    """SHA-256 of a plugin file's contents.
+
+    Used for trust-on-first-use consent: an approved fingerprint authorises
+    exactly that file content. Any edit changes the hash and re-prompts, so a
+    plugin can't be swapped for malicious code after approval without asking.
+    """
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except Exception:
+        return ""
 
 
 def _read_metadata(py_file: Path) -> tuple[str, str]:
@@ -52,11 +66,12 @@ def discover_plugins() -> list[dict]:
     for py_file in sorted(PLUGIN_DIR.glob("*.py")):
         name, version = _read_metadata(py_file)
         results.append({
-            "name":    name,
-            "version": version,
-            "path":    str(py_file),
-            "module":  None,
-            "enabled": True,
+            "name":        name,
+            "version":     version,
+            "path":        str(py_file),
+            "fingerprint": plugin_fingerprint(str(py_file)),
+            "module":      None,
+            "enabled":     True,
         })
     return results
 

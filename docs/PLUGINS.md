@@ -7,8 +7,11 @@ actions, custom exporters, or new detectors without touching CanLab's source.
 
 Plugin **metadata** (name/version) is read statically without executing code, so
 merely listing plugins never runs anything. A plugin's code executes only when it
-is **activated** (loaded at startup / enabled in the Plugins panel). Only install
-plugins you trust — an activated plugin runs with full app privileges.
+is **activated**, and activation requires **explicit approval**: on startup CanLab
+lists any new or changed plugin and runs it only if you say Yes. Approval is
+trust-on-first-use, keyed by the file's SHA-256 — editing an approved plugin
+changes its hash and re-prompts, so approved code can't be silently swapped out.
+Only approve plugins you trust — an activated plugin runs with full app privileges.
 
 ## Writing a plugin
 

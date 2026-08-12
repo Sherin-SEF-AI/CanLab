@@ -24,6 +24,8 @@ class PlotTab(QWidget):
         self._color_idx    = 0
         # key -> (PlotItem, DataItem, color, label)
         self._plot_items: dict = {}
+        # key -> {"kind","can_id","byte","sig_name"} for live updates
+        self._plot_meta: dict = {}
         self._live_enabled = False
         self._build_ui()
         self._state.frames_updated.connect(self._refresh_tree)
@@ -140,8 +142,10 @@ class PlotTab(QWidget):
                 child.setCheckState(0, Qt.CheckState.Unchecked)
                 child.setFont(0, mono_font())
                 parent.addChild(child)
+            from core.canid import normalize_id
+            nid = normalize_id(can_id)
             dbc_sigs = [s for s in self._state.dbc_signals
-                        if s.get("message_id", "").upper() == can_id.upper()]
+                        if normalize_id(s.get("message_id", "")) == nid]
             for sig in dbc_sigs:
                 sname = sig.get("signal_name", "?")
                 child = QTreeWidgetItem([f"[DBC] {sname}"])
@@ -215,6 +219,11 @@ class PlotTab(QWidget):
         self._color_idx += 1
         pen = pg.mkPen(color=color, width=2)
 
+        # sig_name is the decoded-signal key for DBC traces; live updates use it
+        # to pull fresh values. (Previously live update re-parsed the plot key,
+        # which for DBC signals was a stringified dict and never matched, so DBC
+        # traces silently stopped updating in LIVE mode.)
+        sig_name = None
         if kind == "byte" and detail:
             s = df[detail].dropna()
             if s.empty:
@@ -224,6 +233,7 @@ class PlotTab(QWidget):
             label = f"{can_id} {detail}"
         elif kind == "dbc" and detail:
             from core.dbc_manager import decode_frame
+            sig_name = detail.get("signal_name", "")
             vals, times = [], []
             for _, row in df.iterrows():
                 byte_data = bytes(
@@ -231,15 +241,14 @@ class PlotTab(QWidget):
                     for i in range(8)
                 )
                 decoded = decode_frame([detail], can_id, byte_data)
-                sname = detail.get("signal_name", "")
-                if sname in decoded:
-                    vals.append(float(decoded[sname]))
+                if sig_name in decoded:
+                    vals.append(float(decoded[sig_name]))
                     times.append(row["Timestamp"])
             if not vals:
                 return
             t = np.array(times, dtype=float)
             y = np.array(vals, dtype=float)
-            label = f"{can_id} {detail.get('signal_name', '?')}"
+            label = f"{can_id} {sig_name or '?'}"
         else:
             return
 
@@ -255,15 +264,21 @@ class PlotTab(QWidget):
         pi.autoRange()
 
         self._plot_items[key] = (pi, curve, color, label)
+        # Structured metadata for live updates, keyed the same as _plot_items.
+        self._plot_meta[key] = {"kind": kind, "can_id": can_id,
+                                "byte": detail if kind == "byte" else None,
+                                "sig_name": sig_name}
         self._rebuild_layout()
 
     def _remove_signal(self, key: str):
         if key in self._plot_items:
             del self._plot_items[key]
+            self._plot_meta.pop(key, None)
             self._rebuild_layout()
 
     def _clear_plot(self):
         self._plot_items.clear()
+        self._plot_meta.clear()
         self.glw.clear()
         self._color_idx = 0
         self.sig_tree.blockSignals(True)
@@ -305,32 +320,38 @@ class PlotTab(QWidget):
             return
         db = self._state.dbc_db
         for key, (pi, curve, color, label) in list(self._plot_items.items()):
-            parts = key.split(":", 1)
-            if len(parts) != 2:
+            meta = self._plot_meta.get(key)
+            if not meta:
                 continue
-            can_id, detail = parts[0], parts[1]
+            can_id = meta["can_id"]
             df = self._state.get_frames_for_id(can_id)
             if df.empty:
                 continue
             df = df.tail(500)
-            if detail.startswith("B") and detail[1:].isdigit():
-                s = df[detail].dropna() if detail in df.columns else None
+
+            if meta["kind"] == "byte":
+                col = meta["byte"]
+                s = df[col].dropna() if col in df.columns else None
                 if s is None or s.empty:
                     continue
                 t = df.loc[s.index, "Timestamp"].values.astype(float)
                 y = s.values.astype(float)
                 curve.setData(t, y)
                 pi.autoRange()
-            elif db is not None:
+            elif meta["kind"] == "dbc" and db is not None:
+                sig_name = meta["sig_name"]
                 t_vals, y_vals = [], []
-                msg_id_int = int(can_id, 16)
+                try:
+                    msg_id_int = int(can_id, 16)
+                except (ValueError, TypeError):
+                    continue
                 for _, row in df.iterrows():
                     try:
                         raw = bytes(int(row.get(f"B{i}", 0) or 0) for i in range(8))
                         decoded = db.decode_message(msg_id_int, raw)
-                        if detail in decoded:
+                        if sig_name in decoded:
                             t_vals.append(float(row["Timestamp"]))
-                            y_vals.append(float(decoded[detail]))
+                            y_vals.append(float(decoded[sig_name]))
                     except Exception:
                         pass
                 if t_vals:

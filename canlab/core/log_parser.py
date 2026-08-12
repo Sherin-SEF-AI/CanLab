@@ -277,6 +277,11 @@ def parse_log_file(filepath: str) -> pd.DataFrame:
         if suffix in (".mf4", ".mdf"):
             return parse_mdf(filepath)
         if suffix == ".log":
+            # candump marks CAN FD frames with a double '##' (id##flags+data).
+            # The classic parser's single-'#' regex mangles those, so detect FD
+            # frames up front and use the FD-aware parser when present.
+            if _candump_has_fd(filepath):
+                return parse_candump_fd(filepath)
             return parse_candump_log(filepath)
         # Try SavvyCAN first
         with open(filepath) as f:
@@ -287,6 +292,21 @@ def parse_log_file(filepath: str) -> pd.DataFrame:
         return parse_candump_log(filepath)
     except Exception as e:
         raise ValueError(f"Failed to parse {filepath}: {e}") from e
+
+
+def _candump_has_fd(filepath: str, sniff_lines: int = 2000) -> bool:
+    """True if any of the first sniff_lines candump lines is a CAN FD frame."""
+    fd_re = re.compile(r"\)\s+\S+\s+[0-9A-Fa-f]+##")
+    try:
+        with open(filepath) as f:
+            for i, line in enumerate(f):
+                if i >= sniff_lines:
+                    break
+                if fd_re.search(line):
+                    return True
+    except Exception:
+        return False
+    return False
 
 
 def parse_candump_fd(filepath: str) -> pd.DataFrame:

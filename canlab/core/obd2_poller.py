@@ -41,9 +41,12 @@ class OBD2Poller(QThread):
                 if not self._running:
                     break
                 try:
-                    payload = session.send(bytes([0x02, 0x01, pid]), timeout=0.5)
-                    if payload and len(payload) >= 3 and payload[1] == 0x41 and payload[2] == pid:
-                        data = payload[3:]
+                    # Service payload only — ISOTPSession adds the PCI byte.
+                    # Passing a pre-built "02 01 <pid>" produced "03 02 01 <pid>"
+                    # on the wire, which no ECU answers.
+                    payload = session.send(bytes([0x01, pid]), timeout=0.5)
+                    if payload and len(payload) >= 3 and payload[0] == 0x41 and payload[1] == pid:
+                        data = payload[2:]
                         value = decode_pid(pid, data)
                         if value is not None:
                             unit = PID_TABLE.get(pid, {}).get("unit", "")
@@ -63,11 +66,12 @@ class OBD2Poller(QThread):
             for base in (0x00, 0x20, 0x40, 0x60, 0x80, 0xA0, 0xC0):
                 if not self._running:
                     break
-                payload = session.send(bytes([0x02, 0x01, base]), timeout=1.0)
+                # Service payload only — the session adds the PCI byte.
+                payload = session.send(bytes([0x01, base]), timeout=1.0)
                 if not (payload and len(payload) >= 6
-                        and payload[1] == 0x41 and payload[2] == base):
+                        and payload[0] == 0x41 and payload[1] == base):
                     break
-                mask_data = payload[3:7]
+                mask_data = payload[2:6]
                 window_pids = supported_pids_from_mask(mask_data, base=base)
                 all_pids.extend(window_pids)
                 # The "next window" PID (base + 0x20) being present means continue.

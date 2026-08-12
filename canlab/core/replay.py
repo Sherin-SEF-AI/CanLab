@@ -46,7 +46,7 @@ class ReplayWorker(QThread):
 
     def run(self):
         import can
-        from core.safety import require_armed, BusNotArmedError
+        from core.safety import require_armed, is_armed, BusNotArmedError
         rows = self._df.sort_values("Timestamp").reset_index(drop=True)
         n    = len(rows)
         if n == 0:
@@ -81,6 +81,13 @@ class ReplayWorker(QThread):
                 if not self._running:
                     break
 
+                # Re-check the safety gate every frame: disarming ARM TX mid-run
+                # must halt transmission immediately, not only block the next run.
+                if not is_armed():
+                    self.error.emit("Bus transmit disarmed — replay stopped.")
+                    self._running = False
+                    break
+
                 row = rows.iloc[idx]
                 target_offset = (row["Timestamp"] - t0_log) / self._speed
                 elapsed = time.monotonic() - t0_real
@@ -97,12 +104,20 @@ class ReplayWorker(QThread):
                     break
 
                 try:
-                    raw_id = row.get("ID", "0")
-                    arb_id = int(str(raw_id), 16) if isinstance(raw_id, str) else int(raw_id)
-                    data   = bytes(
-                        int(row[f"B{i}"]) if pd.notna(row.get(f"B{i}")) else 0
-                        for i in range(8)
-                    )
+                    from core.canid import normalize_id
+                    arb_id = int(normalize_id(row.get("ID", "0")), 16)
+                    # Honour the recorded DLC: only replay the bytes that were
+                    # actually present. The previous code always sent 8 bytes and
+                    # substituted 0 for any NaN, so a 3-byte frame went back onto
+                    # the bus as 8 bytes with five spurious zeros — a different
+                    # frame than was captured.
+                    dlc_val = row.get("DLC")
+                    n = int(dlc_val) if pd.notna(dlc_val) else 8
+                    n = max(0, min(n, 8))
+                    payload = []
+                    for i in range(n):
+                        v = row.get(f"B{i}")
+                        payload.append(int(v) & 0xFF if pd.notna(v) else 0)
                     extended = (
                         bool(row.get("Extended", False))
                         if "Extended" in row.index
@@ -110,7 +125,7 @@ class ReplayWorker(QThread):
                     )
                     msg = can.Message(
                         arbitration_id=arb_id,
-                        data=data,
+                        data=bytes(payload),
                         is_extended_id=extended,
                     )
                     self._bus.send(msg)

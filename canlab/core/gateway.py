@@ -137,7 +137,7 @@ class GatewayWorker(QThread):
         self.wait(3000)
 
     def run(self):
-        from core.safety import require_armed, BusNotArmedError
+        from core.safety import require_armed, is_armed, BusNotArmedError
         try:
             require_armed()
         except BusNotArmedError as e:
@@ -157,6 +157,12 @@ class GatewayWorker(QThread):
 
         try:
             while self._running:
+                # Disarming ARM TX must stop the MitM bridge from forwarding
+                # frames onto either bus immediately, not just on next start.
+                if not is_armed():
+                    self.error.emit("Bus transmit disarmed — gateway stopped.")
+                    break
+
                 try:
                     src, msg = q.get(timeout=0.1)
                 except queue.Empty:

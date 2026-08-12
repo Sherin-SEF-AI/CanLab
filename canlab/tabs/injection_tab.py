@@ -310,17 +310,23 @@ class InjectionTab(QWidget):
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return
         from core.injection import pack_signal, hyundai_checksum
+        from core.safety import is_armed
+        if not is_armed():
+            QMessageBox.warning(self, "Disarmed",
+                                "Bus transmit is disarmed. Enable ARM TX first.")
+            return
         value = self.val_spin.value()
         data  = pack_signal(value, sig)
-        mid_str = sig.get("message_id", "0")
         try:
-            mid = int(mid_str, 16)
+            mid = int(normalize_id(sig.get("message_id", "0")), 16)
         except (ValueError, TypeError):
             mid = 0
-        if self.chk_checksum.isChecked():
-            data[7] = hyundai_checksum(bytes(data), mid)
+        if self.chk_checksum.isChecked() and len(data) > 0:
+            data[-1] = hyundai_checksum(bytes(data), mid)
+        extended = bool(sig.get("extended")) or mid > 0x7FF
         import can
-        msg = can.Message(arbitration_id=mid, data=bytes(data), is_extended_id=False)
+        msg = can.Message(arbitration_id=mid, data=bytes(data),
+                          is_extended_id=extended)
         try:
             bus.send(msg)
             self.lbl_inj_status.setText(
