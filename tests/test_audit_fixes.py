@@ -221,6 +221,49 @@ def test_replay_stops_when_disarmed_midrun():
         set_armed(False)
 
 
+# ── SavvyCAN CSV: trailing comma + hex bytes ──────────────────────────────────
+
+def test_savvycan_trailing_comma_and_hex_bytes(tmp_path):
+    """Real SavvyCAN exports: 2-digit hex data bytes AND a trailing comma.
+
+    The trailing comma used to make pandas promote Time Stamp to the index and
+    shift every column left (IDs landed in the timestamp column, the ID column
+    filled with the Extended flag) — which then crashed int(id, 16) in the UI.
+    And hex bytes ("0A"/"FF") were read as decimal / NaN. Both must parse right.
+    """
+    from core.log_parser import parse_log_file
+    p = tmp_path / "savvy.csv"
+    p.write_text(
+        "Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8\n"
+        "1000,000002B5,false,Rx,0,8,00,0A,FF,10,55,00,00,00,\n"
+        "2000,00000111,false,Rx,0,8,DE,AD,BE,EF,00,00,00,00,\n"
+    )
+    df = parse_log_file(str(p))
+    assert set(df["ID"]) == {"2B5", "111"}          # real IDs, not "FALSE"
+    assert (df["Bus"] == 0).all()                   # Bus column not shifted
+    assert (df["DLC"] == 8).all()                   # DLC column not shifted
+    row = df[df["ID"] == "2B5"].iloc[0]
+    # Hex bytes decoded to their true values (0x0A=10, 0xFF=255, 0x10=16).
+    assert [int(row[f"B{i}"]) for i in range(6)] == [0x00, 0x0A, 0xFF, 0x10, 0x55, 0x00]
+    # Every ID must be int(x, 16)-parseable (the old crash path).
+    for cid in df["ID"].unique():
+        int(cid, 16)
+
+
+def test_savvycan_decimal_sample_still_parses(tmp_path):
+    # The bundled decimal-byte sample format (no trailing comma) must keep working.
+    from core.log_parser import parse_log_file
+    p = tmp_path / "dec.csv"
+    p.write_text(
+        "Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8\n"
+        "0,018,false,Rx,0,8,70,80,0,0,0,0,0,150\n"
+    )
+    df = parse_log_file(str(p))
+    row = df.iloc[0]
+    assert row["ID"] == "018"
+    assert [int(row[f"B{i}"]) for i in range(8)] == [70, 80, 0, 0, 0, 0, 0, 150]
+
+
 # ── candump FD frames are parsed, not mangled ─────────────────────────────────
 
 def test_candump_fd_detection_and_parse(tmp_path):
