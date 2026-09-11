@@ -10,6 +10,7 @@ the sentences, and muxes it all with ffmpeg.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import shutil
@@ -68,14 +69,26 @@ def duration(path: Path) -> float:
 
 
 async def synthesise(scenes: list[dict]) -> None:
-    """One narration file per scene."""
+    """One narration file per scene, reused when the words have not changed.
+
+    Re-recording the frames is cheap; re-reading 11 minutes of narration to a
+    remote service is not. Each clip is keyed by a digest of its own text and
+    voice settings, so editing one scene re-voices that scene alone.
+    """
     import edge_tts
     AUDIO.mkdir(parents=True, exist_ok=True)
     for i, scene in enumerate(scenes):
         path = AUDIO / f"{i:02d}_{scene['key']}.mp3"
+        stamp = path.with_suffix(".sha")
+        digest = hashlib.sha256(
+            f"{VOICE}|{RATE}|{scene['narration']}".encode()).hexdigest()
+        scene["audio"] = path
+        if path.exists() and stamp.exists() and stamp.read_text() == digest:
+            print(f"  reused {scene['key']}")
+            continue
         communicate = edge_tts.Communicate(scene["narration"], VOICE, rate=RATE)
         await communicate.save(str(path))
-        scene["audio"] = path
+        stamp.write_text(digest)
         print(f"  voiced {scene['key']}")
 
 

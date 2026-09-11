@@ -19,7 +19,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QRect, Qt                      # noqa: E402
+from PyQt6.QtCore import QRect                      # noqa: E402
 from PyQt6.QtWidgets import (QApplication, QMessageBox,  # noqa: E402
                              QTabWidget)
 
@@ -541,8 +541,11 @@ def record() -> None:
 
 
 def main() -> int:
-    if OUT.exists():
-        shutil.rmtree(OUT)
+    # Clear only the frames. build/ also holds the synthesised narration, and
+    # build.py reuses each clip whose words have not changed -- wiping the whole
+    # directory here would re-read eleven minutes of speech on every re-record.
+    if FRAMES.exists():
+        shutil.rmtree(FRAMES)
     FRAMES.mkdir(parents=True)
     print(f"recording to {OUT}")
     started = time.monotonic()
