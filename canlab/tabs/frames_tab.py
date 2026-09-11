@@ -11,7 +11,11 @@ from canlab.core.state import get_state
 
 BYTE_COLS   = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
 ALL_COLUMNS = ["Timestamp", "ID", "Bus", "DLC"] + BYTE_COLS + ["Delta"]
-MAX_DISPLAY = 5000
+# Rows kept in the table. Rebuilding it costs about 0.1 ms per row, and at
+# 5000 rows a refresh took longer than the 300 ms coalescing interval, so
+# during live capture the GUI thread did nothing but rebuild the table. About
+# 45 rows are visible at a time; 1000 is ample scrollback.
+MAX_DISPLAY = 1000
 
 
 def _active_byte_cols(df) -> list:
