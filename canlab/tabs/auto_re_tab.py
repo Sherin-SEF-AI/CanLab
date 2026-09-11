@@ -84,8 +84,8 @@ class AutoRETab(QWidget):
         self.btn_run_ctr.setEnabled(False)
         self.lbl_ctr_status.setText("Analysing…")
 
-        # Run the (heavy, iterrows-based) detection off the GUI thread so the
-        # window stays responsive and the "Analysing…" label can repaint.
+        # Run detection off the GUI thread so the window stays responsive and
+        # the "Analysing…" label can repaint.
         from canlab.core.counter_checksum_detector import detect_counters_and_checksums
         from canlab.ui.compute_worker import ComputeWorker
         self._ctr_worker = ComputeWorker(detect_counters_and_checksums, df)
