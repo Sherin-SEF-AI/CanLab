@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QPushButton, QProgressBar, QMenu,
 )
 from PyQt6.QtCore import QTimer, pyqtSignal
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QKeySequence
 
 from canlab.theme import COLORS, mono_font
 from canlab.core.state import get_state
@@ -154,16 +154,19 @@ class MainWindow(QMainWindow):
     def _build_menubar(self):
         mb = self.menuBar()
 
-        # File menu
+        # File menu. Shortcuts use QKeySequence.StandardKey where one exists so
+        # they follow the platform (Cmd on macOS, Ctrl elsewhere).
         file_menu = mb.addMenu("File")
-        for text, slot in [
-            ("Open Log…",           self._open_log),
-            ("Open .rlog…",         self._open_rlog),
-            ("Save Project…",       self._save_project),
-            ("Open Project…",       self._open_project),
+        for text, slot, key in [
+            ("Open Log…",           self._open_log,      QKeySequence.StandardKey.Open),
+            ("Open .rlog…",         self._open_rlog,     None),
+            ("Save Project…",       self._save_project,  QKeySequence.StandardKey.Save),
+            ("Open Project…",       self._open_project,  "Ctrl+Shift+O"),
         ]:
             a = QAction(text, self)
             a.triggered.connect(slot)
+            if key is not None:
+                a.setShortcut(key)
             file_menu.addAction(a)
         file_menu.addSeparator()
         for text, slot in [
@@ -184,6 +187,13 @@ class MainWindow(QMainWindow):
         a = QAction("Import DBC…", self)
         a.triggered.connect(self._import_dbc)
         file_menu.addAction(a)
+        file_menu.addSeparator()
+        a = QAction("Quit", self)
+        a.setShortcut(QKeySequence.StandardKey.Quit)
+        a.triggered.connect(self.close)
+        file_menu.addAction(a)
+
+        self._build_view_menu(mb)
 
         # Tools menu
         tools_menu = mb.addMenu("Tools")
@@ -206,8 +216,74 @@ class MainWindow(QMainWindow):
         settings_menu = mb.addMenu("Settings")
         a = QAction("Preferences…", self)
         a.triggered.connect(self._open_settings)
-        a.setShortcut("Ctrl+,")
+        a.setShortcut(QKeySequence.StandardKey.Preferences)
         settings_menu.addAction(a)
+
+    def _build_view_menu(self, mb) -> None:
+        """Navigation and bus shortcuts, in a menu so they can be discovered.
+
+        The application had exactly one shortcut, Preferences. These are the
+        ones a desktop tool is expected to have. They live in a menu rather
+        than as bare key bindings because Qt then shows each key next to its
+        item, which is the only way a user finds out they exist.
+        """
+        view_menu = mb.addMenu("View")
+
+        # Alt rather than Ctrl for the tab numbers, so Ctrl+number stays free
+        # inside the tables and text fields. Alt+0 is the tenth, as in browsers.
+        for i in range(self.tabs.count()):
+            label = self.tabs.tabText(i).replace("&", "&&")
+            action = QAction(label, self)
+            if i < 10:
+                action.setShortcut(QKeySequence(f"Alt+{(i + 1) % 10}"))
+            action.triggered.connect(
+                lambda _=False, index=i: self.tabs.setCurrentIndex(index))
+            view_menu.addAction(action)
+
+        view_menu.addSeparator()
+        for text, sequence, handler in [
+            ("Next Tab",         "Ctrl+Tab",       lambda: self._step_tab(1)),
+            ("Previous Tab",     "Ctrl+Shift+Tab", lambda: self._step_tab(-1)),
+            ("Find in Frames",   QKeySequence.StandardKey.Find,
+             self._focus_frame_filter),
+        ]:
+            action = QAction(text, self)
+            action.setShortcut(sequence if isinstance(sequence, str)
+                               else QKeySequence(sequence))
+            action.triggered.connect(handler)
+            view_menu.addAction(action)
+
+        view_menu.addSeparator()
+        for text, sequence, handler in [
+            ("Connect / Disconnect Bus", "Ctrl+D", self._toggle_connection),
+            ("Arm / Disarm TX",          "Ctrl+E", lambda: self._act_arm.trigger()),
+        ]:
+            action = QAction(text, self)
+            action.setShortcut(QKeySequence(sequence))
+            action.triggered.connect(handler)
+            view_menu.addAction(action)
+
+    def _step_tab(self, delta: int) -> None:
+        count = self.tabs.count()
+        self.tabs.setCurrentIndex((self.tabs.currentIndex() + delta) % count)
+
+    def _focus_frame_filter(self) -> None:
+        """Ctrl+F goes to the frame filter, switching to FRAMES if needed."""
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i).startswith("FRAMES"):
+                self.tabs.setCurrentIndex(i)
+                break
+        line = getattr(self.frames_tab, "filter_id", None)
+        if line is not None:
+            line.setFocus()
+            line.selectAll()
+
+    def _toggle_connection(self) -> None:
+        """Ctrl+D connects or disconnects the bus, whichever applies."""
+        if self._state.is_connected:
+            self._disconnect_can()
+        else:
+            self._connect_can()
 
     # ── Central layout ────────────────────────────────────────────────────────
 

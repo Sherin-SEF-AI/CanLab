@@ -139,14 +139,6 @@ def test_disconnect_flushes_the_tail(window, app):
     assert len(st.frames_df) == before + 7
 
 
-def test_close_disarms_and_stops_workers(window, app):
-    """Runs last: closing the window must disarm TX and stop every worker."""
-    safety.set_armed(True)
-    window.close()
-    app.processEvents()
-    assert not safety.is_armed()
-
-
 def test_frames_table_refresh_stays_cheap_while_visible(window, app):
     """A visible frames table must not cost O(rows^2) to fill.
 
@@ -252,3 +244,63 @@ def test_the_heatmap_renders_text_without_a_freetype_failure(window, app):
     app.processEvents()
     image = window.dashboard_tab._heatmap_canvas.grab()
     assert image.width() > 0 and image.height() > 0
+
+
+def _shortcut_actions(window):
+    """Every action reachable from the window that carries a shortcut."""
+    from PyQt6.QtWidgets import QMenu
+
+    found = []
+    for holder in [window] + window.menuBar().findChildren(QMenu):
+        found += [a for a in holder.actions() if not a.shortcut().isEmpty()]
+    return found
+
+
+def test_keyboard_shortcuts_are_registered_without_conflicts(window, app):
+    """The application shipped with exactly one shortcut, Preferences."""
+    sequences = [a.shortcut().toString() for a in _shortcut_actions(window)]
+    assert len(sequences) >= 18, f"only {len(sequences)} shortcuts"
+    duplicates = {s for s in sequences if sequences.count(s) > 1}
+    assert not duplicates, f"two actions share a shortcut: {sorted(duplicates)}"
+
+
+def test_alt_number_selects_the_matching_tab(window, app):
+    """Alt+1 is the first tab, Alt+9 the ninth, Alt+0 the tenth."""
+    actions = {a.shortcut().toString(): a for a in _shortcut_actions(window)}
+    for key, expected in (("Alt+1", 0), ("Alt+5", 4), ("Alt+9", 8), ("Alt+0", 9)):
+        assert key in actions, f"{key} not bound"
+        actions[key].trigger()
+        app.processEvents()
+        assert window.tabs.currentIndex() == expected, key
+
+
+def test_ctrl_f_focuses_the_frame_filter(window, app):
+    """Ctrl+F should reach the filter box from any tab, not just FRAMES."""
+    window.tabs.setCurrentIndex(window.tabs.count() - 1)
+    app.processEvents()
+    actions = {a.shortcut().toString(): a for a in _shortcut_actions(window)}
+    actions["Ctrl+F"].trigger()
+    app.processEvents()
+    assert window.tabs.tabText(window.tabs.currentIndex()).startswith("FRAMES")
+    assert window.frames_tab.filter_id.hasFocus()
+
+
+def test_ctrl_tab_cycles_and_wraps(window, app):
+    actions = {a.shortcut().toString(): a for a in _shortcut_actions(window)}
+    last = window.tabs.count() - 1
+    window.tabs.setCurrentIndex(last)
+    app.processEvents()
+    actions["Ctrl+Tab"].trigger()
+    app.processEvents()
+    assert window.tabs.currentIndex() == 0, "forward cycle did not wrap"
+    actions["Ctrl+Shift+Tab"].trigger()
+    app.processEvents()
+    assert window.tabs.currentIndex() == last, "backward cycle did not wrap"
+
+
+def test_close_disarms_and_stops_workers(window, app):
+    """Runs last: closing the window must disarm TX and stop every worker."""
+    safety.set_armed(True)
+    window.close()
+    app.processEvents()
+    assert not safety.is_armed()
