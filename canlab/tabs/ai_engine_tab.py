@@ -2,6 +2,7 @@ import re
 import pandas as pd
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (
+    QScrollArea, QFrame,
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QListWidgetItem,
     QPushButton, QLabel, QTextEdit, QProgressBar, QLineEdit,
     QTabWidget, QMessageBox,
@@ -78,7 +79,7 @@ class AIEngineTab(QWidget):
 
         # ── Left: Queue ───────────────────────────────────────────────────────
         left = QWidget()
-        left.setFixedWidth(210)
+        left.setMinimumWidth(210)
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(4, 4, 4, 4)
         left_lay.setSpacing(4)
@@ -129,7 +130,19 @@ class AIEngineTab(QWidget):
         left_lay.addWidget(self.lbl_memory)
         self._refresh_memory_label()
 
-        splitter.addWidget(left)
+
+        # See intelligence_tab: a tall column of controls in a plain widget
+        # sets the minimum height of the whole window. In a scroll area it can
+        # shrink, so the application fits a laptop screen.
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_scroll.setMinimumWidth(210)
+        left_scroll.setMaximumWidth(380)
+        splitter.addWidget(left_scroll)
 
         # ── Right: Analysis ───────────────────────────────────────────────────
         right = QWidget()

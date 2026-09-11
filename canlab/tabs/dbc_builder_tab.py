@@ -1,5 +1,6 @@
 import pandas as pd
 from PyQt6.QtWidgets import (
+    QScrollArea, QFrame,
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QListWidgetItem,
     QPushButton, QLabel, QLineEdit, QComboBox, QGridLayout, QTextEdit,
     QFileDialog, QMessageBox, QHeaderView, QTableWidget, QTableWidgetItem,
@@ -35,7 +36,7 @@ class DBCBuilderTab(QWidget):
 
         # Left: signal list
         left = QWidget()
-        left.setFixedWidth(220)
+        left.setMinimumWidth(220)
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(4, 4, 4, 4)
         left_lay.setSpacing(4)
@@ -111,7 +112,19 @@ class DBCBuilderTab(QWidget):
         btn_candbpp.clicked.connect(self._export_candbpp)
         left_lay.addWidget(btn_candbpp)
 
-        splitter.addWidget(left)
+
+        # See intelligence_tab: a tall column of controls in a plain widget
+        # sets the minimum height of the whole window. In a scroll area it can
+        # shrink, so the application fits a laptop screen.
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_scroll.setMinimumWidth(220)
+        left_scroll.setMaximumWidth(400)
+        splitter.addWidget(left_scroll)
 
         # Right: editor + preview
         right = QWidget()

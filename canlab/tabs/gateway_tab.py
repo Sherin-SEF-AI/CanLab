@@ -1,5 +1,6 @@
 """GATEWAY tab — bidirectional CAN MitM bridge with filter/modify rules."""
 from PyQt6.QtWidgets import (
+    QScrollArea, QFrame,
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QPushButton, QLabel,
     QLineEdit, QComboBox, QSpinBox, QGroupBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QTextEdit, QGridLayout, QCheckBox,
@@ -37,7 +38,7 @@ class GatewayTab(QWidget):
 
         # ── Left panel: config + rules ─────────────────────────────────────────
         left = QWidget()
-        left.setFixedWidth(340)
+        left.setMinimumWidth(340)
         ll = QVBoxLayout(left)
         ll.setContentsMargins(4, 4, 4, 4)
         ll.setSpacing(6)
@@ -158,7 +159,19 @@ class GatewayTab(QWidget):
         self.rules_table.cellClicked.connect(self._on_rules_table_click)
         ll.addWidget(self.rules_table)
 
-        splitter.addWidget(left)
+
+        # The control column is a tall stack of group boxes. Left as a plain
+        # widget its full height became the minimum height of the whole
+        # application window; in a scroll area it can shrink and scroll.
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_scroll.setMinimumWidth(340)
+        left_scroll.setMaximumWidth(520)
+        splitter.addWidget(left_scroll)
 
         # ── Right panel: live frame log ────────────────────────────────────────
         right = QWidget()

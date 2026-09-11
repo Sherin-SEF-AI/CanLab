@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QColor, QBrush
 
-from canlab.theme import COLORS, mono_font
+from canlab.theme import COLORS, mono_font, desc_label
 from canlab.core.state import get_state
 import logging
 
@@ -115,11 +115,10 @@ class DiagnosticsTab(QWidget):
         lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(6)
 
-        lay.addWidget(QLabel(
-            "UDS Security Access (service 0x27) — seed-key brute-force, "
+        lay.addWidget(desc_label(
+            "UDS Security Access (service 0x27): seed-key brute-force, "
             "built-in algorithms, and pluggable Python scripts.",
-            font=mono_font(8),
-        ))
+            8))
 
         # ── Config ────────────────────────────────────────────────────────────
         cfg_grp = QGroupBox("CONFIGURATION")
@@ -703,11 +702,10 @@ class DiagnosticsTab(QWidget):
         lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(6)
 
-        lay.addWidget(QLabel(
+        lay.addWidget(desc_label(
             "Live CAN bus health: error frames, bus-off events, load statistics, "
             "and IDs that go silent.",
-            font=mono_font(8),
-        ))
+            8))
 
         ctl = QHBoxLayout()
         self.btn_health_start = QPushButton("▶  Start Monitoring")

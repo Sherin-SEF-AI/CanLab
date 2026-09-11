@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
 
-from canlab.theme import COLORS, mono_font
+from canlab.theme import COLORS, mono_font, desc_label
 from canlab.core.state import get_state
 from canlab.core.canid import normalize_id
 import logging
@@ -531,11 +531,10 @@ class InjectionTab(QWidget):
         lay.setSpacing(6)
 
         lay.addWidget(QLabel("ACTUATOR SAFETY BOUNDARY SCANNER", font=mono_font(9)))
-        lay.addWidget(QLabel(
-            "Sweep a signal from min→max in steps. Aborts if watchdog ID "
+        lay.addWidget(desc_label(
+            "Sweep a signal from min to max in steps. Aborts if watchdog ID "
             "disappears (safety controller cut-out detected).",
-            font=mono_font(8),
-        ))
+            8))
 
         cfg_grp = QGroupBox("SCAN CONFIGURATION")
         cg = QHBoxLayout(cfg_grp)
@@ -697,10 +696,9 @@ class InjectionTab(QWidget):
         lay.setSpacing(6)
 
         lay.addWidget(QLabel("FUZZ TESTING", font=mono_font(9)))
-        lay.addWidget(QLabel(
+        lay.addWidget(desc_label(
             "Inject random / boundary / mutation payloads to an unknown message ID.",
-            font=mono_font(8),
-        ))
+            8))
 
         cfg_grp = QGroupBox("FUZZ CONFIGURATION")
         cg = QHBoxLayout(cfg_grp)
@@ -827,11 +825,10 @@ class InjectionTab(QWidget):
         lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(6)
 
-        lay.addWidget(QLabel(
+        lay.addWidget(desc_label(
             "Build a sequence of INJECT / WAIT / ASSERT / RECORD steps and run it "
             "against the live CAN bus.",
-            font=mono_font(8),
-        ))
+            8))
 
         # ── Step editor ───────────────────────────────────────────────────────
         editor_grp = QGroupBox("ADD STEP")

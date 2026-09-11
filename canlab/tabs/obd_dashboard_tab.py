@@ -1,5 +1,6 @@
 """OBD-II Live Gauge Dashboard tab."""
 from PyQt6.QtWidgets import (
+    QScrollArea, QFrame,
     QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QPushButton, QLabel,
     QListWidget, QListWidgetItem, QSpinBox, QMessageBox,
 )
@@ -79,7 +80,7 @@ class OBDDashboardTab(QWidget):
 
         # Left — controls
         left = QWidget()
-        left.setFixedWidth(200)
+        left.setMinimumWidth(200)
         ll = QVBoxLayout(left)
         ll.setContentsMargins(4, 4, 4, 4)
         ll.setSpacing(6)
@@ -131,7 +132,19 @@ class OBDDashboardTab(QWidget):
         ll.addWidget(self.btn_stop)
 
         ll.addStretch()
-        root.addWidget(left)
+
+        # See intelligence_tab: a tall column of controls in a plain widget
+        # sets the minimum height of the whole window. In a scroll area it can
+        # shrink, so the application fits a laptop screen.
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_scroll.setMinimumWidth(200)
+        left_scroll.setMaximumWidth(360)
+        root.addWidget(left_scroll)
 
         # Right — gauge grid
         self.gauge_area = QWidget()

@@ -415,3 +415,19 @@ QToolTip {{
     padding: 2px 6px;
 }}
 """
+
+
+def desc_label(text: str, size: int = 8):
+    """A wrapping label for the help text above a panel.
+
+    Long help in a non-wrapping label sets a minimum width on its whole tab,
+    and the widest of them decided the minimum width of the application: the
+    window could not be made narrower than 1662 px, so it did not fit a
+    1366x768 laptop screen. Wrapping costs nothing and removes that floor.
+    """
+    from PyQt6.QtWidgets import QLabel
+
+    label = QLabel(text)
+    label.setFont(mono_font(size))
+    label.setWordWrap(True)
+    return label

@@ -298,6 +298,38 @@ def test_ctrl_tab_cycles_and_wraps(window, app):
     assert window.tabs.currentIndex() == last, "backward cycle did not wrap"
 
 
+def test_the_window_is_not_wider_than_a_laptop_screen(window, app):
+    """The window could not be made narrower than 1662 px.
+
+    Fifteen tab labels in one row needed 1162 px, nine non-wrapping help
+    labels added their full sentence widths, and two fixed-width side panels
+    could give nothing back. Together they set a floor that did not fit a
+    1440x900 screen, never mind a smaller one.
+    """
+    window.show()
+    app.processEvents()
+    window.showNormal()
+    for i in range(window.tabs.count()):          # every page must be laid out
+        window.tabs.setCurrentIndex(i)
+        app.processEvents()
+    floor = window.minimumSizeHint()
+    assert floor.width() <= 1440, f"minimum width {floor.width()} px"
+    assert floor.height() <= 900, f"minimum height {floor.height()} px"
+
+
+def test_long_help_text_wraps(window, app):
+    """A non-wrapping sentence sets a minimum width on its whole tab."""
+    from PyQt6.QtWidgets import QLabel
+
+    for i in range(window.tabs.count()):
+        window.tabs.setCurrentIndex(i)
+        app.processEvents()
+    unwrapped = [label.text()[:60] for label in window.findChildren(QLabel)
+                 if len(label.text()) > 90 and " " in label.text()
+                 and not label.wordWrap()]
+    assert not unwrapped, f"long labels without word wrap: {unwrapped}"
+
+
 def test_close_disarms_and_stops_workers(window, app):
     """Runs last: closing the window must disarm TX and stop every worker."""
     safety.set_armed(True)

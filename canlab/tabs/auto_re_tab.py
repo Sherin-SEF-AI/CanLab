@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
 
-from canlab.theme import COLORS, mono_font
+from canlab.theme import COLORS, mono_font, desc_label
 from canlab.core.state import get_state
 from canlab.core.canid import normalize_id
 
@@ -47,11 +47,10 @@ class AutoRETab(QWidget):
         lay.setSpacing(6)
 
         hdr = QHBoxLayout()
-        hdr.addWidget(QLabel(
+        hdr.addWidget(desc_label(
             "Automatically detect counter bytes (rolling +1 pattern) and "
             "checksum bytes (reproducible from other bytes).",
-            font=mono_font(8),
-        ))
+            8))
         hdr.addStretch()
         self.btn_run_ctr = QPushButton("Run Detection")
         self.btn_run_ctr.setObjectName("btn_green")
@@ -140,11 +139,10 @@ class AutoRETab(QWidget):
         lay.setSpacing(6)
 
         hdr = QHBoxLayout()
-        hdr.addWidget(QLabel(
-            "Per-bit entropy analysis — contiguous high-entropy bit runs "
+        hdr.addWidget(desc_label(
+            "Per-bit entropy analysis: contiguous high-entropy bit runs "
             "suggest signal boundaries. Click a row to view bit-level chart.",
-            font=mono_font(8),
-        ))
+            8))
         hdr.addStretch()
         self.btn_run_entropy = QPushButton("Run Analysis")
         self.btn_run_entropy.setObjectName("btn_green")
@@ -269,11 +267,10 @@ class AutoRETab(QWidget):
         lay.setSpacing(6)
 
         hdr = QHBoxLayout()
-        hdr.addWidget(QLabel(
+        hdr.addWidget(desc_label(
             "Combined dependency score: Pearson + Spearman rank + Mutual Information. "
             "Catches linear, monotonic, and bitfield correlations. High score = change together.",
-            font=mono_font(8),
-        ))
+            8))
         hdr.addStretch()
         self.btn_run_corr = QPushButton("Run Correlation")
         self.btn_run_corr.setObjectName("btn_green")
@@ -381,11 +378,10 @@ class AutoRETab(QWidget):
         lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(6)
 
-        lay.addWidget(QLabel(
+        lay.addWidget(desc_label(
             "Select a message ID and a candidate checksum byte. "
             "Tries XOR, sums, CRC-8 (J1850/AUTOSAR) and the OEM variants.",
-            font=mono_font(8),
-        ))
+            8))
 
         cfg_grp = QGroupBox("CONFIGURATION")
         cg = QHBoxLayout(cfg_grp)

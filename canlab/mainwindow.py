@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QTabWidget, QToolBar, QStatusBar, QLabel, QFileDialog,
     QMessageBox, QPushButton, QProgressBar, QMenu,
 )
-from PyQt6.QtCore import QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence
 
 from canlab.theme import COLORS, mono_font
@@ -45,8 +45,8 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("CANLAB — CAN Reverse Engineering Suite")
-        self.showMaximized()
+        self._loaded_name = ""
+        self._update_title()
 
         self._state        = get_state()
         self._hubs: list   = []        # one BusHub per connected bus
@@ -64,6 +64,7 @@ class MainWindow(QMainWindow):
         self._build_menubar()
         self._build_statusbar()
         self._connect_signals()
+        self._restore_geometry()
 
         self._frame_rate_timer.setInterval(1000)
         self._frame_rate_timer.timeout.connect(self._update_frame_rate)
@@ -188,6 +189,9 @@ class MainWindow(QMainWindow):
         a.triggered.connect(self._import_dbc)
         file_menu.addAction(a)
         file_menu.addSeparator()
+        self._recent_menu = file_menu.addMenu("Recent Logs")
+        self._rebuild_recent_menu()
+        file_menu.addSeparator()
         a = QAction("Quit", self)
         a.setShortcut(QKeySequence.StandardKey.Quit)
         a.triggered.connect(self.close)
@@ -218,6 +222,89 @@ class MainWindow(QMainWindow):
         a.triggered.connect(self._open_settings)
         a.setShortcut(QKeySequence.StandardKey.Preferences)
         settings_menu.addAction(a)
+
+    # ── Recent logs ───────────────────────────────────────────────────────────
+
+    RECENT_KEY = "files/recent"
+    RECENT_MAX = 8
+
+    def _recent_paths(self) -> list:
+        from PyQt6.QtCore import QSettings
+        stored = QSettings("CanLab", "CanLab").value(self.RECENT_KEY, [])
+        if isinstance(stored, str):          # a one-item list comes back bare
+            stored = [stored]
+        return [p for p in (stored or []) if isinstance(p, str)]
+
+    def _remember_recent(self, path: str) -> None:
+        """Most recent first, no duplicates, capped."""
+        import os
+        from PyQt6.QtCore import QSettings
+
+        path = os.path.abspath(path)
+        paths = [p for p in self._recent_paths() if os.path.abspath(p) != path]
+        paths.insert(0, path)
+        QSettings("CanLab", "CanLab").setValue(
+            self.RECENT_KEY, paths[:self.RECENT_MAX])
+        self._rebuild_recent_menu()
+
+    def _rebuild_recent_menu(self) -> None:
+        import os
+
+        menu = getattr(self, "_recent_menu", None)
+        if menu is None:
+            return
+        menu.clear()
+        paths = self._recent_paths()
+        if not paths:
+            empty = menu.addAction("Nothing opened yet")
+            empty.setEnabled(False)
+            return
+        for i, path in enumerate(paths, 1):
+            # The file name is what identifies it; the directory is the tooltip.
+            action = menu.addAction(f"&{i}  {os.path.basename(path)}")
+            action.setToolTip(path)
+            action.setEnabled(os.path.exists(path))
+            action.triggered.connect(
+                lambda _=False, p=path: self._load_log_file(p))
+        menu.addSeparator()
+        clear = menu.addAction("Clear List")
+        clear.triggered.connect(self._clear_recent)
+
+    def _clear_recent(self) -> None:
+        from PyQt6.QtCore import QSettings
+        QSettings("CanLab", "CanLab").remove(self.RECENT_KEY)
+        self._rebuild_recent_menu()
+
+    # ── Window geometry ───────────────────────────────────────────────────────
+
+    GEOMETRY_KEY = "window/geometry"
+
+    def _restore_geometry(self) -> None:
+        """Reopen at the size and place the user left it, maximised first time."""
+        from PyQt6.QtCore import QSettings
+        saved = QSettings("CanLab", "CanLab").value(self.GEOMETRY_KEY)
+        restored = False
+        if saved is not None:
+            try:
+                restored = bool(self.restoreGeometry(saved))
+            except (TypeError, ValueError):
+                restored = False
+        if restored:
+            self.show()
+        else:
+            self.showMaximized()
+
+    def _update_title(self) -> None:
+        """Name the open capture in the title bar, so the taskbar says which."""
+        if self._loaded_name:
+            self.setWindowTitle(f"{self._loaded_name} - CanLab")
+        else:
+            self.setWindowTitle("CanLab")
+
+    def _save_geometry(self) -> None:
+        from PyQt6.QtCore import QSettings
+        QSettings("CanLab", "CanLab").setValue(
+            self.GEOMETRY_KEY, self.saveGeometry())
 
     def _build_view_menu(self, mb) -> None:
         """Navigation and bus shortcuts, in a menu so they can be discovered.
@@ -298,6 +385,16 @@ class MainWindow(QMainWindow):
         main_lay.addWidget(self.id_panel)
 
         self.tabs = QTabWidget()
+        # Fifteen tab labels in one row need 1162 px, which forced the whole
+        # window to a 1662 px minimum: it would not fit a 1366x768 laptop at
+        # all. Let the bar scroll and elide instead, so the window can shrink
+        # to what a tab page actually needs.
+        # Scroll buttons rather than eliding: a truncated "SIG..." is worse
+        # than an arrow, and the bar only scrolls when there is genuinely no
+        # room. Either way the bar stops dictating the window's minimum width.
+        self.tabs.setUsesScrollButtons(True)
+        self.tabs.setElideMode(Qt.TextElideMode.ElideNone)
+        self.tabs.tabBar().setUsesScrollButtons(True)
 
         # Core tabs (0–5)
         self.frames_tab  = FramesTab()
@@ -408,6 +505,9 @@ class MainWindow(QMainWindow):
     def _load_log_file(self, path: str):
         try:
             df = parse_log_file(path)
+            self._remember_recent(path)
+            self._loaded_name = os.path.basename(path)
+            self._update_title()
             if df.empty:
                 QMessageBox.warning(self, "Empty", "No frames found in file.")
                 return
@@ -445,9 +545,8 @@ class MainWindow(QMainWindow):
         try:
             save_project(self._state, path)
             self.statusBar().showMessage(f"Project saved: {path}", 4000)
-            self.setWindowTitle(
-                f"CANLAB — {os.path.basename(path)}"
-            )
+            self._loaded_name = os.path.basename(path)
+            self._update_title()
         except Exception as e:
             QMessageBox.critical(self, "Save Error", str(e))
 
@@ -461,7 +560,8 @@ class MainWindow(QMainWindow):
         try:
             load_project(self._state, path)
             self.statusBar().showMessage(f"Project loaded: {path}", 4000)
-            self.setWindowTitle(f"CANLAB — {os.path.basename(path)}")
+            self._loaded_name = os.path.basename(path)
+            self._update_title()
             self.lbl_total_frames.animate_to(len(self._state.frames_df))
         except Exception as e:
             QMessageBox.critical(self, "Load Error", str(e))
@@ -909,6 +1009,7 @@ class MainWindow(QMainWindow):
             self.lbl_total_frames.animate_to(total)
 
     def closeEvent(self, event):
+        self._save_geometry()
         from canlab.core.safety import set_armed
         set_armed(False)                       # stops every registered TX worker
         self._stop_rest_api()

@@ -1,5 +1,6 @@
 """INTELLIGENCE tab — auto-DBC, diff, periodicity, opendbc cross-ref, J1939, value lookup."""
 from PyQt6.QtWidgets import (
+    QScrollArea, QFrame,
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QFileDialog,
     QTextEdit, QMessageBox,
@@ -38,7 +39,7 @@ class IntelligenceTab(QWidget):
 
         # ── Left panel ────────────────────────────────────────────────────────
         left = QWidget()
-        left.setFixedWidth(240)
+        left.setMinimumWidth(240)
         ll = QVBoxLayout(left)
         ll.setContentsMargins(6, 6, 6, 6)
         ll.setSpacing(6)
@@ -147,7 +148,19 @@ class IntelligenceTab(QWidget):
         ll.addWidget(vr_grp)
 
         ll.addStretch()
-        splitter.addWidget(left)
+
+        # The control column is a tall stack of group boxes. Left as a plain
+        # widget its full height became the minimum height of the whole
+        # application window; in a scroll area it can shrink and scroll.
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_scroll.setMinimumWidth(240)
+        left_scroll.setMaximumWidth(420)
+        splitter.addWidget(left_scroll)
 
         # ── Right panel ───────────────────────────────────────────────────────
         right = QWidget()

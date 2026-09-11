@@ -14,7 +14,12 @@ class IDPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(220)
+        # Resizable rather than fixed: a fixed width cannot give room back on
+        # a small screen. The minimum still keeps the ID and count columns
+        # readable.
+        self.setMinimumWidth(150)
+        self.setMaximumWidth(420)
+        self.resize(220, self.height())
         self._state = get_state()
         self._build_ui()
         self._connect_signals()
