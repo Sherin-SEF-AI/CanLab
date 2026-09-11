@@ -66,6 +66,16 @@ cd canlab            # source root, imports are relative to here
 python3 main.py
 ```
 
+Or download the Linux x86_64 build from the
+[releases page](https://github.com/Sherin-SEF-AI/CanLab/releases), which needs
+no Python installation:
+
+```bash
+tar -xzf CanLab-1.3.0-linux-x86_64.tar.gz
+cd CanLab/
+./CanLab
+```
+
 Python 3.11 or newer (developed and tested on 3.12).
 
 ---
@@ -302,7 +312,9 @@ the bus while the toolbar read DISARMED.
 - **MDF4** import needs `asammdf`. **Vision OCR** needs `opencv-python`,
   `rapidocr` and `onnxruntime`, which are heavy and optional.
 - CAN FD parsing and decoding is partial in places.
-- No prebuilt binary is offered here. Run from source.
+- The prebuilt Linux binary on the releases page is built from `main` on
+  x86_64 and is not signed. There is no macOS or Windows binary; run from
+  source on those.
 
 ---
 
