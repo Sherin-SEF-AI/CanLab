@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QTextEdit, QHeaderView,
 )
 from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QColor, QBrush
+from PyQt6.QtGui import QColor, QBrush, QFontMetrics
 from canlab.theme import COLORS, mono_font
 from canlab.core.state import get_state
 
@@ -105,10 +105,28 @@ class FramesTab(QWidget):
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setDefaultSectionSize(20)
         self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        # NOT ResizeToContents. That mode re-measures every row of a column
+        # each time a cell changes, so filling the table costs O(rows^2) and
+        # only while it is on screen -- during live capture the GUI thread sat
+        # inside one refresh for minutes. The columns are monospace and of
+        # known width, so size them once instead.
+        self.table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Interactive)
         self.table.setShowGrid(False)
         self.table.doubleClicked.connect(self._show_frame_detail)
         lay.addWidget(self.table)
+
+    def _size_columns(self, columns: list[str]) -> None:
+        """Width for each column from the font, once per column-set change."""
+        fm = QFontMetrics(mono_font())
+        pad = fm.horizontalAdvance("0") * 2 + 12
+        widths = {"Timestamp": fm.horizontalAdvance("0000.0000") + pad,
+                  "ID": fm.horizontalAdvance("1FFFFFFF") + pad,
+                  "Bus": fm.horizontalAdvance("Bus") + pad,
+                  "DLC": fm.horizontalAdvance("DLC") + pad,
+                  "Delta": fm.horizontalAdvance("0000.0ms") + pad}
+        for i, name in enumerate(columns):
+            self.table.setColumnWidth(i, widths.get(name, fm.horizontalAdvance("FF") + pad))
 
     def _on_freeze(self, frozen: bool):
         self._frozen = frozen
@@ -160,7 +178,19 @@ class FramesTab(QWidget):
         if self.table.columnCount() != len(all_cols):
             self.table.setColumnCount(len(all_cols))
             self.table.setHorizontalHeaderLabels(all_cols)
+            self._size_columns(all_cols)
 
+        # One repaint for the whole rebuild rather than one per cell.
+        self.table.setUpdatesEnabled(False)
+        try:
+            self._fill_rows(fdf, active_byte_cols)
+        finally:
+            self.table.setUpdatesEnabled(True)
+
+        if self._follow and self.table.rowCount() > 0:
+            self.table.scrollToBottom()
+
+    def _fill_rows(self, fdf, active_byte_cols) -> None:
         self.table.setRowCount(len(fdf))
         for row_idx, (_, row) in enumerate(fdf.iterrows()):
             cid = str(row.get("ID", ""))
@@ -201,9 +231,6 @@ class FramesTab(QWidget):
                 self.table.setItem(row_idx, col_idx, item)
 
             self._last_bytes[cid] = byte_vals
-
-        if self._follow and self.table.rowCount() > 0:
-            self.table.scrollToBottom()
 
     def _show_frame_detail(self, index):
         row = index.row()

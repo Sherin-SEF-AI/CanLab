@@ -144,3 +144,39 @@ def test_close_disarms_and_stops_workers(window, app):
     window.close()
     app.processEvents()
     assert not safety.is_armed()
+
+
+def test_frames_table_refresh_stays_cheap_while_visible(window, app):
+    """A visible frames table must not cost O(rows^2) to fill.
+
+    QHeaderView.ResizeToContents re-measures every row of a column each time a
+    cell changes. With the table on screen during live capture, one refresh of
+    1000 rows took 70 seconds and the GUI thread did nothing else. Guard both
+    the cause and the effect.
+    """
+    import time
+
+    from PyQt6.QtWidgets import QHeaderView
+
+    from canlab.core.state import get_state
+
+    table = window.frames_tab.table
+    mode = table.horizontalHeader().sectionResizeMode(0)
+    assert mode != QHeaderView.ResizeMode.ResizeToContents, (
+        "ResizeToContents on a live-updating table makes filling it quadratic")
+
+    state = get_state()
+    state.store.append_batch([
+        (i * 0.004, 0x1A0 + (i % 6), False, 0, 8,
+         bytes([(i + k) & 0xFF for k in range(8)]))
+        for i in range(20_000)])
+
+    window.tabs.setCurrentIndex(0)
+    app.processEvents()
+    state.store._dirty = True
+    started = time.perf_counter()
+    window.frames_tab._refresh()
+    app.processEvents()
+    elapsed = time.perf_counter() - started
+    assert elapsed < 5.0, f"refresh took {elapsed:.1f}s with the table visible"
+    assert table.rowCount() > 0
