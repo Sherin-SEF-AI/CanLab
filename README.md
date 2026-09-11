@@ -93,23 +93,33 @@ log and cycles every one of them.
 | 14 | **ML INTEL** | Byte-role classification, anomaly detection, change-point detection, embedding search. |
 | 15 | **GATEWAY** | Bidirectional CAN bridge with ordered pass, block and modify rules. Gated by ARM TX. |
 
-### Screenshots
+### Walkthrough
 
-![FRAMES](docs/screenshots/01_frames.png)
-![AI ENGINE](docs/screenshots/04_ai_engine.png)
-![AUTO-RE](docs/screenshots/11_auto_re.png)
+A narrated walkthrough of every tab, recorded from the running application, in
+four parts. 1080p, subtitles burned in, and each subtitle file is also there
+separately if you want to read along or search the text.
 
-<details><summary>More screenshots</summary>
+| Part | Covers | Length |
+|---|---|---|
+| [1. Loading a capture and finding structure](docs/canlab-demo-part1-analysis.mp4) | FRAMES, the ID panel and inspector, SIGNALS, counter and checksum detection, the checksum guesser, entropy boundaries | 3.0 min |
+| [2. Defining signals and checking them](docs/canlab-demo-part2-signals.mp4) | DBC BUILDER and its bit grid, the live decode preview, PLOT, INTELLIGENCE, ML INTEL, DASHBOARD | 2.6 min |
+| [3. Timeline, code generation and exports](docs/canlab-demo-part3-outputs.mp4) | TIMELINE, CODE GEN, the five export formats, DIAGNOSTICS, security access | 2.4 min |
+| [4. The transmit gate, injection and live capture](docs/canlab-demo-part4-transmitting.mp4) | ARM TX, INJECTION, replay, fuzzing, GATEWAY, OBD-II, the AI engine, live capture | 3.3 min |
 
-![SIGNALS](docs/screenshots/02_signals.png)
-![DBC BUILDER](docs/screenshots/05_dbc_builder.png)
-![INTELLIGENCE](docs/screenshots/07_intelligence.png)
-![DIAGNOSTICS](docs/screenshots/09_diagnostics.png)
-![DASHBOARD](docs/screenshots/10_dashboard.png)
-![OBD-II](docs/screenshots/13_obd_ii.png)
-![ML INTEL](docs/screenshots/14_ml_intel.png)
+Subtitles: [part 1](docs/canlab-demo-part1-analysis.srt),
+[part 2](docs/canlab-demo-part2-signals.srt),
+[part 3](docs/canlab-demo-part3-outputs.srt),
+[part 4](docs/canlab-demo-part4-transmitting.srt).
 
-</details>
+> Recorded from the `fix/production-readiness` branch, so two things in it are
+> ahead of `main`: the DIAGNOSTICS tab there has XCP and DoIP panels (on `main`
+> those protocols are library-only, see below), and it has selectable vehicle
+> profiles. Everything else shown is what `main` does.
+
+The video is generated, not hand-recorded, so it cannot drift away from what the
+application does: `docs/demo/record.py` drives a real `MainWindow` under Qt's
+offscreen platform and calls the same slots the buttons call, so a scene that
+stops working fails the run instead of quietly recording a stale screen.
 
 ---
 
