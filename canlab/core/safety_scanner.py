@@ -60,9 +60,22 @@ class SafetyScanWorker(QThread):
         except (ValueError, TypeError):
             mid = 0
 
+        from core.safety import require_armed, BusNotArmedError
+
         for i in range(self._steps):
             if self._abort:
                 break
+
+            # Re-checked every step, like the fuzzer and replay workers, so
+            # disarming mid-sweep stops it rather than only preventing the
+            # next run. An actuator sweep is the most physically consequential
+            # thing this tool can emit; it must not be the one path that skips
+            # the gate.
+            try:
+                require_armed()
+            except BusNotArmedError as exc:
+                self.error.emit(str(exc))
+                return
 
             value = self._min + i * step_size
             data  = pack_signal(value, self._sig)

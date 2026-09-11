@@ -624,6 +624,13 @@ class InjectionTab(QWidget):
         if bus is None:
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return
+        from core.safety import is_armed
+        if not is_armed():
+            QMessageBox.warning(
+                self, "TX Disarmed",
+                "An actuator sweep transmits on the bus.\n\n"
+                "Enable ARM TX in the toolbar first.")
+            return
         idx = self.scan_sig_combo.currentIndex()
         if idx < 0:
             return
