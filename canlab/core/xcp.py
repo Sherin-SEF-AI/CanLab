@@ -168,13 +168,14 @@ class XCPClient:
     def _send(self, payload: bytes) -> None:
         """Transmit a single CRO frame (padded to 8 bytes)."""
         import can
+        from canlab.core.safety import gated_send
         frame = bytes(payload)[:8]
         msg = can.Message(
             arbitration_id=self.cro_id,
             data=frame,
             is_extended_id=self.extended_id,
         )
-        self._bus.send(msg)
+        gated_send(self._bus, msg)
 
     def _recv(self, timeout: Optional[float] = None):
         """
@@ -452,6 +453,14 @@ class XCPPollWorker(QThread):
         self.wait(2000)
 
     def run(self):
+        from canlab.core import safety
+        safety.register_tx_worker(self)
+        try:
+            self._run()
+        finally:
+            safety.unregister_tx_worker(self)
+
+    def _run(self):
         client = XCPClient(self._bus, self._cro_id, self._dto_id,
                            timeout=self._timeout)
         try:

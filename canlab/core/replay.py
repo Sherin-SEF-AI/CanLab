@@ -46,18 +46,14 @@ class ReplayWorker(QThread):
 
     def run(self):
         import can
-        from canlab.core.safety import require_armed, BusNotArmedError
+        from canlab.core import safety
+        from canlab.core.safety import BusNotArmedError, BlockedIdError
         rows = self._df.sort_values("Timestamp").reset_index(drop=True)
         n    = len(rows)
         if n == 0:
             self.finished.emit()
             return
-        try:
-            require_armed()
-        except BusNotArmedError as e:
-            self.error.emit(str(e))
-            self.finished.emit()
-            return
+        safety.register_tx_worker(self)
 
         loop_count = 0
         start_idx  = 0
@@ -113,7 +109,13 @@ class ReplayWorker(QThread):
                         data=data,
                         is_extended_id=extended,
                     )
-                    self._bus.send(msg)
+                    safety.gated_send(self._bus, msg)
+                except BusNotArmedError as e:
+                    self.error.emit(str(e))
+                    self._running = False
+                    break
+                except BlockedIdError as e:
+                    self.error.emit(str(e))
                 except Exception as e:
                     self.error.emit(str(e))
 
@@ -135,4 +137,5 @@ class ReplayWorker(QThread):
             else:
                 break
 
+        safety.unregister_tx_worker(self)
         self.finished.emit()

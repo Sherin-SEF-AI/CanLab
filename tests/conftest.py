@@ -10,6 +10,25 @@ import types
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest
+
+
+@pytest.fixture(scope="session")
+def qcore():
+    """A QCoreApplication so QThread-based workers can run in tests."""
+    from PyQt6.QtCore import QCoreApplication
+    app = QCoreApplication.instance() or QCoreApplication([])
+    yield app
+
+
+@pytest.fixture
+def armed():
+    """Arm transmit for the duration of a test (tests must opt in explicitly)."""
+    from canlab.core import safety
+    safety.set_armed(True)
+    yield
+    safety.set_armed(False)
+
 try:  # pragma: no cover - exercised only when python-can is absent
     import can  # noqa: F401
 except Exception:

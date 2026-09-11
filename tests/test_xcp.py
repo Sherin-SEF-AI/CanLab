@@ -8,6 +8,8 @@ run with no hardware library present.
 """
 import pytest
 
+pytestmark = pytest.mark.usefixtures("armed")
+
 from canlab.core.xcp import XCPClient, XCPError, XCP_ERROR_CODES
 
 

@@ -43,10 +43,11 @@ class FuzzWorker(QThread):
 
     def run(self):
         import can
-        from canlab.core.safety import require_armed, BusNotArmedError
+        from canlab.core import safety
+        from canlab.core.safety import BusNotArmedError, BlockedIdError
         interval = 1.0 / self._rate_hz
+        safety.register_tx_worker(self)
         try:
-            require_armed()
             while not self._abort:
                 data = self._next_payload()
                 msg  = can.Message(
@@ -55,7 +56,7 @@ class FuzzWorker(QThread):
                     is_extended_id=False,
                 )
                 try:
-                    self._bus.send(msg)
+                    safety.gated_send(self._bus, msg)
                     self.hit.emit(
                         format(self._target_id, "03X"),
                         data,
@@ -75,10 +76,12 @@ class FuzzWorker(QThread):
                     step = min(0.05, interval - slept)
                     time.sleep(step)
                     slept += step
-        except BusNotArmedError as e:
+        except (BusNotArmedError, BlockedIdError) as e:
             self.error.emit(str(e))
         except Exception as e:
             self.error.emit(str(e))
+        finally:
+            safety.unregister_tx_worker(self)
 
     def _next_payload(self) -> bytes:
         if self._strategy == "random":

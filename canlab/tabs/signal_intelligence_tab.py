@@ -187,7 +187,8 @@ class SignalIntelligenceTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._state          = get_state()
-        self._workers: list  = []      # keep refs to prevent GC
+        from canlab.ui.worker_pool import WorkerPool
+        self._pool           = WorkerPool()
         self._anomaly_det    = None    # fitted baseline
         self._embedding_idx: dict = {}
 
@@ -635,8 +636,8 @@ class SignalIntelligenceTab(QWidget):
         w = ClassifyWorker(can_id, frames, self)
         w.result_ready.connect(self._on_classify_done)
         w.error.connect(lambda e: self.lbl_status.setText(f"Error: {e}"))
+        self._pool.add(w)
         w.start()
-        self._workers.append(w)
 
     def _on_classify_done(self, can_id: str, roles: dict, msg_type: dict):
         self.roles_table.setRowCount(0)
@@ -714,8 +715,8 @@ class SignalIntelligenceTab(QWidget):
         w = ChecksumWorker(can_id, frames, self)
         w.result_ready.connect(self._on_checksum_done)
         w.error.connect(lambda e: self.lbl_status.setText(f"Error: {e}"))
+        self._pool.add(w)
         w.start()
-        self._workers.append(w)
 
     def _on_checksum_done(self, can_id: str, results: dict):
         self.cs_table.setRowCount(0)
@@ -780,8 +781,8 @@ class SignalIntelligenceTab(QWidget):
             self.btn_corr_run.setEnabled(True),
             self.corr_progress.setVisible(False),
         ))
+        self._pool.add(w)
         w.start()
-        self._workers.append(w)
 
     def _on_correlation_done(self, results: list):
         self.corr_table.setRowCount(0)
@@ -831,8 +832,8 @@ class SignalIntelligenceTab(QWidget):
         )
         w.result_ready.connect(self._on_change_done)
         w.error.connect(lambda e: self.lbl_chg_status.setText(f"Error: {e}"))
+        self._pool.add(w)
         w.start()
-        self._workers.append(w)
 
     def _on_change_done(self, results: list):
         self.chg_table.setRowCount(0)
@@ -879,8 +880,8 @@ class SignalIntelligenceTab(QWidget):
             self.lbl_anomaly_baseline.setText(f"Error: {e}"),
             self.btn_fit.setEnabled(True),
         ))
+        self._pool.add(w)
         w.start()
-        self._workers.append(w)
 
     def _on_baseline_fitted(self, det, name: str):
         self._anomaly_det = det
@@ -903,8 +904,8 @@ class SignalIntelligenceTab(QWidget):
             self.lbl_anomaly_status.setText(f"Error: {e}"),
             self.btn_score.setEnabled(True),
         ))
+        self._pool.add(w)
         w.start()
-        self._workers.append(w)
 
     def _on_score_done(self, scored_df: pd.DataFrame):
         threshold = self.anom_threshold.value()
@@ -963,16 +964,16 @@ class SignalIntelligenceTab(QWidget):
         w = EmbeddingWorker(self._state.frames_df, self)
         w.finished.connect(self._on_index_built)
         w.error.connect(lambda e: self.lbl_sim_status.setText(f"Error: {e}"))
+        self._pool.add(w)
         w.start()
-        self._workers.append(w)
 
     def _build_embedding_index_silent(self):
         if self._state.frames_df.empty:
             return
         w = EmbeddingWorker(self._state.frames_df, self)
         w.finished.connect(self._on_index_built)
+        self._pool.add(w)
         w.start()
-        self._workers.append(w)
 
     def _on_index_built(self, index: dict):
         self._embedding_idx = index
@@ -1045,3 +1046,7 @@ def _make_table(headers: list[str]) -> QTableWidget:
     t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     t.setAlternatingRowColors(True)
     return t
+
+
+    def cleanup(self):
+        self._pool.stop_all()

@@ -536,6 +536,7 @@ class MainWindow(QMainWindow):
     def _disconnect_can(self):
         if self._live_worker:
             self._live_worker.stop()
+            self._live_worker.wait(2000)
             self._live_worker = None
         if self._multibus_worker:
             self._multibus_worker.stop_all()
@@ -691,8 +692,9 @@ class MainWindow(QMainWindow):
         if checked:
             ok = QMessageBox.warning(
                 self, "Arm Bus Transmit",
-                "Arming enables injection, replay, fuzzing, and gateway forwarding "
-                "to write frames onto the connected bus.\n\n"
+                "Arming lets CanLab transmit on the connected bus — injection, "
+                "replay, fuzzing, gateway forwarding AND every diagnostic request "
+                "(UDS, OBD-II, XCP, DoIP). Nothing is sent while disarmed.\n\n"
                 "Only arm on an isolated bench setup — never on a vehicle you are "
                 "driving. Arm transmit now?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -704,7 +706,8 @@ class MainWindow(QMainWindow):
         set_armed(checked)
         self._act_arm.setText("ARM TX: ON" if checked else "ARM TX: OFF")
         self.statusBar().showMessage(
-            "Bus transmit ARMED" if checked else "Bus transmit disarmed", 3000
+            "Bus transmit ARMED — every send is live" if checked
+            else "Bus transmit disarmed — nothing can be sent", 3000
         )
 
     def _toggle_rest_api(self):
@@ -917,9 +920,21 @@ class MainWindow(QMainWindow):
             self.lbl_total_frames.animate_to(total)
 
     def closeEvent(self, event):
+        from canlab.core.safety import set_armed
+        set_armed(False)                       # stops every registered TX worker
         self._stop_rest_api()
         if self._live_worker:
             self._live_worker.stop()
+            self._live_worker.wait(2000)
+        if self._multibus_worker:
+            self._multibus_worker.stop_all()
+        for i in range(self.tabs.count()):
+            tab = self.tabs.widget(i)
+            if hasattr(tab, "cleanup"):
+                try:
+                    tab.cleanup()
+                except Exception:
+                    pass
         event.accept()
 
 

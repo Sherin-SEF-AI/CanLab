@@ -33,6 +33,7 @@ class AppState(QObject):
     test_step_completed  = pyqtSignal(int, bool, str)  # step_idx, ok, message
     j1939_decoded        = pyqtSignal(int, dict)        # pgn, {spn: value}
     dbc_db_updated       = pyqtSignal()                 # cantools cache rebuilt
+    tx_armed_changed     = pyqtSignal(bool)             # ARM TX toggled
 
     # ── OBD-II live gauges ────────────────────────────────────────────────────
     pid_value_updated    = pyqtSignal(int, float, str)  # pid, value, unit
@@ -46,6 +47,8 @@ class AppState(QObject):
         # The cantools Database cached by core.dbc_manager.get_db is rebuilt
         # lazily after any signal change.
         self.dbc_updated.connect(self._invalidate_dbc_db)
+        from canlab.core import safety
+        safety.add_observer(self._on_armed_changed)
 
         self.frames_df:        pd.DataFrame = pd.DataFrame()
         self.selected_id:      str          = ""
@@ -116,6 +119,9 @@ class AppState(QObject):
 
     def _invalidate_dbc_db(self):
         self.dbc_db = None
+
+    def _on_armed_changed(self, armed: bool):
+        self.tx_armed_changed.emit(bool(armed))
 
     def add_dbc_signal(self, signal_def: dict):
         self.dbc_signals.append(signal_def)

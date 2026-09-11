@@ -323,13 +323,17 @@ class InjectionTab(QWidget):
         if self.chk_checksum.isChecked():
             data[7] = hyundai_checksum(bytes(data), mid)
         import can
+        from canlab.core.safety import gated_send, BusNotArmedError, BlockedIdError
         msg = can.Message(arbitration_id=mid, data=bytes(data), is_extended_id=False)
         try:
-            bus.send(msg)
+            gated_send(bus, msg)
             self.lbl_inj_status.setText(
                 f"Sent 0x{mid:03X}  [{' '.join(f'{b:02X}' for b in data)}]"
             )
             self.lbl_inj_status.setStyleSheet(f"color:{COLORS['green']}")
+        except (BusNotArmedError, BlockedIdError) as e:
+            self.lbl_inj_status.setText(str(e))
+            self.lbl_inj_status.setStyleSheet(f"color:{COLORS['error']}")
         except Exception as e:
             self.lbl_inj_status.setText(f"Error: {e}")
             self.lbl_inj_status.setStyleSheet(f"color:{COLORS['error']}")
@@ -363,6 +367,18 @@ class InjectionTab(QWidget):
         self.btn_loop.setText("Stop Loop")
         self.btn_stop_inj.setEnabled(True)
         self.lbl_inj_status.setStyleSheet(f"color:{COLORS['amber']}")
+
+    def cleanup(self):
+        """Stop every worker this tab owns (called on app close)."""
+        for attr in ("_inj_worker", "_replay_worker", "_scan_worker",
+                     "_fuzz_worker", "_seq_worker"):
+            w = getattr(self, attr, None)
+            if w is not None:
+                try:
+                    w.stop()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
 
     def _stop_injection(self):
         if self._inj_worker:

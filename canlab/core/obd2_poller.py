@@ -30,8 +30,14 @@ class OBD2Poller(QThread):
 
     def run(self):
         from canlab.core.isotp import ISOTPSession
-        session = ISOTPSession(self._bus, tx_id=_TX_ID, rx_id=_RX_ID)
+        from canlab.core import safety
+        safety.register_tx_worker(self)
+        try:
+            self._run(ISOTPSession(self._bus, tx_id=_TX_ID, rx_id=_RX_ID))
+        finally:
+            safety.unregister_tx_worker(self)
 
+    def _run(self, session):
         if self._discover:
             self._do_discover(session)
             return

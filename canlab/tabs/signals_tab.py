@@ -110,6 +110,11 @@ class SignalsTab(QWidget):
         self._worker.done.connect(self._on_analyze_done)
         self._worker.start()
 
+    def cleanup(self):
+        w = getattr(self, "_worker", None)
+        if w is not None and w.isRunning():
+            w.requestInterruption(); w.quit(); w.wait(2000)
+
     def _on_analyze_done(self, result_df):
         self._signals_df = result_df
         self._apply_filter(self._filter_type)

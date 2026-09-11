@@ -77,8 +77,17 @@ class TestSequenceWorker(QThread):
 
     def stop(self):
         self._running = False
+        self.wait(2000)
 
     def run(self):
+        from canlab.core import safety
+        safety.register_tx_worker(self)
+        try:
+            self._run()
+        finally:
+            safety.unregister_tx_worker(self)
+
+    def _run(self):
         passed = True
         for idx, step in enumerate(self._steps):
             if not self._running:
@@ -109,8 +118,7 @@ class TestSequenceWorker(QThread):
         if step.step_type == StepType.INJECT:
             try:
                 import can
-                from canlab.core.safety import require_armed
-                require_armed()
+                from canlab.core.safety import gated_send
                 data = bytearray(8)
                 data[step.byte_idx] = step.value & 0xFF
                 msg = can.Message(
@@ -118,7 +126,7 @@ class TestSequenceWorker(QThread):
                     data=bytes(data),
                     is_extended_id=False,
                 )
-                self._bus.send(msg)
+                gated_send(self._bus, msg)
                 return True, (f"{prefix}{label}: sent 0x{step.msg_id} "
                               f"B{step.byte_idx}=0x{step.value:02X}")
             except Exception as e:

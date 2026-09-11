@@ -51,7 +51,10 @@ class SafetyScanWorker(QThread):
 
     def run(self):
         from canlab.core.injection import pack_signal, hyundai_checksum
+        from canlab.core import safety
+        from canlab.core.safety import BusNotArmedError, BlockedIdError
         import can
+        safety.register_tx_worker(self)
 
         step_size = (self._max - self._min) / (self._steps - 1)
         mid_str   = self._sig.get("message_id", "0")
@@ -81,9 +84,14 @@ class SafetyScanWorker(QThread):
                     data=bytes(data),
                     is_extended_id=False,
                 )
-                self._bus.send(msg)
+                safety.gated_send(self._bus, msg)
+            except (BusNotArmedError, BlockedIdError) as e:
+                self.error.emit(str(e))
+                safety.unregister_tx_worker(self)
+                return
             except Exception as e:
                 self.error.emit(str(e))
+                safety.unregister_tx_worker(self)
                 return
 
             self.step_done.emit(value, bytes(data))
@@ -97,5 +105,6 @@ class SafetyScanWorker(QThread):
 
             time.sleep(self._step_delay)
 
+        safety.unregister_tx_worker(self)
         if not self._abort:
             self.scan_finished.emit()

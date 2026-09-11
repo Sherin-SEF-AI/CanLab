@@ -1,5 +1,9 @@
 """Tests for the ISO-TP multi-frame transmit fix (#7)."""
+import pytest
+
 from canlab.core.isotp import ISOTPSession
+
+pytestmark = pytest.mark.usefixtures("armed")
 
 
 class FakeMsg:

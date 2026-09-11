@@ -312,6 +312,9 @@ class GatewayTab(QWidget):
         ch_b  = self._bus_cfg("b")["channel"]
         self._log(f"<span style='color:{amber}'>Gateway started: {ch_a} ↔ {ch_b}</span>")
 
+    def cleanup(self):
+        self._stop()
+
     def _stop(self):
         if self._worker:
             self._worker.stop()

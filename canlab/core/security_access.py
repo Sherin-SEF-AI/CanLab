@@ -225,9 +225,10 @@ class SecurityAccessWorker(QThread):
     # ── Modes ─────────────────────────────────────────────────────────────────
 
     def run(self):
+        from canlab.core import safety
+        safety.register_tx_worker(self)
         try:
             if not self._open_session():
-                self.finished.emit()
                 return
             time.sleep(0.1)
 
@@ -240,6 +241,7 @@ class SecurityAccessWorker(QThread):
         except Exception as e:
             self.error.emit(str(e))
         finally:
+            safety.unregister_tx_worker(self)
             self.finished.emit()
 
     def _run_auto(self):

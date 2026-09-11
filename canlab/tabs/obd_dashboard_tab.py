@@ -174,6 +174,16 @@ class OBDDashboardTab(QWidget):
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
 
+    def cleanup(self):
+        for attr in ("_poller", "_discover_worker"):
+            w = getattr(self, attr, None)
+            if w is not None:
+                try:
+                    w.stop()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+
     def _discover_pids(self):
         bus = self._state.can_bus
         if bus is None:

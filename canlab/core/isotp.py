@@ -17,6 +17,8 @@ import time
 from typing import Optional
 import logging
 
+from canlab.core.safety import gated_send
+
 log = logging.getLogger(__name__)
 
 # Flow Control constants
@@ -51,8 +53,8 @@ class ISOTPSession:
             # Single Frame
             frame = bytes([n & 0x0F]) + data + bytes(7 - n)
             try:
-                self._bus.send(can.Message(arbitration_id=self._tx_id,
-                                           data=frame, is_extended_id=False))
+                gated_send(self._bus, can.Message(arbitration_id=self._tx_id,
+                                                  data=frame, is_extended_id=False))
             except Exception:
                 return None
         else:
@@ -63,8 +65,8 @@ class ISOTPSession:
             lo = n & 0xFF
             ff = bytes([0x10 | hi, lo]) + data[:6]
             try:
-                self._bus.send(can.Message(arbitration_id=self._tx_id,
-                                           data=ff, is_extended_id=False))
+                gated_send(self._bus, can.Message(arbitration_id=self._tx_id,
+                                                  data=ff, is_extended_id=False))
             except Exception:
                 return None
             if not self._send_consecutive_frames(data, timeout):
@@ -103,8 +105,8 @@ class ISOTPSession:
             chunk = data[idx:idx + 7]
             cf = bytes([0x20 | (sn & 0x0F)]) + chunk + bytes(7 - len(chunk))
             try:
-                self._bus.send(can.Message(arbitration_id=self._tx_id,
-                                           data=cf, is_extended_id=False))
+                gated_send(self._bus, can.Message(arbitration_id=self._tx_id,
+                                                  data=cf, is_extended_id=False))
             except Exception:
                 return False
             idx += 7
@@ -209,7 +211,7 @@ class ISOTPSession:
                 data=fc,
                 is_extended_id=False,
             )
-            self._bus.send(msg)
+            gated_send(self._bus, msg)
         except Exception:
             log.warning("suppressed exception", exc_info=True)
 

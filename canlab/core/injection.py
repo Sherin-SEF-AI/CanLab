@@ -41,11 +41,14 @@ class InjectionWorker(QThread):
 
     def stop(self):
         self._running = False
+        self.wait(2000)
 
     def run(self):
         import time
         import can
-        from canlab.core.safety import require_armed, BusNotArmedError
+        from canlab.core import safety
+        from canlab.core.safety import BusNotArmedError, BlockedIdError
+        safety.register_tx_worker(self)
         try:
             mid_str = self._sig.get("message_id", "0")
             mid = int(mid_str, 16) if mid_str else 0
@@ -54,7 +57,6 @@ class InjectionWorker(QThread):
 
         while self._running:
             try:
-                require_armed()
                 data = pack_signal(self._value, self._sig)
                 if self._apply_counter:
                     self._counter = (self._counter + 1) & 0x0F
@@ -66,17 +68,18 @@ class InjectionWorker(QThread):
                     data=bytes(data),
                     is_extended_id=False,
                 )
-                self._bus.send(msg)
+                safety.gated_send(self._bus, msg)
                 self.tick.emit(
                     self._sig.get("signal_name", "?"), self._value
                 )
-            except BusNotArmedError as e:
+            except (BusNotArmedError, BlockedIdError) as e:
                 self.error.emit(str(e))
                 self._running = False
                 break
             except Exception as e:
                 self.error.emit(str(e))
             time.sleep(self._period_ms / 1000.0)
+        safety.unregister_tx_worker(self)
 
     def set_value(self, v: float):
         self._value = v

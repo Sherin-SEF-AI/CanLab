@@ -341,6 +341,8 @@ class DoIPClient:
 
     def _routing_activation(self, activation_type: int) -> None:
         assert self._sock is not None
+        from canlab.core.safety import require_armed
+        require_armed()
         self._sock.sendall(
             encode_routing_activation_request(self.source_address, activation_type)
         )
@@ -371,6 +373,8 @@ class DoIPClient:
         """
         if self._sock is None or not self._activated:
             raise DoIPError("DoIPClient is not connected/activated; call connect() first")
+        from canlab.core.safety import require_armed
+        require_armed()
 
         self._sock.sendall(
             encode_diagnostic_message(
@@ -450,6 +454,8 @@ def discover(timeout: float = 2.0, port: int = DEFAULT_PORT,
     results: list[dict] = []
     seen: set[tuple[str, int]] = set()
     try:
+        from canlab.core.safety import require_armed
+        require_armed()
         sock.sendto(encode_vehicle_id_request(), (broadcast, port))
         import time
         deadline = time.monotonic() + timeout

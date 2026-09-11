@@ -400,6 +400,19 @@ class DiagnosticsTab(QWidget):
     def _get_bus(self):
         return self._state.can_bus
 
+    def cleanup(self):
+        """Stop every worker/timer this tab owns (called on app close)."""
+        self._health_timer.stop()
+        for attr in ("_uds_worker", "_dtc_worker", "_deep_worker", "_svc_worker",
+                     "_sa_worker"):
+            w = getattr(self, attr, None)
+            if w is not None:
+                try:
+                    w.stop()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+
     def _scan_pids(self):
         bus = self._get_bus()
         if bus is None:
@@ -453,12 +466,15 @@ class DiagnosticsTab(QWidget):
         if bus is None:
             self.uds_log.append("ERROR: CAN bus not connected.")
             return
+        from canlab.core.safety import gated_send, BusNotArmedError, BlockedIdError
         try:
             data = bytes([0x04, 0x14, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00])
             msg  = can.Message(arbitration_id=0x7DF, data=data, is_extended_id=False)
-            bus.send(msg)
+            gated_send(bus, msg)
             self.uds_log.append("Sent: Clear DTC (14 FF FF FF)")
             self.dtc_text.setPlainText("Cleared.")
+        except (BusNotArmedError, BlockedIdError) as e:
+            self.uds_log.append(str(e))
         except Exception as e:
             self.uds_log.append(f"ERROR: {e}")
 

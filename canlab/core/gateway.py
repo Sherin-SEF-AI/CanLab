@@ -140,12 +140,14 @@ class GatewayWorker(QThread):
         self.wait(3000)
 
     def run(self):
-        from canlab.core.safety import require_armed, BusNotArmedError
+        from canlab.core import safety
+        from canlab.core.safety import BusNotArmedError, BlockedIdError
         try:
-            require_armed()
+            safety.require_armed()
         except BusNotArmedError as e:
             self.error.emit(str(e))
             return
+        safety.register_tx_worker(self)
         try:
             bus_a = _open_bus(self._cfg_a)
             bus_b = _open_bus(self._cfg_b)
@@ -207,7 +209,14 @@ class GatewayWorker(QThread):
                         data=new_data,
                         is_extended_id=msg.is_extended_id,
                     )
-                    dest_bus.send(fwd_msg)
+                    safety.gated_send(dest_bus, fwd_msg)
+                except BusNotArmedError as e:
+                    self.error.emit(str(e))
+                    self._running = False
+                    break
+                except BlockedIdError as e:
+                    self.error.emit(f"Forward blocked ({src}): {e}")
+                    continue
                 except Exception as e:
                     self.error.emit(f"Forward error ({src}): {e}")
 
@@ -221,6 +230,7 @@ class GatewayWorker(QThread):
                 self._maybe_emit_stats()
 
         finally:
+            safety.unregister_tx_worker(self)
             stop_evt.set()
             try:
                 bus_a.shutdown()

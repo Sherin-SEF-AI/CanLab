@@ -123,16 +123,22 @@ class UDSScanner(QThread):
 
     def stop(self):
         self._running = False
+        self.wait(2000)
 
     def run(self):
-        if self._mode == "PID":
-            self._scan_pids()
-        elif self._mode == "DTC":
-            self._read_dtc()
-        elif self._mode == "DEEP":
-            self._deep_scan()
-        elif self._mode == "SERVICES":
-            self._scan_services()
+        from canlab.core import safety
+        safety.register_tx_worker(self)
+        try:
+            if self._mode == "PID":
+                self._scan_pids()
+            elif self._mode == "DTC":
+                self._read_dtc()
+            elif self._mode == "DEEP":
+                self._deep_scan()
+            elif self._mode == "SERVICES":
+                self._scan_services()
+        finally:
+            safety.unregister_tx_worker(self)
         self.finished.emit()
 
     def _send_to(self, arb_id: int, data: bytes, timeout: float = 0.5):
@@ -163,12 +169,13 @@ class UDSScanner(QThread):
             return None
         try:
             import can, time
+            from canlab.core.safety import gated_send
             msg = can.Message(
                 arbitration_id=FUNCTIONAL_REQUEST_ID,
                 data=data,
                 is_extended_id=False,
             )
-            self._bus.send(msg)
+            gated_send(self._bus, msg)
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 resp = self._bus.recv(timeout=0.05)

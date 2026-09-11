@@ -125,24 +125,24 @@ def _build_app(state_getter, token: str):
     @app.post("/inject", dependencies=auth)
     def inject_frame(req: InjectRequest):
         import can
-        from canlab.core.safety import is_armed
+        from canlab.core.safety import gated_send, BusNotArmedError, BlockedIdError
         state = state_getter()
         if state.can_bus is None:
             raise HTTPException(status_code=503, detail="CAN bus not connected")
-        if not is_armed():
-            raise HTTPException(status_code=409,
-                                detail="Bus transmit is disarmed; enable ARM TX in the app")
         try:
             arb_id = int(req.id, 16)
             data   = bytes(int(b, 16) for b in req.data.split())
             msg    = can.Message(arbitration_id=arb_id, data=data,
                                  is_extended_id=bool(req.extended))
-            state.can_bus.send(msg)
-            return {"ok": True}
-        except HTTPException:
-            raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
+        try:
+            gated_send(state.can_bus, msg)
+        except (BusNotArmedError, BlockedIdError) as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True}
 
     return app
 
