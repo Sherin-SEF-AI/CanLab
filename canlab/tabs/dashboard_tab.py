@@ -342,19 +342,16 @@ class DashboardTab(QWidget):
             self._live_timer.stop()
 
     def _update_live_overlays(self):
-        df = self._state.frames_df
-        if df.empty:
-            return
+        store = self._state.store
 
         # Steering
         steer_id = self.overlay_steer_combo.currentData()
         if steer_id:
-            grp = df[df["ID"] == steer_id]
-            if not grp.empty:
-                last = grp.iloc[-1]
+            last = store.last_frame(steer_id)
+            if last is not None:
                 # SAS11: B0 + B1 = 11-bit signed angle, scale 0.1 deg
-                b0 = int(last.get("B0", 0) or 0)
-                b1 = int(last.get("B1", 0) or 0)
+                b0 = _byte(last, "B0")
+                b1 = _byte(last, "B1")
                 raw = (b0 | ((b1 & 0x07) << 8))
                 if raw > 1023:
                     raw -= 2048
@@ -365,11 +362,10 @@ class DashboardTab(QWidget):
         # Speed
         speed_id = self.overlay_speed_combo.currentData()
         if speed_id:
-            grp = df[df["ID"] == speed_id]
-            if not grp.empty:
-                last = grp.iloc[-1]
-                b2 = int(last.get("B2", 0) or 0)
-                b3 = int(last.get("B3", 0) or 0)
+            last = store.last_frame(speed_id)
+            if last is not None:
+                b2 = _byte(last, "B2")
+                b3 = _byte(last, "B3")
                 speed = ((b2 | (b3 << 8)) & 0x1FFF) * 0.03125
                 self.speed_gauge.set_value(speed)
                 self.lbl_speed_val.setText(f"{speed:.1f} km/h")
@@ -381,3 +377,11 @@ class DashboardTab(QWidget):
 
     def _on_frames_updated(self):
         pass
+
+
+def _byte(row: dict, name: str) -> int:
+    """One payload byte from a store row (absent/NaN reads as 0)."""
+    v = row.get(name)
+    if v is None or v != v:
+        return 0
+    return int(v)

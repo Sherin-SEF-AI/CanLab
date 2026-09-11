@@ -25,7 +25,6 @@ from collections import deque
 from canlab.core.bus_health import BusHealthMeter
 from canlab.core.bus_load import BusLoadMeter
 from canlab.core.canid import normalize_id
-from canlab.core.log_parser import make_row
 from canlab.core.safety import gated_send
 
 log = logging.getLogger(__name__)
@@ -169,8 +168,12 @@ class BusHub:
             gated_send(self._bus, msg)
 
     # -- GUI hand-off ----------------------------------------------------
-    def drain(self) -> list[dict]:
-        """Take the rows captured since the last call (GUI thread)."""
+    def drain(self) -> list[tuple]:
+        """Take the frames captured since the last call (GUI thread).
+
+        Each entry is ``(timestamp, arb_id, extended, bus_index, dlc, data)`` —
+        the argument order of :meth:`canlab.core.frame_store.FrameStore.append`.
+        """
         with self._lock:
             rows = list(self._pending)
             self._pending.clear()
@@ -228,10 +231,13 @@ class BusHub:
             if not sub.closed and sub.matches(arb):
                 sub.offer(msg)
 
-        row = make_row(ts, arb, bool(getattr(msg, "is_extended_id", False)),
-                       self.bus_index, data[:64])
+        # A compact tuple, not a row dict: at a few thousand frames a second
+        # building a 14-key dict per frame costs more than storing it.
+        payload = data[:64]
         with self._lock:
-            self._pending.append(row)
+            self._pending.append((ts, arb,
+                                  bool(getattr(msg, "is_extended_id", False)),
+                                  self.bus_index, len(payload), payload))
             self.rx_count += 1
 
     def _report_error(self, message: str) -> None:

@@ -71,11 +71,20 @@ def test_drain_returns_canonical_rows_in_order():
     try:
         assert _wait_for(lambda: hub.rx_count == 2)
         rows = hub.drain()
-        assert [r["ID"] for r in rows] == ["1A0", "18FEF100"]
-        assert rows[0]["B7"] == 7 and rows[0]["DLC"] == 8
-        assert rows[1]["DLC"] == 3 and rows[1]["Extended"] is True
-        assert rows[1]["B3"] != rows[1]["B3"]       # NaN past the payload
+        # (timestamp, arb_id, extended, bus, dlc, data)
+        assert [r[1] for r in rows] == [0x1A0, 0x18FEF100]
+        assert rows[0][4] == 8 and rows[0][5] == bytes(range(8))
+        assert rows[1][4] == 3 and rows[1][2] is True
         assert hub.drain() == []                     # drained once only
+
+        # the store turns them into the canonical schema
+        from canlab.core.frame_store import FrameStore
+        store = FrameStore()
+        store.append_batch(rows)
+        df = store.materialize()
+        assert df["ID"].tolist() == ["1A0", "18FEF100"]
+        assert df["B7"].iloc[0] == 7 and df["DLC"].iloc[1] == 3
+        assert df["B3"].iloc[1] != df["B3"].iloc[1]   # NaN past the payload
     finally:
         hub.shutdown()
 
@@ -88,7 +97,7 @@ def test_error_frames_feed_health_and_are_not_stored():
     hub.start()
     try:
         assert _wait_for(lambda: hub.rx_count == 1)
-        assert [r["ID"] for r in hub.drain()] == ["1A0"]
+        assert [r[1] for r in hub.drain()] == [0x1A0]
         snap = hub.health_snapshot()
         assert snap["error_frames"] == 1 and snap["bus_off"] == 1
     finally:

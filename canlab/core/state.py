@@ -1,6 +1,8 @@
 from PyQt6.QtCore import QObject, pyqtSignal
 import pandas as pd
 
+from canlab.core.frame_store import FrameStore
+
 
 class AppState(QObject):
     id_selected       = pyqtSignal(str)
@@ -49,13 +51,12 @@ class AppState(QObject):
         from canlab.core import safety
         safety.add_observer(self._on_armed_changed)
 
-        self.frames_df:        pd.DataFrame = pd.DataFrame()
+        self._store = FrameStore()
         self.selected_id:      str          = ""
         self.sources:          list         = []
         self.can_bus           = None      # the BusHub while connected (has .send)
         self.bus_hub           = None      # core.bus_hub.BusHub
         self._bus_views: dict  = {}        # owner id -> (hub, Subscription)
-        self._last_ts_by_id: dict = {}     # live per-ID timestamp, for Delta
         self.is_connected:     bool         = False
         self.dbc_signals:      list         = []
         self.analyzed_ids:     dict         = {}
@@ -104,6 +105,26 @@ class AppState(QObject):
         self.selected_id = hex_id
         self.id_selected.emit(hex_id)
 
+    # ── frame storage ────────────────────────────────────────────────────
+    # frames_df stays the public contract (a canonical DataFrame); it is now
+    # materialised from FrameStore on demand and cached until frames change.
+
+    @property
+    def frames_df(self) -> pd.DataFrame:
+        return self._store.materialize()
+
+    @frames_df.setter
+    def frames_df(self, df: pd.DataFrame):
+        self._store.load_dataframe(df)
+
+    @property
+    def store(self) -> FrameStore:
+        return self._store
+
+    def frames_snapshot(self) -> pd.DataFrame:
+        """A frame safe to hand to a worker thread while capture continues."""
+        return self._store.snapshot()
+
     def bus_view(self, owner, id_filter=None):
         """A private receive queue on the live bus for ``owner`` (None if offline).
 
@@ -132,29 +153,19 @@ class AppState(QObject):
         """Append canonical live-capture rows (from BusHub.drain())."""
         if not rows:
             return
-        df = pd.DataFrame(rows)
-        deltas = []
-        for ts, cid in zip(df["Timestamp"].to_numpy(), df["ID"].to_numpy()):
-            prev = self._last_ts_by_id.get(cid)
-            deltas.append(0.0 if prev is None else float(ts) - float(prev))
-            self._last_ts_by_id[cid] = ts
-        df["Delta"] = deltas
-        self.append_frames(df)
+        self._store.append_batch(rows)
+        self.frames_updated.emit()
 
     def load_frames(self, df: pd.DataFrame, source_name: str):
-        self._last_ts_by_id.clear()
-        self.frames_df = df
-        count = len(df)
+        self._store.load_dataframe(df)
+        count = len(self._store)
         self.sources.append({"name": source_name, "count": count})
         self.frames_loaded.emit(count)
         self.source_added.emit(source_name, count)
         self.frames_updated.emit()
 
     def append_frames(self, new_df: pd.DataFrame):
-        if self.frames_df.empty:
-            self.frames_df = new_df
-        else:
-            self.frames_df = pd.concat([self.frames_df, new_df], ignore_index=True)
+        self._store.extend_dataframe(new_df)
         self.frames_updated.emit()
 
     def _invalidate_dbc_db(self):
@@ -177,16 +188,11 @@ class AppState(QObject):
             self.dbc_signals.pop(index)
             self.dbc_updated.emit()
 
-    def get_frames_for_id(self, hex_id: str) -> pd.DataFrame:
-        if self.frames_df.empty:
-            return pd.DataFrame()
-        from canlab.core.canid import normalize_id
-        return self.frames_df[self.frames_df["ID"] == normalize_id(hex_id)].copy()
+    def get_frames_for_id(self, hex_id: str, tail: int | None = None) -> pd.DataFrame:
+        return self._store.frames_for_id(hex_id, tail=tail)
 
     def get_unique_ids(self) -> list:
-        if self.frames_df.empty:
-            return []
-        return sorted(self.frames_df["ID"].unique().tolist())
+        return self._store.unique_ids()
 
 
 _state = None

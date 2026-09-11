@@ -121,12 +121,15 @@ class FramesTab(QWidget):
     def _refresh(self):
         if self._frozen:
             return
-        df = self._state.frames_df
+        store = self._state.store
+        # Only the visible tail is materialised unless a filter needs the rest.
+        df = store.materialize() if self._filter_id or self._filter_bus else \
+            store.tail(MAX_DISPLAY)
         if df.empty:
             return
 
         # Update bus combo
-        buses = ["All"] + [str(b) for b in sorted(df["Bus"].unique())] if "Bus" in df.columns else ["All"]
+        buses = ["All"] + [str(b) for b in sorted(store.buses(), key=str)]
         cur = self.filter_bus.currentText()
         self.filter_bus.blockSignals(True)
         self.filter_bus.clear()

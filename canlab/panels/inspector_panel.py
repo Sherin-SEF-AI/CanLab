@@ -20,7 +20,12 @@ class InspectorPanel(QWidget):
         self._current_id = ""
         self._build_ui()
         self._state.id_selected.connect(self._update_for_id)
-        self._state.frames_updated.connect(lambda: self._update_for_id(self._current_id))
+        # Re-analysing on every capture batch kept a worker-sized load on the GUI
+        # thread; once a second over a bounded window is plenty for a live view.
+        from canlab.ui.throttle import Coalescer
+        self._refresh_coalescer = Coalescer(
+            lambda: self._update_for_id(self._current_id), 1000, self)
+        self._state.frames_updated.connect(self._refresh_coalescer.poke)
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
@@ -85,7 +90,7 @@ class InspectorPanel(QWidget):
         if not hex_id:
             return
         self._current_id = hex_id
-        frames = self._state.get_frames_for_id(hex_id)
+        frames = self._state.get_frames_for_id(hex_id, tail=2000)
         self.lbl_id.setText(f"0x{hex_id}")
 
         if frames.empty:
