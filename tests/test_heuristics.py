@@ -153,3 +153,76 @@ def test_counter_wrap_is_not_read_as_a_break(bits):
             for i in range(400)]
     found = detect_counters_and_checksums(pd.DataFrame(rows))
     assert found.get("400", {}).get("counters")
+
+
+# ── Checksum false positives ─────────────────────────────────────────────────
+# Three ways the detector used to invent checksums. On the sample capture it
+# reported 44 checksum bytes across 10 messages; the truth is 8.
+
+def _frame_rows(payloads, can_id="200"):
+    return pd.DataFrame([
+        {"Timestamp": i * 0.01, "ID": can_id,
+         **{f"B{k}": d[k] for k in range(8)}}
+        for i, d in enumerate(payloads)])
+
+
+def test_padding_is_not_reported_as_a_checksum():
+    """Bytes that never change match everything and mean nothing.
+
+    XOR over an all-zero payload "predicts" every zero byte perfectly, which
+    used to come back as eight checksums on a message that has none.
+    """
+    found = detect_counters_and_checksums(_frame_rows(
+        [[i & 0xFF, 1, 0, 0, 0, 0, 0, 1] for i in range(200)]))
+    cols = {c["col"] for c in found.get("200", {}).get("checksums", [])}
+    assert not cols & {"B2", "B3", "B4", "B5", "B6"}, (
+        f"constant padding reported as a checksum: {sorted(cols)}")
+
+
+def test_a_repeated_payload_is_not_reported_as_a_checksum():
+    """The real 0A6 case: a 16-bit value repeated four times.
+
+    Every byte value then appears an even number of times, so the message XORs
+    to zero and each byte equals the XOR of the other seven. That is an
+    identity, not a checksum, and the message has no checksum at all.
+    """
+    payloads = []
+    for i in range(300):
+        raw = 1920 + 640 * i % 0xFFFF
+        hi, lo = (raw >> 8) & 0xFF, raw & 0xFF
+        payloads.append([hi, lo] * 4)
+    found = detect_counters_and_checksums(_frame_rows(payloads, "0A6"))
+    assert not found.get("0A6", {}).get("checksums"), (
+        "a payload that repeats itself is not checksummed")
+
+
+def test_a_real_sum_checksum_is_found_and_named():
+    """And the detector must still find a genuine one, at the right byte."""
+    payloads = []
+    for i in range(300):
+        d = [(i & 0x0F) << 4, i & 0xFF, (i * 7) & 0xFF, 3, 0, 0, 0, 0]
+        d[7] = sum(d[:7]) & 0xFF
+        payloads.append(d)
+    checks = detect_counters_and_checksums(_frame_rows(payloads))["200"]["checksums"]
+    assert [(c["col"], c["algorithm"]) for c in checks] == [("B7", "SUM8")]
+
+
+def test_the_sample_capture_yields_one_checksum_per_protected_message():
+    """End to end on the shipped sample, against what the generator wrote."""
+    from pathlib import Path
+
+    from canlab.core.log_parser import parse_log_file
+
+    sample = (Path(__file__).resolve().parent.parent
+              / "canlab" / "sample_data" / "sample_kona_drive.csv")
+    df = parse_log_file(str(sample))
+    found = detect_counters_and_checksums(df)
+    cols = [f"B{k}" for k in range(8)]
+    for can_id in df["ID"].unique():
+        data = df[df["ID"] == can_id][cols].to_numpy(int)
+        # The generator's rule: B7 = sum(B0..B6) & 0xFF, or no checksum.
+        protected = bool(((data[:, :7].sum(1) & 0xFF) == data[:, 7]).all())
+        got = [(c["col"], c["algorithm"])
+               for c in found.get(can_id, {}).get("checksums", [])]
+        assert got == ([("B7", "SUM8")] if protected else []), (
+            f"{can_id}: expected {'B7 SUM8' if protected else 'nothing'}, got {got}")

@@ -50,6 +50,11 @@ def guess_checksum(frames: pd.DataFrame, byte_idx: int,
     if n < MIN_FRAMES or byte_idx >= rows.shape[1]:
         return []
 
+    # A byte that never changes cannot be distinguished from padding: a
+    # constant zero trivially "matches" XOR over an all-zero payload.
+    if len(np.unique(rows[:, byte_idx])) < 2:
+        return []
+
     # Chronological split: a checksum holds over time, a coincidence rarely does.
     split = int(n * TRAIN_RATIO)
     train, validate = rows[:split], rows[split:]

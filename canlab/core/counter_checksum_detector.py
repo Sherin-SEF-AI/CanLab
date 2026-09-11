@@ -67,113 +67,6 @@ def _detect_counter_byte(series: pd.Series) -> Optional[dict]:
 
 # ── Checksum detection ────────────────────────────────────────────────────────
 
-def _xor8(data: list[int], exclude_idx: int) -> int:
-    result = 0
-    for i, v in enumerate(data):
-        if i != exclude_idx:
-            result ^= v
-    return result & 0xFF
-
-
-def _sum8(data: list[int], exclude_idx: int) -> int:
-    return sum(v for i, v in enumerate(data) if i != exclude_idx) & 0xFF
-
-
-def _hyundai_xor(data: list[int], exclude_idx: int, msg_id: int) -> int:
-    """Hyundai/Kia: XOR of bytes[0:7] XOR (msg_id >> 8) XOR nibble magic."""
-    chk = 0
-    for i, v in enumerate(data):
-        if i != exclude_idx:
-            chk ^= v
-    chk ^= (msg_id >> 4) & 0xFF
-    return chk & 0xFF
-
-
-def _nibble_sum(data: list[int], exclude_idx: int) -> int:
-    """Sum of all nibbles mod 16, placed in lower nibble."""
-    total = 0
-    for i, v in enumerate(data):
-        if i != exclude_idx:
-            total += (v & 0x0F) + ((v >> 4) & 0x0F)
-    return total & 0xFF
-
-
-_ALGORITHMS = {
-    "XOR8":        _xor8,
-    "SUM8":        _sum8,
-    "NIBBLE_SUM":  _nibble_sum,
-}
-
-
-def _detect_checksum_byte(frames: pd.DataFrame, byte_idx: int,
-                           msg_id_int: int = 0) -> Optional[dict]:
-    """
-    For a given byte index, test if it matches any checksum algorithm
-    computed over the other bytes.
-    """
-    if frames.empty or len(frames) < 5:
-        return None
-
-    candidates = []
-
-    for alg_name, alg_fn in _ALGORITHMS.items():
-        match_count = 0
-        total       = 0
-        for _, row in frames.iterrows():
-            data = []
-            valid = True
-            for i in range(8):
-                v = row.get(f"B{i}")
-                if pd.isna(v):
-                    valid = False
-                    break
-                data.append(int(v))
-            if not valid:
-                continue
-            expected = alg_fn(data, byte_idx)
-            actual   = data[byte_idx]
-            if expected == actual:
-                match_count += 1
-            total += 1
-
-        if total == 0:
-            continue
-        conf = match_count / total
-        if conf > 0.90:
-            candidates.append({"algorithm": alg_name, "confidence": round(conf, 3)})
-
-    # Also try Hyundai-specific with msg_id
-    if msg_id_int > 0:
-        match_count = 0
-        total       = 0
-        for _, row in frames.iterrows():
-            # Skip rows with a missing byte (short DLC): int(NaN) would crash,
-            # and NaN-as-0 would corrupt the checksum comparison.
-            data = []
-            valid = True
-            for i in range(8):
-                v = row.get(f"B{i}")
-                if pd.isna(v):
-                    valid = False
-                    break
-                data.append(int(v))
-            if not valid:
-                continue
-            expected = _hyundai_xor(data, byte_idx, msg_id_int)
-            if expected == data[byte_idx]:
-                match_count += 1
-            total += 1
-        if total and match_count / total > 0.90:
-            candidates.append({
-                "algorithm": "HYUNDAI_XOR",
-                "confidence": round(match_count / total, 3),
-            })
-
-    if not candidates:
-        return None
-    return max(candidates, key=lambda x: x["confidence"])
-
-
 def _detect_checksums_vectorized(frames: pd.DataFrame, msg_id_int: int = 0,
                                  min_conf: float = 0.90) -> list[dict]:
     """Vectorized replacement for per-byte _detect_checksum_byte over one ID.
@@ -201,9 +94,19 @@ def _detect_checksums_vectorized(frames: pd.DataFrame, msg_id_int: int = 0,
     total_nib = nib.sum(axis=1)
     hy_const = (msg_id_int >> 4) & 0xFF
 
-    out = []
+    # Per byte, per algorithm: how often the relation holds. `spread` counts
+    # every byte the relation holds for, including ones rejected as candidates
+    # below, because that is what says whether the relation localises anything.
+    scores: dict[str, dict[int, float]] = {}
+    spread: dict[str, int] = {}
     for k in range(8):
         col = mat[:, k]
+        # A checksum has to be worth more than a guess. Score each candidate
+        # against the best constant predictor -- the byte's most common value.
+        # A constant byte has a baseline of 1.0 and can never be beaten, which
+        # is the right answer: padding is not a checksum.
+        baseline = float(np.bincount(col, minlength=256).max()) / n
+        floor = max(min_conf, baseline)
         algos = {
             "XOR8":       (total_xor ^ col),
             "SUM8":       ((total_sum - col) & 0xFF),
@@ -211,14 +114,37 @@ def _detect_checksums_vectorized(frames: pd.DataFrame, msg_id_int: int = 0,
         }
         if msg_id_int > 0:
             algos["HYUNDAI_XOR"] = ((total_xor ^ col) ^ hy_const)
-        best = None
         for name, expected in algos.items():
             conf = float(np.mean(expected == col))
-            if conf > min_conf and (best is None or conf > best["confidence"]):
-                best = {"algorithm": name, "confidence": round(conf, 3)}
-        if best:
-            out.append({"byte": k, "col": f"B{k}", **best})
-    return out
+            if conf > min_conf:
+                spread[name] = spread.get(name, 0) + 1
+            if conf > floor:
+                scores.setdefault(name, {})[k] = conf
+
+    # Some relations are message-wide identities that say nothing about which
+    # byte is the checksum. "Is byte k the XOR of the other seven?" is the same
+    # question as "does the whole message XOR to zero?" -- the answer does not
+    # depend on k, so a real XOR checksum and a payload that simply repeats
+    # each value an even number of times both make all eight bytes match. When
+    # a relation holds across most of the payload it has no localising power,
+    # so drop it rather than report eight checksums or guess at one.
+    localising = {name: hits for name, hits in scores.items()
+                  if spread.get(name, 0) <= len(cols) // 2}
+
+    # What is left may still name the same byte twice (a trailing SUM8 also
+    # makes XOR8 hold on two bytes). Prefer the most specific relation: the one
+    # that matched the fewest bytes, then the most confident. Where a relation
+    # did match more than one byte, take the last -- a trailing checksum is the
+    # near-universal convention.
+    best_per_byte: dict[int, tuple] = {}
+    for name, hits in localising.items():
+        k = max(hits)
+        rank = (spread[name], -hits[k])
+        if k not in best_per_byte or rank < best_per_byte[k][0]:
+            best_per_byte[k] = (rank, {"byte": k, "col": f"B{k}",
+                                       "algorithm": name,
+                                       "confidence": round(hits[k], 3)})
+    return [v[1] for _, v in sorted(best_per_byte.items())]
 
 
 # ── Main API ──────────────────────────────────────────────────────────────────
