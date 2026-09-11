@@ -1,0 +1,174 @@
+1
+00:00:00,000 --> 00:00:01,540
+Now we define a signal.
+
+2
+00:00:01,540 --> 00:00:05,157
+The DBC BUILDER is where a guess becomes a definition.
+
+3
+00:00:05,157 --> 00:00:09,176
+We are describing the front-left wheel speed on message 0A6:
+
+4
+00:00:09,176 --> 00:00:12,391
+sixteen bits, big-endian, starting at bit seven,
+
+5
+00:00:12,391 --> 00:00:15,873
+scaled by one thirty-second of a kilometre per hour.
+
+6
+00:00:15,873 --> 00:00:21,433
+The bit grid underneath shows the live payload with the
+selected field highlighted,
+
+7
+00:00:21,433 --> 00:00:25,652
+and it converts between the grid and DBC bit numbering for
+you,
+
+8
+00:00:25,652 --> 00:00:28,800
+which is the part everybody gets wrong by hand.
+
+9
+00:00:28,800 --> 00:00:31,854
+Underneath the editor is the live decode preview:
+
+10
+00:00:31,854 --> 00:00:37,774
+real frames from the capture, their raw bytes, and the
+physical value your definition produces.
+
+11
+00:00:37,774 --> 00:00:43,881
+Sixty to eighty kilometres per hour here, which is the right
+order of magnitude for a wheel speed,
+
+12
+00:00:43,881 --> 00:00:45,501
+so the scale is plausible.
+
+13
+00:00:45,501 --> 00:00:51,608
+Every decode in CanLab runs through cantools, the same library
+that will read the file you export,
+
+14
+00:00:51,608 --> 00:00:54,288
+so what you see here is what you get later.
+
+15
+00:00:54,288 --> 00:00:56,270
+The PLOT tab draws it over time.
+
+16
+00:00:56,270 --> 00:01:00,977
+Raw bytes and decoded signals can be plotted together on a
+shared time axis,
+
+17
+00:01:00,977 --> 00:01:06,613
+each with its own scale, so you can compare a decoded value
+against the bytes it came from,
+
+18
+00:01:06,613 --> 00:01:09,091
+or against a different message entirely.
+
+19
+00:01:09,091 --> 00:01:14,231
+A wheel speed that rises and falls smoothly is a good sign the
+definition is right;
+
+20
+00:01:14,231 --> 00:01:17,328
+a sawtooth would tell you the byte order is wrong.
+
+21
+00:01:17,328 --> 00:01:21,284
+INTELLIGENCE looks across messages rather than within one.
+
+22
+00:01:21,284 --> 00:01:27,628
+It measures how often each ID repeats, so you can tell a
+hundred-hertz control message from a
+
+23
+00:01:27,628 --> 00:01:29,265
+one-hertz status report.
+
+24
+00:01:29,265 --> 00:01:33,289
+It correlates bytes between different IDs with a lag sweep,
+
+25
+00:01:33,289 --> 00:01:38,064
+which is how you find the same physical quantity reported by
+two ECUs.
+
+26
+00:01:38,064 --> 00:01:42,771
+It diffs two captures to show what changed when you pressed a
+button.
+
+27
+00:01:42,771 --> 00:01:47,136
+And it decodes J1939 parameter group numbers for heavy
+vehicles.
+
+28
+00:01:47,136 --> 00:01:49,111
+ML INTEL goes further per byte.
+
+29
+00:01:49,111 --> 00:01:55,100
+It classifies each byte as a counter, a checksum, a boolean
+flag, a physical value or padding,
+
+30
+00:01:55,100 --> 00:01:57,903
+with a confidence and the entropy behind it.
+
+31
+00:01:57,903 --> 00:02:02,745
+It fits a baseline from normal traffic and then scores frames
+for anomalies,
+
+32
+00:02:02,745 --> 00:02:08,288
+which is how you find the one message that behaves differently
+when a fault is present.
+
+33
+00:02:08,288 --> 00:02:13,704
+It also detects change points and finds messages with similar
+behaviour by embedding.
+
+34
+00:02:13,704 --> 00:02:15,520
+The DASHBOARD is the overview.
+
+35
+00:02:15,520 --> 00:02:20,243
+The heatmap shows how much each byte of each message moves
+across the capture,
+
+36
+00:02:20,243 --> 00:02:24,966
+so a dense column is a message worth investigating and a blank
+one is padding.
+
+37
+00:02:24,966 --> 00:02:28,538
+There is a message timeline showing when each ID is active,
+
+38
+00:02:28,538 --> 00:02:31,929
+and gauges you can point at any signal you have defined,
+
+39
+00:02:31,929 --> 00:02:36,288
+so a decoded value can be watched as an instrument rather than
+a number.

@@ -79,10 +79,21 @@ seconds, from 1 Hz to 100 Hz) so every feature can be tried without hardware.
 
 ## Demo
 
-A narrated walkthrough of every tab, recorded from the running application:
-**[`docs/canlab-demo.mp4`](docs/canlab-demo.mp4)**, 1080p, 11 minutes, with
-subtitles burned in and also separate in
-[`docs/canlab-demo.srt`](docs/canlab-demo.srt).
+A narrated walkthrough of every tab, recorded from the running application, in
+four parts. 1080p, subtitles burned in, and each part ships its own subtitle
+file.
+
+| Part | Covers | Length |
+|---|---|---|
+| [1. Loading a capture and finding structure](docs/canlab-demo-part1-analysis.mp4) | FRAMES, the ID panel and inspector, SIGNALS, counter and checksum detection, the checksum guesser, entropy boundaries | 3.0 min |
+| [2. Defining signals and checking them](docs/canlab-demo-part2-signals.mp4) | DBC BUILDER and its bit grid, the live decode preview, PLOT, INTELLIGENCE, ML INTEL, DASHBOARD | 2.6 min |
+| [3. Timeline, code generation and exports](docs/canlab-demo-part3-outputs.mp4) | TIMELINE, CODE GEN, the five export formats, DIAGNOSTICS including XCP and DoIP, security access | 2.4 min |
+| [4. The transmit gate, injection and live capture](docs/canlab-demo-part4-transmitting.mp4) | ARM TX, INJECTION, replay, fuzzing, GATEWAY, OBD-II, the AI engine, live capture | 3.3 min |
+
+Subtitles: [part 1](docs/canlab-demo-part1-analysis.srt),
+[part 2](docs/canlab-demo-part2-signals.srt),
+[part 3](docs/canlab-demo-part3-outputs.srt),
+[part 4](docs/canlab-demo-part4-transmitting.srt).
 
 It is generated rather than hand-recorded, so it cannot drift away from what the
 application does. [`docs/demo/record.py`](docs/demo/record.py) drives a real
@@ -90,7 +101,9 @@ application does. [`docs/demo/record.py`](docs/demo/record.py) drives a real
 slots the buttons call, so a scene that stops working fails the run instead of
 quietly recording a stale screen.
 [`docs/demo/build.py`](docs/demo/build.py) synthesises the narration, times each
-scene's frames to its own audio, and muxes with ffmpeg.
+scene's frames to its own audio, and muxes with ffmpeg. Parts are split on scene
+boundaries, never mid sentence, and the build fails if a scene lands in no part
+or in two.
 
 ```bash
 pip install -e ".[demo]"                   # plus ffmpeg on PATH

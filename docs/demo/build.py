@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Turn the recorded frames into a narrated, subtitled 1080p video.
+"""Turn the recorded frames into narrated, subtitled 1080p videos.
 
 Reads ``build/scenes.json`` from ``record.py``, synthesises narration for each
 scene, times the scene's frames to that audio, writes an SRT whose cues follow
-the sentences, and muxes it all with ffmpeg.
+the sentences, and muxes it all with ffmpeg. Emits the walkthrough as the four
+parts defined in ``PARTS``, each with its own subtitle file.
 
     python docs/demo/build.py
 """
@@ -23,8 +24,17 @@ BUILD = HERE / "build"
 FRAMES = BUILD / "frames"
 AUDIO = BUILD / "audio"
 OUT_DIR = HERE.parent                      # docs/
-VIDEO = OUT_DIR / "canlab-demo.mp4"
-SRT = OUT_DIR / "canlab-demo.srt"
+
+# The walkthrough ships as four parts rather than one eleven-minute file: each
+# is a self-contained topic, and a reader can watch the one they need. Splits
+# are on scene boundaries (first and last scene key, inclusive), never mid
+# sentence, and each part carries its own subtitles timed from its own start.
+PARTS = [
+    ("part1-analysis",    "Loading a capture and finding structure", "load",   "entropy"),
+    ("part2-signals",     "Defining signals and checking them",      "dbc",    "dashboard"),
+    ("part3-outputs",     "Timeline, code generation and exports",   "timeline", "security"),
+    ("part4-transmitting", "The transmit gate, injection and live capture", "safety", "close"),
+]
 
 VOICE = "en-GB-RyanNeural"
 RATE = "-4%"                               # a little slower than default
@@ -185,7 +195,7 @@ def write_ass(cues, path: Path) -> None:
                     encoding="utf-8")
 
 
-def build_video(scenes: list[dict]) -> None:
+def build_video(scenes: list[dict], video: Path, subs: Path) -> None:
     """Hold each scene's frames for its narration, then mux audio and subtitles."""
     concat = BUILD / "frames.txt"
     lines = []
@@ -213,10 +223,17 @@ def build_video(scenes: list[dict]) -> None:
 
     print("  burning subtitles and muxing audio…")
     run(["ffmpeg", "-y", "-v", "error", "-i", str(silent), "-i", str(track),
-         "-vf", f"ass={BUILD / 'subs.ass'}",
+         "-vf", f"ass={subs}",
          "-c:v", "libx264", "-preset", "medium", "-crf", "20",
          "-c:a", "aac", "-b:a", "160k", "-shortest",
-         "-movflags", "+faststart", str(VIDEO)])
+         "-movflags", "+faststart", str(video)])
+
+
+def slice_scenes(scenes: list[dict], first: str, last: str) -> list[dict]:
+    keys = [s["key"] for s in scenes]
+    if first not in keys or last not in keys:
+        raise SystemExit(f"part references unknown scene: {first}..{last}")
+    return scenes[keys.index(first):keys.index(last) + 1]
 
 
 def main() -> int:
@@ -232,16 +249,36 @@ def main() -> int:
     for scene in scenes:
         scene["duration"] = duration(Path(scene["audio"]))
 
-    cues = build_cues(scenes)
-    write_srt(cues, SRT)
-    write_ass(cues, BUILD / "subs.ass")
-    print(f"  {len(cues)} subtitle cues")
-    build_video(scenes)
+    covered: list[str] = []
+    results = []
+    for slug, title, first, last in PARTS:
+        part = slice_scenes(scenes, first, last)
+        covered += [s["key"] for s in part]
+        video = OUT_DIR / f"canlab-demo-{slug}.mp4"
+        srt = OUT_DIR / f"canlab-demo-{slug}.srt"
+        # Cues are rebased to this part's own zero.
+        cues = build_cues(part)
+        write_srt(cues, srt)
+        write_ass(cues, BUILD / f"subs-{slug}.ass")
+        print(f"\n{title}")
+        print(f"  {len(part)} scenes, {len(cues)} cues")
+        build_video(part, video, BUILD / f"subs-{slug}.ass")
+        results.append((slug, title, video, srt,
+                        sum(s["duration"] for s in part)))
 
-    total = sum(s["duration"] for s in scenes)
-    size_mb = VIDEO.stat().st_size / 1e6
-    print(f"\n{VIDEO}  ({total / 60:.1f} min, {size_mb:.1f} MB)")
-    print(f"{SRT}")
+    missing = [s["key"] for s in scenes if s["key"] not in covered]
+    if missing:
+        raise SystemExit(f"scenes left out of every part: {missing}")
+    if len(covered) != len(set(covered)):
+        raise SystemExit("a scene appears in more than one part")
+
+    print("\n" + "-" * 62)
+    total = 0.0
+    for slug, title, video, srt, secs in results:
+        mb = video.stat().st_size / 1e6
+        total += secs
+        print(f"{video.name:38s} {secs / 60:5.1f} min {mb:6.1f} MB")
+    print(f"{'total':38s} {total / 60:5.1f} min")
     return 0
 
 
