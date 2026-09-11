@@ -167,8 +167,10 @@ class FramesTab(QWidget):
         if self._filter_bus and self._filter_bus != "All":
             fdf = fdf[fdf["Bus"].astype(str) == self._filter_bus]
 
-        # Limit display
-        total = len(fdf)
+        # Limit display. Unfiltered, only the tail was materialised, so the
+        # real total is the store's -- counting the rows we happen to hold
+        # would report "1000 / 1000" for a capture of sixty thousand.
+        total = len(fdf) if (self._filter_id or self._filter_bus) else len(store)
         fdf = fdf.tail(MAX_DISPLAY)
         self.lbl_count.setText(f"{len(fdf)} / {total} frames")
 
