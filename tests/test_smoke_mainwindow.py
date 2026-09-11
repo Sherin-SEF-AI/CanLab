@@ -4,6 +4,7 @@ This is the test that catches wiring breakage the unit tests cannot see —
 a removed signal a tab still connects to, a renamed helper, a tab that fails
 to build. It runs headless (QT_QPA_PLATFORM=offscreen, set in conftest).
 """
+import gc
 import time
 
 import pytest
@@ -11,7 +12,6 @@ import pytest
 pytest.importorskip("PyQt6")
 pytest.importorskip("pyqtgraph")
 
-from PyQt6.QtWidgets import QApplication
 
 from canlab.core import safety
 from canlab.core.log_parser import parse_log_file
@@ -22,8 +22,8 @@ SAMPLE = "canlab/sample_data/sample_kona_drive.csv"
 
 
 @pytest.fixture(scope="module")
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qcore):
+    return qcore
 
 
 @pytest.fixture(scope="module")
@@ -33,7 +33,12 @@ def window(app):
     from canlab.mainwindow import MainWindow
     w = MainWindow()
     yield w
+    # Destroy the C++ side while the application is still alive; leaving it to
+    # the garbage collector crashes Qt during interpreter teardown.
     w.close()
+    w.deleteLater()
+    app.processEvents()
+    gc.collect()
     app.processEvents()
 
 

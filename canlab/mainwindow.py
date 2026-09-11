@@ -50,14 +50,14 @@ class MainWindow(QMainWindow):
 
         self._state        = get_state()
         self._hubs: list   = []        # one BusHub per connected bus
-        self._can_settings = {"interface": "socketcan", "channel": "can0", "bitrate": 500000}
+        self._can_settings = _saved_can_settings()
         self._api_key      = load_api_key()
         self._frame_rate_timer = QTimer()
         self._drain_timer      = QTimer()
         self._live_frame_count = 0
         self._rest_api_server  = None
         self._plugins          = []
-        self._multibus_config  = []
+        self._multibus_config  = _saved_multibus()
 
         self._build_central()
         self._build_toolbar()
@@ -74,6 +74,15 @@ class MainWindow(QMainWindow):
         self._drain_timer.setInterval(250)
         self._drain_timer.timeout.connect(self._drain_live_frames)
         self.live_error.connect(self._on_live_error)
+
+        from canlab.settings_dialog import SettingsDialog, settings
+        _st = settings()
+        self._state.rest_api_port = int(_st.value(SettingsDialog.S_REST_PORT, 8765, int))
+        self._state.vehicle_profile = _st.value(SettingsDialog.S_PROFILE, "generic", str)
+        self._state.active_backend = _st.value(SettingsDialog.S_BACKEND, "python-can", str)
+        self._state.panda_safety_model = _st.value(
+            SettingsDialog.S_PANDA_SAFETY, "SAFETY_NOOUTPUT", str)
+        self._state.store.set_cap(int(_st.value(SettingsDialog.S_FRAME_CAP, 500_000, int)))
 
         self.ai_tab.set_api_key(self._api_key)
         self.ai_tab.set_ai_config(
@@ -837,6 +846,28 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
         event.accept()
+
+
+def _saved_can_settings() -> dict:
+    """The CAN interface the user last chose (these used to reset every launch)."""
+    from canlab.settings_dialog import SettingsDialog, settings
+    st = settings()
+    return {
+        "interface": st.value(SettingsDialog.S_INTERFACE, "socketcan", str),
+        "channel": st.value(SettingsDialog.S_CHANNEL, "can0", str),
+        "bitrate": int(st.value(SettingsDialog.S_BITRATE, 500000, int)),
+        "fd": st.value(SettingsDialog.S_FD, False, bool),
+        "data_bitrate": int(st.value(SettingsDialog.S_FD_BITRATE, 2000000, int)),
+    }
+
+
+def _saved_multibus() -> list:
+    import json
+    from canlab.settings_dialog import SettingsDialog, settings
+    try:
+        return json.loads(settings().value(SettingsDialog.S_MULTIBUS, "[]", str))
+    except (ValueError, TypeError):
+        return []
 
 
 def _sep() -> QLabel:

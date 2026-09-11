@@ -5,6 +5,9 @@ import zipfile
 
 import pandas as pd
 
+# Bumped when the archive layout changes; readers accept anything they know.
+PROJECT_FORMAT_VERSION = 2
+
 
 def save_project(state, path: str):
     """Zip: frames.csv, signals.json, memory.json, meta.json"""
@@ -20,7 +23,9 @@ def save_project(state, path: str):
         zf.writestr("notes.json",   json.dumps(getattr(state, "notes_by_signal", {}), indent=2))
 
         meta = {
+            "format_version": PROJECT_FORMAT_VERSION,
             "periodicities": {k: float(v) for k, v in state.periodicities.items()},
+            "vehicle_profile": getattr(state, "vehicle_profile", "generic"),
         }
         zf.writestr("meta.json", json.dumps(meta, indent=2))
 
@@ -49,7 +54,11 @@ def load_project(state, path: str):
         if "signals.json" in names:
             state.dbc_signals = json.loads(zf.read("signals.json"))
         if "memory.json" in names:
-            state.ai_memory   = json.loads(zf.read("memory.json"))
+            # Merge rather than replace: loading a project used to overwrite the
+            # global AI memory, which the next save then wrote back to disk.
+            from canlab.core.ai_memory import merge_entries
+            state.ai_memory = merge_entries(state.ai_memory,
+                                            json.loads(zf.read("memory.json")))
         if "triggers.json" in names:
             state.triggers    = json.loads(zf.read("triggers.json"))
         if "notes.json" in names:
@@ -59,6 +68,8 @@ def load_project(state, path: str):
             # Older archives also carried repo_*/annotations/fingerprint keys
             # (features since removed); they are ignored.
             meta = json.loads(zf.read("meta.json"))
+            state.vehicle_profile = meta.get("vehicle_profile",
+                                              getattr(state, "vehicle_profile", "generic"))
             state.periodicities = {}
             for k, v in meta.get("periodicities", {}).items():
                 try:

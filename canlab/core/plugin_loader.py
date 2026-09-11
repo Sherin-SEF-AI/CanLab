@@ -7,16 +7,46 @@ Each plugin module must define:
 
 Security note: :func:`discover_plugins` reads name/version *statically* (via the
 ``ast`` module) and never imports/executes plugin code. Execution happens only
-in :func:`load_plugin`, invoked from :func:`activate_plugins`. This means merely
-listing plugins (e.g. opening the Settings panel) cannot run arbitrary code —
-only explicit activation does.
+in :func:`load_plugin`, invoked from :func:`activate_plugins`, and only for
+plugins the user has enabled in Settings — a file sitting in the plugin
+directory does nothing on its own.
 """
 import ast
 import importlib.util
+import logging
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 PLUGIN_DIR = Path.home() / ".canlab" / "plugins"
+ENABLED_KEY = "plugins/enabled"
+
+
+def enabled_paths() -> set[str]:
+    """Plugins the user has explicitly enabled.
+
+    Previously every file in the plugin directory was executed at startup, so
+    dropping a file into the directory was enough to run it. Nothing runs now
+    until it is ticked in Settings.
+    """
+    try:
+        from canlab.settings_dialog import settings
+        raw = settings().value(ENABLED_KEY, "", str)
+    except Exception:
+        log.debug("cannot read the plugin allow-list", exc_info=True)
+        return set()
+    return {p for p in (raw or "").split("\n") if p}
+
+
+def set_enabled(path: str, enabled: bool) -> None:
+    """Add or remove one plugin from the allow-list."""
+    current = enabled_paths()
+    current.add(str(path)) if enabled else current.discard(str(path))
+    from canlab.settings_dialog import settings
+    st = settings()
+    st.setValue(ENABLED_KEY, "\n".join(sorted(current)))
+    st.sync()
 
 
 def _read_metadata(py_file: Path) -> tuple[str, str]:
@@ -49,6 +79,7 @@ def discover_plugins() -> list[dict]:
     results = []
     if not PLUGIN_DIR.exists():
         return results
+    allowed = enabled_paths()
     for py_file in sorted(PLUGIN_DIR.glob("*.py")):
         name, version = _read_metadata(py_file)
         results.append({
@@ -56,7 +87,7 @@ def discover_plugins() -> list[dict]:
             "version": version,
             "path":    str(py_file),
             "module":  None,
-            "enabled": True,
+            "enabled": str(py_file) in allowed,
         })
     return results
 

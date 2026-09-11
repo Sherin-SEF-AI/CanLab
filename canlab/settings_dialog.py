@@ -1,4 +1,8 @@
+import json
+import logging
+
 import keyring
+from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QLabel, QLineEdit, QPushButton, QComboBox,
@@ -6,6 +10,8 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QRadioButton, QButtonGroup,
 )
 from canlab.theme import mono_font
+
+log = logging.getLogger(__name__)
 
 KEYRING_SERVICE    = "canlab"
 KEYRING_API_KEY    = "anthropic_api_key"
@@ -18,14 +24,11 @@ AI_MODELS = {
     "Anthropic": [
         "claude-sonnet-5",
         "claude-opus-4-8",
-        "claude-haiku-4-5-20251001",
+        "claude-haiku-4-5",
     ],
     "Groq": [
         "llama-3.3-70b-versatile",
-        "llama-3.1-70b-versatile",
         "llama-3.1-8b-instant",
-        "mixtral-8x7b-32768",
-        "gemma2-9b-it",
     ],
     "Ollama": [
         "llama3.1",
@@ -37,8 +40,29 @@ AI_MODELS = {
 }
 
 
+def settings() -> QSettings:
+    """Everything that is not a secret lives here, so it survives a restart.
+
+    Only API keys go to the OS keyring; interface, bitrate, REST port, vehicle
+    profile and the plugin allow-list used to be held in memory and were lost
+    on every exit.
+    """
+    return QSettings("CanLab", "CanLab")
+
+
+def _keyring_set(key: str, value: str) -> bool:
+    """Store a secret, tolerating a missing or locked keyring backend."""
+    try:
+        keyring.set_password(KEYRING_SERVICE, key, value)
+        return True
+    except Exception:
+        log.warning("keyring unavailable; %s kept for this session only", key,
+                    exc_info=True)
+        return False
+
+
 def save_api_key(key: str):
-    keyring.set_password(KEYRING_SERVICE, KEYRING_API_KEY, key)
+    _keyring_set(KEYRING_API_KEY, key)
 
 
 def load_api_key() -> str:
@@ -49,7 +73,7 @@ def load_api_key() -> str:
 
 
 def save_groq_key(key: str):
-    keyring.set_password(KEYRING_SERVICE, KEYRING_GROQ_KEY, key)
+    _keyring_set(KEYRING_GROQ_KEY, key)
 
 
 def load_groq_key() -> str:
@@ -60,7 +84,7 @@ def load_groq_key() -> str:
 
 
 def save_ai_provider(provider: str):
-    keyring.set_password(KEYRING_SERVICE, KEYRING_AI_PROVIDER, provider)
+    _keyring_set(KEYRING_AI_PROVIDER, provider)
 
 
 def load_ai_provider() -> str:
@@ -71,7 +95,7 @@ def load_ai_provider() -> str:
 
 
 def save_ai_model(model: str):
-    keyring.set_password(KEYRING_SERVICE, KEYRING_AI_MODEL, model)
+    _keyring_set(KEYRING_AI_MODEL, model)
 
 
 def load_ai_model() -> str:
@@ -300,10 +324,14 @@ class SettingsDialog(QDialog):
         # ── Plugins ───────────────────────────────────────────────────────────
         plug_tab = QWidget()
         plug_lay = QVBoxLayout(plug_tab)
-        plug_lay.addWidget(QLabel("Plugins are loaded from  ~/.canlab/plugins/*.py", font=mono_font(8)))
+        plug_lay.addWidget(QLabel(
+            "Plugins are loaded from ~/.canlab/plugins/*.py. Tick one to let it "
+            "run — an enabled plugin executes with full application privileges.",
+            font=mono_font(8), wordWrap=True))
         self.plugins_list = QListWidget()
         self.plugins_list.setFont(mono_font())
         plug_lay.addWidget(self.plugins_list)
+        self.plugins_list.itemChanged.connect(self._on_plugin_toggled)
         btn_refresh = QPushButton("Refresh Plugin List")
         btn_refresh.clicked.connect(self._refresh_plugins)
         plug_lay.addWidget(btn_refresh)
@@ -329,7 +357,64 @@ class SettingsDialog(QDialog):
         self.model_combo.addItems(AI_MODELS.get(provider, []))
         self.model_combo.blockSignals(False)
 
+    # Settings keys (QSettings), kept in one place so save/load cannot drift.
+    S_INTERFACE = "can/interface"
+    S_CHANNEL = "can/channel"
+    S_BITRATE = "can/bitrate"
+    S_FD = "can/fd"
+    S_FD_BITRATE = "can/data_bitrate"
+    S_MULTIBUS = "can/multibus"
+    S_REST_PORT = "rest/port"
+    S_PROFILE = "vehicle/profile"
+    S_BACKEND = "backend/kind"
+    S_PANDA_SAFETY = "backend/panda_safety"
+    S_FRAME_CAP = "frames/cap"
+
+    def _load_persisted(self):
+        st = settings()
+        self.iface_combo.setCurrentText(st.value(self.S_INTERFACE, "socketcan", str))
+        self.channel_edit.setText(st.value(self.S_CHANNEL, "can0", str))
+        self.bitrate_combo.setCurrentText(st.value(self.S_BITRATE, "500000", str))
+        self.chk_canfd.setChecked(st.value(self.S_FD, False, bool))
+        self.fd_bitrate_combo.setCurrentText(
+            st.value(self.S_FD_BITRATE, "2000000", str))
+        self.rest_port_spin.setValue(int(st.value(self.S_REST_PORT, 8765, int)))
+        idx = self.profile_combo.findData(st.value(self.S_PROFILE, "generic", str))
+        if idx >= 0:
+            self.profile_combo.setCurrentIndex(idx)
+        panda = st.value(self.S_BACKEND, "python-can", str) == "panda"
+        self.radio_panda.setChecked(panda)
+        self.radio_pycan.setChecked(not panda)
+        self.panda_safety_combo.setCurrentText(
+            st.value(self.S_PANDA_SAFETY, "SAFETY_NOOUTPUT", str))
+        self.multibus_table.setRowCount(0)   # replace, never append
+        try:
+            for row in json.loads(st.value(self.S_MULTIBUS, "[]", str)):
+                r = self.multibus_table.rowCount()
+                self.multibus_table.insertRow(r)
+                for ci, key in enumerate(("name", "interface", "channel", "bitrate")):
+                    self.multibus_table.setItem(r, ci,
+                                                QTableWidgetItem(str(row.get(key, ""))))
+        except (ValueError, TypeError):
+            log.debug("stored multi-bus config unreadable", exc_info=True)
+
+    def _save_persisted(self):
+        st = settings()
+        st.setValue(self.S_INTERFACE, self.iface_combo.currentText())
+        st.setValue(self.S_CHANNEL, self.channel_edit.text())
+        st.setValue(self.S_BITRATE, self.bitrate_combo.currentText())
+        st.setValue(self.S_FD, self.chk_canfd.isChecked())
+        st.setValue(self.S_FD_BITRATE, self.fd_bitrate_combo.currentText())
+        st.setValue(self.S_REST_PORT, self.rest_port_spin.value())
+        st.setValue(self.S_PROFILE, self.profile_combo.currentData() or "generic")
+        st.setValue(self.S_BACKEND,
+                    "panda" if self.radio_panda.isChecked() else "python-can")
+        st.setValue(self.S_PANDA_SAFETY, self.panda_safety_combo.currentText())
+        st.setValue(self.S_MULTIBUS, json.dumps(self.get_multibus_config()))
+        st.sync()
+
     def _load_values(self):
+        self._load_persisted()
         self.api_key_edit.setText(load_api_key())
         self.groq_key_edit.setText(load_groq_key())
 
@@ -370,6 +455,7 @@ class SettingsDialog(QDialog):
         # Persist new settings to AppState
         from canlab.core.state import get_state
         state = get_state()
+        self._save_persisted()
         state.vehicle_profile = self.profile_combo.currentData() or "generic"
         state.active_backend = "panda" if self.radio_panda.isChecked() else "python-can"
         state.panda_safety_model = self.panda_safety_combo.currentText()
@@ -379,17 +465,33 @@ class SettingsDialog(QDialog):
         self.accept()
 
     def _refresh_plugins(self):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtWidgets import QListWidgetItem
+
         from canlab.core.plugin_loader import discover_plugins
-        plugins = discover_plugins()
+        self.plugins_list.blockSignals(True)
         self.plugins_list.clear()
+        plugins = discover_plugins()
         if not plugins:
             self.plugins_list.addItem("No plugins found.")
         for p in plugins:
-            status = "✓" if p.get("enabled") else "✗"
-            err    = f"  ERROR: {p.get('error','')}" if p.get("error") else ""
-            self.plugins_list.addItem(
-                f"{status}  {p['name']}  v{p['version']}  —  {p['path']}{err}"
-            )
+            err = f"   [{p.get('error')}]" if p.get("error") else ""
+            item = QListWidgetItem(f"{p['name']}  v{p['version']}  —  {p['path']}{err}")
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if p.get("enabled")
+                               else Qt.CheckState.Unchecked)
+            item.setData(Qt.ItemDataRole.UserRole, p["path"])
+            self.plugins_list.addItem(item)
+        self.plugins_list.blockSignals(False)
+
+    def _on_plugin_toggled(self, item):
+        """Enabling a plugin is what allows it to run, so persist it at once."""
+        from PyQt6.QtCore import Qt
+
+        from canlab.core.plugin_loader import set_enabled
+        path = item.data(Qt.ItemDataRole.UserRole)
+        if path:
+            set_enabled(path, item.checkState() == Qt.CheckState.Checked)
 
     def _mb_add_row(self):
         row = self.multibus_table.rowCount()

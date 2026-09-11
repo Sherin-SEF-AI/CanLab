@@ -4,7 +4,7 @@ import pyqtgraph as pg
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QListWidgetItem,
     QPushButton, QLabel, QTextEdit, QProgressBar, QLineEdit,
-    QTabWidget,
+    QTabWidget, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QBrush
@@ -695,8 +695,14 @@ class AIEngineTab(QWidget):
     def _accept_to_dbc(self):
         response = self.response_text.toPlainText()
         sig = self._parse_dbc_from_response(response)
-        if sig:
-            self._state.add_dbc_signal(sig)
+        if sig is None:
+            QMessageBox.information(
+                self, "Nothing to accept",
+                "The response does not state a start bit and length for this "
+                "signal, so there is nothing to add. Define it in the DBC "
+                "Builder, or ask the model for a RECOMMENDED DBC ENTRY.")
+            return
+        self._state.add_dbc_signal(sig)
 
     def _accept_name(self):
         response = self.response_text.toPlainText()
@@ -724,6 +730,14 @@ class AIEngineTab(QWidget):
         return m.group(1) if m else f"Signal_{self._current_id}"
 
     def _parse_dbc_from_response(self, text: str) -> dict | None:
+        """Extract a signal definition from the model's prose.
+
+        Returns None when the response does not actually give a bit position:
+        this used to fall back to "8 bits at bit 0", so every Accept produced a
+        signal whether or not the model had identified one.
+        """
+        if not self._current_id:
+            return None
         sig = {
             "message_id":   self._current_id,
             "message_name": f"MSG_{self._current_id}",
@@ -739,13 +753,17 @@ class AIEngineTab(QWidget):
             "unit":         "",
             "description":  f"AI-analyzed ID 0x{self._current_id}",
         }
+        found = 0
         for field, pat in [
             ("start_bit", r"start.?bit[:\s]+(\d+)"),
-            ("length",    r"length[:\s]+(\d+)"),
+            ("length",    r"(?:length|bit.?length|size)[:\s]+(\d+)"),
         ]:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
                 sig[field] = int(m.group(1))
+                found += 1
+        if found < 2:
+            return None
         for field, pat in [
             ("scale",  r"scale[:\s]+([\d.]+)"),
             ("offset", r"offset[:\s]+([\d.eE+-]+)"),

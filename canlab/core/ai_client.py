@@ -1,4 +1,3 @@
-import anthropic
 import pandas as pd
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -106,6 +105,13 @@ class AIWorker(QThread):
         self.groq_key           = groq_key
         self.ml_insights        = ml_insights
         self._full_response     = ""
+        self._stopped           = False
+
+    def stop(self):
+        """Ask the worker to stop streaming (the request itself is not cancellable)."""
+        self._stopped = True
+        self.requestInterruption()
+        self.wait(3000)
 
     def run(self):
         if self.provider == "Groq":
@@ -131,16 +137,21 @@ class AIWorker(QThread):
         )
 
     def _run_anthropic(self):
+        # Imported here, not at module scope: Ollama and Groq users should not
+        # need the Anthropic SDK installed to run the app.
+        import anthropic
         try:
             client = anthropic.Anthropic(api_key=self.api_key)
             prompt = self._build_context()
             with client.messages.stream(
                 model=self.model,
-                max_tokens=1500,
+                max_tokens=4000,
                 system=self._system_prompt(),
                 messages=[{"role": "user", "content": prompt}],
             ) as stream:
                 for text in stream.text_stream:
+                    if self._stopped:
+                        break
                     self._full_response += text
                     self.chunk_received.emit(text)
             self.finished.emit(self._full_response)

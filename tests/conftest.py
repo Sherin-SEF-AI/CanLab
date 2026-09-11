@@ -13,12 +13,27 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 
 
+# Held for the life of the process: if the application object is collected
+# before the widgets that reference it, Qt crashes during interpreter teardown.
+_QT_APP = None
+
+
 @pytest.fixture(scope="session")
 def qcore():
-    """A QCoreApplication so QThread-based workers can run in tests."""
-    from PyQt6.QtCore import QCoreApplication
-    app = QCoreApplication.instance() or QCoreApplication([])
-    yield app
+    """An application object so QThreads and widgets work in tests.
+
+    A QApplication when the widget layer is available (widgets segfault under a
+    bare QCoreApplication), otherwise a QCoreApplication.
+    """
+    global _QT_APP
+    if _QT_APP is None:
+        try:
+            from PyQt6.QtWidgets import QApplication
+            _QT_APP = QApplication.instance() or QApplication([])
+        except ImportError:
+            from PyQt6.QtCore import QCoreApplication
+            _QT_APP = QCoreApplication.instance() or QCoreApplication([])
+    yield _QT_APP
 
 
 @pytest.fixture

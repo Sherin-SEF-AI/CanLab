@@ -57,11 +57,20 @@ async function tick(){
   const st=await fetch("/status",{headers:h}); if(st.status===401){$("msg").textContent="invalid token";return;}
   const s=await st.json(); $("fc").textContent=s.frame_count; $("cx").textContent=s.connected?"connected":"off"; $("msg").textContent="";
   const fr=await(await fetch("/frames?n=60",{headers:h})).json();
-  $("rows").innerHTML=fr.slice().reverse().map(r=>"<tr>"+cols.map(c=>{
-    let v=r[c]; if(v==null)v="";
-    else if(c==="Timestamp")v=(+v).toFixed(3);
-    else if(c[0]==="B"&&v!=="")v=(+v).toString(16).padStart(2,"0").toUpperCase();
-    return `<td class="${c[0]==='B'?'b':''}">${v}</td>`;}).join("")+"</tr>").join("");
+  const rows=$("rows"); rows.replaceChildren();
+  for(const r of fr.slice().reverse()){
+    const tr=document.createElement("tr");
+    for(const c of cols){
+      let v=r[c]; if(v==null)v="";
+      else if(c==="Timestamp")v=(+v).toFixed(3);
+      else if(c[0]==="B"&&v!=="")v=(+v).toString(16).padStart(2,"0").toUpperCase();
+      const td=document.createElement("td");
+      if(c[0]==="B"&&c!=="Bus")td.className="b";
+      td.textContent=String(v);        // textContent: never parse frame data as HTML
+      tr.appendChild(td);
+    }
+    rows.appendChild(tr);
+  }
  }catch(e){$("msg").textContent=String(e);$("msg").className="err";}
 }
 setInterval(tick,1000); tick();
@@ -97,12 +106,22 @@ def _build_app(state_getter, token: str):
 
     @app.get("/frames", dependencies=auth)
     def get_frames(n: int = 200):
+        import numpy as np
+        import pandas as pd
         state = state_getter()
-        if state.frames_df.empty:
+        frames = state.frames_df
+        if frames.empty:
             return JSONResponse(content=[])
-        n = max(0, min(int(n), len(state.frames_df)))
-        tail = state.frames_df.tail(n)
-        return JSONResponse(content=tail.to_dict(orient="records"))
+        tail = frames.tail(max(0, min(int(n), len(frames))))
+        # Padding bytes are NaN, which is not JSON — encode them as null
+        # instead of returning a 500 for any frame shorter than 8 bytes.
+        clean = tail.astype(object).where(pd.notna(tail), None)
+        records = clean.to_dict(orient="records")
+        for row in records:
+            for key, value in row.items():
+                if isinstance(value, (np.integer, np.floating, np.bool_)):
+                    row[key] = value.item()
+        return JSONResponse(content=records)
 
     @app.get("/signals", dependencies=auth)
     def get_signals():
@@ -168,22 +187,52 @@ class RestAPIServer:
         self.token   = token or secrets.token_urlsafe(24)
         self._server = None
         self._thread = None
+        self._socket = None
 
     def start(self):
+        """Start the server, raising if the port cannot be bound.
+
+        The socket is bound here rather than inside the server thread: a failed
+        bind used to kill that thread silently while the app reported the API
+        as running and handed the user a token for a server that did not exist.
+        """
         app = _build_app(self._state_getter, self.token)
         if app is None:
             raise ImportError("fastapi or uvicorn not installed")
 
+        import socket
+
         import uvicorn
-        config      = uvicorn.Config(app, host=self._host, port=self._port, log_level="error")
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((self._host, self._port))
+            sock.listen(128)
+        except OSError as e:
+            sock.close()
+            raise OSError(
+                f"Cannot bind {self._host}:{self._port} — {e}") from e
+        sock.setblocking(False)
+
+        config = uvicorn.Config(app, log_level="error")
         self._server = uvicorn.Server(config)
+        self._socket = sock
         self._thread = threading.Thread(
-            target=self._server.run, daemon=True, name="canlab-rest-api"
-        )
+            target=self._server.run, kwargs={"sockets": [sock]},
+            daemon=True, name="canlab-rest-api")
         self._thread.start()
 
-    def stop(self):
+    def stop(self, timeout: float = 3.0):
         if self._server:
             self._server.should_exit = True
+        if self._thread is not None:
+            self._thread.join(timeout)
+        if self._socket is not None:
+            try:
+                self._socket.close()
+            except OSError:
+                pass
         self._server = None
         self._thread = None
+        self._socket = None
