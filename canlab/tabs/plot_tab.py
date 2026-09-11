@@ -132,8 +132,10 @@ class PlotTab(QWidget):
             parent.setData(0, Qt.ItemDataRole.UserRole, ("id", can_id, None))
             parent.setCheckState(0, Qt.CheckState.Unchecked)
             parent.setFont(0, mono_font())
+            # Filter once per ID, not once per byte column: this used to run
+            # eight full boolean masks over the whole capture for every ID.
+            id_df = df[df["ID"] == can_id]
             for col in BYTE_COLS:
-                id_df = df[df["ID"] == can_id]
                 if col not in id_df.columns or id_df[col].dropna().empty:
                     continue
                 child = QTreeWidgetItem([col])
