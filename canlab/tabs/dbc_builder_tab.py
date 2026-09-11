@@ -484,10 +484,7 @@ class DBCBuilderTab(QWidget):
         if not self._state.dbc_signals:
             QMessageBox.information(self, "Empty", "No signals to cross-reference.")
             return
-        repo_ctx = None
-        if self._state.repo_info:
-            repo_ctx = {**self._state.repo_info, "readme": self._state.repo_readme}
-        matches = scan(self._state, repo_ctx)
+        matches = scan(self._state)
         self._state.opendbc_matches = matches
         if matches:
             lines = [f"{k} → {v['file']} (msg:{v['msg']})" for k, v in matches.items()]

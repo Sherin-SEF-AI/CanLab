@@ -115,8 +115,6 @@ def _build_app(state_getter, token: str):
         return JSONResponse(content={
             "connected":    state.is_connected,
             "frame_count":  len(state.frames_df),
-            "repo_url":     state.repo_url,
-            "fingerprint":  state.fingerprint,
         })
 
     @app.get("/memory", dependencies=auth)

@@ -255,17 +255,13 @@ _OFFLINE_INDEX = {
 }
 
 
-def scan(state, repo_context: dict = None) -> dict:
+def scan(state) -> dict:
     """
-    Compare state.dbc_signals against offline index + optional repo DBC content.
+    Compare state.dbc_signals against the offline signal-name index.
     Returns {signal_name -> match_info_dict}.
     """
     matches = {}
     index = dict(_OFFLINE_INDEX)
-
-    if repo_context:
-        readme = repo_context.get("readme", "")
-        _enrich_index_from_text(index, readme)
 
     for sig in state.dbc_signals:
         sname = sig.get("signal_name", "")
@@ -278,11 +274,3 @@ def scan(state, repo_context: dict = None) -> dict:
                 break
 
     return matches
-
-
-def _enrich_index_from_text(index: dict, text: str):
-    """Very simple: pull signal names from DBC-style SG_ lines in readme/DBC text."""
-    for m in re.finditer(r"SG_\s+(\w+)\s*:", text):
-        name = m.group(1)
-        if name not in index:
-            index[name] = {"file": "repo", "msg": "?", "id": "?"}

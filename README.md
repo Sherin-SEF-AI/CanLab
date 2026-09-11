@@ -71,7 +71,7 @@ bundled sample log and cycles every tab).
 | 4 | **AI ENGINE** | Send an ID to Anthropic, Groq, or a local Ollama model; offline ML findings are injected into the prompt. Persistent memory across sessions. |
 | 5 | **DBC BUILDER** | Visual signal editor. Import: DBC, ARXML, CAN matrix. Export: DBC, openpilot DBC, CANdb++, ARXML (experimental), Wireshark Lua. |
 | 6 | **CODE GEN** | Generate Python or C parsing code from DBC definitions. |
-| 7 | **INTELLIGENCE** | Cross-ID byte Pearson correlation with lag sweep; embedding similarity; fingerprint. |
+| 7 | **INTELLIGENCE** | Cross-ID byte Pearson correlation with lag sweep; embedding similarity. |
 | 8 | **INJECTION** | Signal inject, fuzzer, trigger rules, replay (loop + scrubber). Gated by ARM TX. |
 | 9 | **DIAGNOSTICS** | UDS scan, ISO-TP, J1939 (incl. DM1 DTCs), OBD-II Mode 01, bus-health monitor. |
 | 10 | **DASHBOARD** | Byte-value heatmap, message timeline, physical overlay gauges. |
@@ -140,9 +140,8 @@ INTELLIGENCE tab / `correlation_engine.py`).
 `core/reference_calibrate.py` searches for the CAN field (ID, byte range,
 endianness) whose values best fit a **physical reference** by least squares, and
 reports scale/offset with an R² **PASS / UNCONFIRMED** verdict. The reference can
-be a CSV of `timestamp,value` (Tools → *Calibrate signal from reference CSV*), or
-a value OCR'd from a dashboard video (`core/vision_reference.py`, needs
-`opencv-python` + `rapidocr`). "Signal unavailable" sentinel codes are masked and
+be a CSV of `timestamp,value` (Tools → *Calibrate signal from reference CSV*).
+"Signal unavailable" sentinel codes are masked and
 the fitted scale is snapped to neat OEM values when that barely changes the decode
 (these two refinements are adapted from CSS Electronics' RE skills — see
 [Acknowledgements](#acknowledgements)).
@@ -241,8 +240,7 @@ every tab.
 - **ARXML export is experimental** and not AUTOSAR-schema-validated.
 - **openpilot rlog import** needs pycapnp + the cereal schema; without it, it
   raises rather than producing data.
-- **MDF4** import needs `asammdf`; **vision OCR** needs `opencv-python` +
-  `rapidocr` + `onnxruntime` (heavy, optional).
+- **MDF4** import needs `asammdf`.
 - CAN FD parsing/decoding is partial in places.
 - No prebuilt binary is offered here — run from source.
 

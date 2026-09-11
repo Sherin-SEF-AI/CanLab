@@ -21,12 +21,7 @@ def save_project(state, path: str):
         zf.writestr("notes.json",   json.dumps(getattr(state, "notes_by_signal", {}), indent=2))
 
         meta = {
-            "repo_url":    state.repo_url,
-            "repo_info":   state.repo_info,
-            "repo_readme": state.repo_readme,
-            "annotations": state.annotations,
             "periodicities": {k: float(v) for k, v in state.periodicities.items()},
-            "fingerprint": state.fingerprint,
         }
         zf.writestr("meta.json", json.dumps(meta, indent=2))
 
@@ -62,18 +57,15 @@ def load_project(state, path: str):
             state.notes_by_signal = json.loads(zf.read("notes.json"))
 
         if "meta.json" in names:
+            # Older archives also carried repo_*/annotations/fingerprint keys
+            # (features since removed); they are ignored.
             meta = json.loads(zf.read("meta.json"))
-            state.repo_url    = meta.get("repo_url", "")
-            state.repo_info   = meta.get("repo_info", {})
-            state.repo_readme = meta.get("repo_readme", "")
-            state.annotations = meta.get("annotations", {})
             state.periodicities = {}
             for k, v in meta.get("periodicities", {}).items():
                 try:
                     state.periodicities[k] = float(v)
                 except (ValueError, TypeError):
                     pass   # skip corrupt entries rather than aborting the load
-            state.fingerprint = meta.get("fingerprint", {})
 
     state.project_path = path
 
@@ -83,6 +75,4 @@ def load_project(state, path: str):
         state.frames_updated.emit()
     if state.dbc_signals:
         state.dbc_updated.emit()
-    if state.repo_info:
-        state.repo_loaded.emit(state.repo_info)
     state.project_loaded.emit()

@@ -15,7 +15,7 @@ def _state():
     st.frames_df = pd.DataFrame([{"Timestamp": 0.0, "ID": "0A6", "Bus": 0, "DLC": 8,
                                   **{f"B{i}": i for i in range(8)}}])
     st.dbc_signals = []; st.ai_memory = []
-    st.is_connected = False; st.repo_url = ""; st.fingerprint = {}
+    st.is_connected = False
     st.can_bus = None
     return st
 

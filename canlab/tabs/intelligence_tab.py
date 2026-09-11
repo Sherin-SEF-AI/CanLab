@@ -1,4 +1,4 @@
-"""INTELLIGENCE tab — auto-DBC, diff, fingerprint, periodicity, opendbc cross-ref."""
+"""INTELLIGENCE tab — auto-DBC, diff, periodicity, opendbc cross-ref, J1939, value lookup."""
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QFileDialog,
@@ -42,18 +42,6 @@ class IntelligenceTab(QWidget):
         ll = QVBoxLayout(left)
         ll.setContentsMargins(6, 6, 6, 6)
         ll.setSpacing(6)
-
-        # Fingerprint
-        fp_grp = QGroupBox("VEHICLE FINGERPRINT")
-        fp_lay = QVBoxLayout(fp_grp)
-        self.btn_fingerprint = QPushButton("Run Fingerprint")
-        self.btn_fingerprint.clicked.connect(self._run_fingerprint)
-        fp_lay.addWidget(self.btn_fingerprint)
-        self.lbl_fingerprint = QLabel("—")
-        self.lbl_fingerprint.setFont(mono_font(8))
-        self.lbl_fingerprint.setWordWrap(True)
-        fp_lay.addWidget(self.lbl_fingerprint)
-        ll.addWidget(fp_grp)
 
         # Periodicity
         per_grp = QGroupBox("SIGNAL PERIODICITY")
@@ -119,21 +107,6 @@ class IntelligenceTab(QWidget):
             coa_lay.addWidget(b)
         coa_lay.addWidget(self.lbl_coa_status)
         ll.addWidget(coa_grp)
-
-        # Community Profiles
-        comm_grp = QGroupBox("COMMUNITY PROFILES")
-        comm_lay = QVBoxLayout(comm_grp)
-        self.btn_comm_fetch   = QPushButton("Fetch Profiles…")
-        self.btn_comm_fetch.clicked.connect(self._comm_fetch)
-        self.btn_comm_apply   = QPushButton("Apply Selected")
-        self.btn_comm_apply.clicked.connect(self._comm_apply)
-        self.lbl_comm_status  = QLabel("—")
-        self.lbl_comm_status.setFont(mono_font(8))
-        self.lbl_comm_status.setObjectName("label_dim")
-        comm_lay.addWidget(self.btn_comm_fetch)
-        comm_lay.addWidget(self.btn_comm_apply)
-        comm_lay.addWidget(self.lbl_comm_status)
-        ll.addWidget(comm_grp)
 
         # J1939 Decoder
         j1939_grp = QGroupBox("J1939 PGN DECODER")
@@ -228,18 +201,6 @@ class IntelligenceTab(QWidget):
         rl.addWidget(QLabel("CHANGE DELTA", font=mono_font(8)))
         rl.addWidget(self.delta_table)
 
-        # Community profiles list
-        self.comm_list = QTableWidget(0, 3)
-        self.comm_list.setHorizontalHeaderLabels(["ID", "Vehicle", "Notes"])
-        self.comm_list.setFont(mono_font())
-        self.comm_list.verticalHeader().setVisible(False)
-        self.comm_list.verticalHeader().setDefaultSectionSize(20)
-        self.comm_list.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.comm_list.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.comm_list.setMaximumHeight(140)
-        rl.addWidget(QLabel("COMMUNITY PROFILES", font=mono_font(8)))
-        rl.addWidget(self.comm_list)
-
         # J1939 table
         self.j1939_table = QTableWidget(0, 6)
         self.j1939_table.setHorizontalHeaderLabels(
@@ -271,43 +232,6 @@ class IntelligenceTab(QWidget):
         splitter.setSizes([240, 760])
         outer.addWidget(splitter)
         self._change_recorder = None
-
-    # ── Fingerprint ───────────────────────────────────────────────────────────
-
-    def _run_fingerprint(self):
-        from core.fingerprint import fingerprint_vehicle
-        ids = set(self._state.get_unique_ids())
-        if not ids:
-            self.lbl_fingerprint.setText("No frames loaded.")
-            return
-        # Build DLC map from frames
-        df = self._state.frames_df
-        dlc_map = {}
-        if not df.empty and "DLC" in df.columns:
-            dlc_map = df.groupby("ID")["DLC"].median().astype(int).to_dict()
-
-        result = fingerprint_vehicle(ids, self._state.periodicities, dlc_map)
-        self._state.fingerprint = result
-        conf_pct = int(result["confidence"] * 100)
-        quality  = result.get("quality", "")
-        detail   = result.get("score_detail", {})
-        color = COLORS["green"] if result["confidence"] >= 0.75 else COLORS["amber"]
-        top3_txt = "\n".join(
-            f"  {i+1}. {c['model']}  {int(c['confidence']*100)}%"
-            for i, c in enumerate(result.get("top3", [result])[:3])
-        )
-        self.lbl_fingerprint.setText(
-            f"{result['model']}\n"
-            f"Confidence: {conf_pct}%  [{quality}]\n"
-            f"ID: {detail.get('id_coverage',0):.0%}  "
-            f"Period: {detail.get('period',0):.0%}  "
-            f"DLC: {detail.get('dlc',0):.0%}\n"
-            f"Matched: {', '.join(result['matched_ids'])}\n"
-            f"Missing: {', '.join(result['missing_ids']) or 'none'}\n"
-            f"Top 3:\n{top3_txt}"
-        )
-        self.lbl_fingerprint.setStyleSheet(f"color:{color}")
-        self._state.fingerprint_matched.emit(result)
 
     # ── Periodicity ───────────────────────────────────────────────────────────
 
@@ -401,10 +325,7 @@ class IntelligenceTab(QWidget):
         if not self._state.dbc_signals:
             self.xref_text.setPlainText("No signals in DBC Builder yet.")
             return
-        repo_ctx = None
-        if self._state.repo_info:
-            repo_ctx = {**self._state.repo_info, "readme": self._state.repo_readme}
-        matches = scan(self._state, repo_ctx)
+        matches = scan(self._state)
         self._state.opendbc_matches = matches
         if not matches:
             self.xref_text.setPlainText("No matches found against opendbc index.")
@@ -417,7 +338,6 @@ class IntelligenceTab(QWidget):
                 f"msg:{info['msg']}  id:{info['id']}"
             )
         self.xref_text.setPlainText("\n".join(lines))
-        self._state.opendbc_matched.emit(matches)
 
     # ── Change-on-Action ──────────────────────────────────────────────────────
 
@@ -487,51 +407,6 @@ class IntelligenceTab(QWidget):
         self.delta_table.setRowCount(0)
         self.lbl_coa_status.setText("—")
         self.lbl_coa_status.setStyleSheet("")
-
-    # ── Community Profiles ────────────────────────────────────────────────────
-
-    def _comm_fetch(self):
-        from core.community_sync import CommunitySyncWorker
-        url = getattr(self._state, "community_profiles_url", "")
-        if not url:
-            QMessageBox.information(self, "No URL",
-                "Set a Community Profiles URL in Settings → GITHUB.")
-            return
-        self._comm_worker = CommunitySyncWorker(url)
-        self._comm_worker.profiles_ready.connect(self._on_profiles_ready)
-        self._comm_worker.error.connect(
-            lambda e: self.lbl_comm_status.setText(f"Error: {e}")
-        )
-        self._comm_worker.progress.connect(self.lbl_comm_status.setText)
-        self._comm_worker.start()
-
-    def _on_profiles_ready(self, profiles: list):
-        self._state.community_profiles = profiles
-        self.comm_list.setRowCount(len(profiles))
-        for row, p in enumerate(profiles):
-            cells = [
-                p.get("id", "?"),
-                p.get("vehicle", "?"),
-                p.get("notes", ""),
-            ]
-            for ci, txt in enumerate(cells):
-                item = QTableWidgetItem(txt)
-                item.setFont(mono_font())
-                self.comm_list.setItem(row, ci, item)
-        self.lbl_comm_status.setText(f"{len(profiles)} profile(s) loaded")
-        self.lbl_comm_status.setStyleSheet(f"color:{COLORS['green']}")
-
-    def _comm_apply(self):
-        row = self.comm_list.currentRow()
-        if row < 0 or row >= len(self._state.community_profiles):
-            QMessageBox.information(self, "No Selection",
-                                    "Select a profile row first.")
-            return
-        profile = self._state.community_profiles[row]
-        from core.community_sync import CommunitySyncWorker
-        added = CommunitySyncWorker.apply_profile(self._state, profile)
-        QMessageBox.information(self, "Applied",
-            f"Profile '{profile.get('vehicle','?')}' applied — {added} signals added.")
 
     # ── J1939 ─────────────────────────────────────────────────────────────────
 

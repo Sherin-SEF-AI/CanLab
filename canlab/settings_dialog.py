@@ -11,7 +11,6 @@ from theme import COLORS, mono_font
 
 KEYRING_SERVICE    = "canlab"
 KEYRING_API_KEY    = "anthropic_api_key"
-KEYRING_GH_TOKEN   = "github_token"
 KEYRING_GROQ_KEY   = "groq_api_key"
 KEYRING_AI_PROVIDER = "ai_provider"
 KEYRING_AI_MODEL    = "ai_model"
@@ -47,17 +46,6 @@ def save_api_key(key: str):
 def load_api_key() -> str:
     try:
         return keyring.get_password(KEYRING_SERVICE, KEYRING_API_KEY) or ""
-    except Exception:
-        return ""
-
-
-def save_gh_token(token: str):
-    keyring.set_password(KEYRING_SERVICE, KEYRING_GH_TOKEN, token)
-
-
-def load_gh_token() -> str:
-    try:
-        return keyring.get_password(KEYRING_SERVICE, KEYRING_GH_TOKEN) or ""
     except Exception:
         return ""
 
@@ -203,74 +191,6 @@ class SettingsDialog(QDialog):
         can_lay.addStretch()
         tabs.addTab(can_tab, "CAN INTERFACE")
 
-        # ── GitHub ────────────────────────────────────────────────────────────
-        gh_tab = QWidget()
-        gh_lay = QVBoxLayout(gh_tab)
-        gh_grp = QGroupBox("GitHub Repository")
-        gh_g_lay = QGridLayout(gh_grp)
-        gh_g_lay.addWidget(QLabel("Default Repo URL:"), 0, 0)
-        self.gh_url_edit = QLineEdit()
-        self.gh_url_edit.setPlaceholderText("https://github.com/owner/repo")
-        gh_g_lay.addWidget(self.gh_url_edit, 0, 1)
-        gh_lay.addWidget(gh_grp)
-        token_grp = QGroupBox("GitHub Token")
-        token_g_lay = QGridLayout(token_grp)
-        token_g_lay.addWidget(QLabel("Token:"), 0, 0)
-        self.gh_token_edit = QLineEdit()
-        self.gh_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.gh_token_edit.setPlaceholderText("ghp_… (optional)")
-        token_g_lay.addWidget(self.gh_token_edit, 0, 1)
-        btn_show_tok = QPushButton("Show")
-        btn_show_tok.setCheckable(True)
-        btn_show_tok.toggled.connect(lambda v: self.gh_token_edit.setEchoMode(
-            QLineEdit.EchoMode.Normal if v else QLineEdit.EchoMode.Password
-        ))
-        token_g_lay.addWidget(btn_show_tok, 0, 2)
-        hint = QLabel(
-            "A token raises GitHub API rate limit from 60 to 5000 req/hr."
-        )
-        hint.setFont(mono_font(8))
-        hint.setObjectName("label_dim")
-        hint.setWordWrap(True)
-        token_g_lay.addWidget(hint, 1, 0, 1, 3)
-        gh_lay.addWidget(token_grp)
-
-        comm_grp = QGroupBox("Community Profiles")
-        comm_g_lay = QGridLayout(comm_grp)
-        comm_g_lay.addWidget(QLabel("Profiles URL:"), 0, 0)
-        self.community_url_edit = QLineEdit()
-        self.community_url_edit.setPlaceholderText(
-            "https://raw.githubusercontent.com/.../profiles.json"
-        )
-        comm_g_lay.addWidget(self.community_url_edit, 0, 1)
-        hint_comm = QLabel("JSON array of vehicle profiles. Leave blank to use built-in defaults.")
-        hint_comm.setFont(mono_font(8))
-        hint_comm.setObjectName("label_dim")
-        hint_comm.setWordWrap(True)
-        comm_g_lay.addWidget(hint_comm, 1, 0, 1, 2)
-        gh_lay.addWidget(comm_grp)
-        gh_lay.addStretch()
-        tabs.addTab(gh_tab, "GITHUB")
-
-        # ── Cache ─────────────────────────────────────────────────────────────
-        cache_tab = QWidget()
-        cache_lay = QVBoxLayout(cache_tab)
-        cache_grp = QGroupBox("Cache")
-        cache_g_lay = QGridLayout(cache_grp)
-        default_cache = str(Path.home() / ".canlab" / "cache")
-        cache_g_lay.addWidget(QLabel("Cache Dir:"), 0, 0)
-        self.cache_dir_edit = QLineEdit(default_cache)
-        cache_g_lay.addWidget(self.cache_dir_edit, 0, 1)
-        btn_browse = QPushButton("Browse")
-        btn_browse.clicked.connect(self._browse_cache)
-        cache_g_lay.addWidget(btn_browse, 0, 2)
-        btn_clear = QPushButton("Clear Cache")
-        btn_clear.clicked.connect(self._clear_cache)
-        cache_g_lay.addWidget(btn_clear, 1, 1)
-        cache_lay.addWidget(cache_grp)
-        cache_lay.addStretch()
-        tabs.addTab(cache_tab, "CACHE")
-
         # ── REST API ──────────────────────────────────────────────────────────
         rest_tab = QWidget()
         rest_lay = QVBoxLayout(rest_tab)
@@ -387,7 +307,6 @@ class SettingsDialog(QDialog):
 
     def _load_values(self):
         self.api_key_edit.setText(load_api_key())
-        self.gh_token_edit.setText(load_gh_token())
         self.groq_key_edit.setText(load_groq_key())
 
         # Restore saved provider + model
@@ -401,12 +320,8 @@ class SettingsDialog(QDialog):
         if midx >= 0:
             self.model_combo.setCurrentIndex(midx)
 
-        # Community URL default
         from core.state import get_state
         state = get_state()
-        self.community_url_edit.setText(
-            getattr(state, "community_profiles_url", "")
-        )
         # Backend
         backend = getattr(state, "active_backend", "python-can")
         self.radio_panda.setChecked(backend == "panda")
@@ -417,11 +332,9 @@ class SettingsDialog(QDialog):
 
     def _save(self):
         api_key  = self.api_key_edit.text().strip()
-        gh_token = self.gh_token_edit.text().strip()
         groq_key = self.groq_key_edit.text().strip()
         if api_key:
             save_api_key(api_key)
-        save_gh_token(gh_token)
         if groq_key:
             save_groq_key(groq_key)
         save_ai_provider(self.provider_combo.currentText())
@@ -430,29 +343,12 @@ class SettingsDialog(QDialog):
         # Persist new settings to AppState
         from core.state import get_state
         state = get_state()
-        comm_url = self.community_url_edit.text().strip()
-        if comm_url:
-            state.community_profiles_url = comm_url
-
         state.active_backend = "panda" if self.radio_panda.isChecked() else "python-can"
         state.panda_safety_model = self.panda_safety_combo.currentText()
         state.canfd_enabled  = self.chk_canfd.isChecked()
         state.canfd_toggled.emit(state.canfd_enabled)
 
         self.accept()
-
-    def _browse_cache(self):
-        path = QFileDialog.getExistingDirectory(self, "Select Cache Directory")
-        if path:
-            self.cache_dir_edit.setText(path)
-
-    def _clear_cache(self):
-        import shutil
-        cache = Path(self.cache_dir_edit.text())
-        if cache.exists():
-            shutil.rmtree(cache)
-            cache.mkdir(parents=True, exist_ok=True)
-            QMessageBox.information(self, "Cleared", "Cache cleared.")
 
     def _refresh_plugins(self):
         from core.plugin_loader import discover_plugins
@@ -497,9 +393,6 @@ class SettingsDialog(QDialog):
     def get_api_key(self) -> str:
         return self.api_key_edit.text().strip()
 
-    def get_gh_token(self) -> str:
-        return self.gh_token_edit.text().strip()
-
     def get_can_settings(self) -> dict:
         return {
             "interface":   self.iface_combo.currentText(),
@@ -508,9 +401,6 @@ class SettingsDialog(QDialog):
             "fd":          self.chk_canfd.isChecked(),
             "data_bitrate": int(self.fd_bitrate_combo.currentText()),
         }
-
-    def get_github_url(self) -> str:
-        return self.gh_url_edit.text().strip()
 
     def get_rest_api_port(self) -> int:
         return self.rest_port_spin.value()

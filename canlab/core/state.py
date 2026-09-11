@@ -10,16 +10,13 @@ class AppState(QObject):
     can_connected     = pyqtSignal(bool)
     frames_updated    = pyqtSignal()
     source_added      = pyqtSignal(str, int)
-    repo_loaded       = pyqtSignal(dict)
 
     # New signals for advanced features
     project_loaded      = pyqtSignal()
-    fingerprint_matched = pyqtSignal(dict)
     trigger_fired       = pyqtSignal(dict, object)   # rule, frame
     uds_response        = pyqtSignal(int, bytes)     # arb_id, data
     replay_tick         = pyqtSignal(int, int)       # current, total
     bus_load_update     = pyqtSignal(float)          # 0.0–1.0
-    opendbc_matched     = pyqtSignal(dict)
     anomaly_requested   = pyqtSignal(str, object)    # hex_id, frames_df
 
     # ── New signals for 12-feature additions ──────────────────────────────────
@@ -56,17 +53,10 @@ class AppState(QObject):
         self.analyzed_ids:     dict         = {}
         self.live_frame_count: int          = 0
         self.frame_rate:       float        = 0.0
-        self.annotations:      dict         = {}
-
-        # GitHub repo context
-        self.repo_info:        dict         = {}
-        self.repo_readme:      str          = ""
-        self.repo_url:         str          = ""
 
         # Advanced feature state
         self.diff_baseline_df: pd.DataFrame = pd.DataFrame()
         self.periodicities:    dict         = {}   # id -> cycle_time_ms
-        self.fingerprint:      dict         = {}   # model, confidence, matched_ids
         self.ai_memory:        list         = []   # list of prior AI conclusions
         self.opendbc_matches:  dict         = {}   # sig_name -> opendbc path
         self.project_path:     str          = ""
@@ -84,11 +74,6 @@ class AppState(QObject):
         self.fuzz_running:      bool         = False
         self.active_backend:    str          = "python-can"
         self.panda_safety_model: str         = "SAFETY_NOOUTPUT"
-        self.community_profiles: list        = []
-        self.community_profiles_url: str     = (
-            "https://raw.githubusercontent.com/commaai/opendbc/master/"
-            "opendbc/can/hyundai_kona.dbc"
-        )
 
         # ── New fields for 8 production enhancements ──────────────────────────
         self.dbc_db              = None        # cached cantools.database.Database
@@ -125,12 +110,6 @@ class AppState(QObject):
         else:
             self.frames_df = pd.concat([self.frames_df, new_df], ignore_index=True)
         self.frames_updated.emit()
-
-    def set_repo_context(self, info: dict, readme: str, url: str):
-        self.repo_info   = info
-        self.repo_readme = readme
-        self.repo_url    = url
-        self.repo_loaded.emit(info)
 
     def add_dbc_signal(self, signal_def: dict):
         self.dbc_signals.append(signal_def)

@@ -12,7 +12,6 @@ from PyQt6.QtGui import QFont, QColor, QAction
 from theme import COLORS, mono_font
 from core.state import get_state
 from core.log_parser import parse_log_file
-from core.event_correlator import parse_annotations, correlate_events
 from core.dbc_manager import load_dbc
 from core.bus_load import BusLoadMeter
 from panels.id_panel import IDPanel
@@ -34,7 +33,7 @@ from tabs.signal_intelligence_tab import SignalIntelligenceTab
 from tabs.gateway_tab import GatewayTab
 from ui.animations import PulsingDot, CountUpLabel
 from settings_dialog import (
-    SettingsDialog, load_api_key, load_gh_token,
+    SettingsDialog, load_api_key,
     load_groq_key, load_ai_provider, load_ai_model,
 )
 
@@ -132,7 +131,6 @@ class MainWindow(QMainWindow):
         self._live_worker  = None
         self._can_settings = {"interface": "socketcan", "channel": "can0", "bitrate": 500000}
         self._api_key      = load_api_key()
-        self._gh_token     = load_gh_token()
         self._frame_rate_timer = QTimer()
         self._live_frame_count = 0
         self._live_rows: list  = []
@@ -183,43 +181,6 @@ class MainWindow(QMainWindow):
         act("Open Project",     self._open_project,        "Open .canlab project")
         act("Export openpilot", self._export_openpilot_dbc,"Export openpilot DBC")
         act("Export Lua",       self._export_lua,          "Export Wireshark Lua dissector")
-        act("Community Sync",   self._sync_community,      "Sync community vehicle profiles")
-        tb.addSeparator()
-
-        # GitHub
-        lbl_gh = QLabel("  GitHub:")
-        lbl_gh.setFont(mono_font(8))
-        lbl_gh.setStyleSheet(f"color:{COLORS['dim']}")
-        tb.addWidget(lbl_gh)
-
-        self.gh_url_edit = QLineEdit()
-        self.gh_url_edit.setPlaceholderText("https://github.com/owner/repo")
-        self.gh_url_edit.setFixedWidth(300)
-        self.gh_url_edit.setFont(mono_font(8))
-        self.gh_url_edit.setStyleSheet(
-            f"QLineEdit {{ background:{COLORS['panel_bg']}; color:{COLORS['text']}; "
-            f"border:1px solid {COLORS['border']}; border-radius:2px; padding:1px 4px; }}"
-            f"QLineEdit:focus {{ border-color:{COLORS['green']}; }}"
-        )
-        self.gh_url_edit.returnPressed.connect(self._fetch_github)
-        tb.addWidget(self.gh_url_edit)
-
-        btn_fetch = QPushButton("Fetch")
-        btn_fetch.setFixedWidth(48)
-        btn_fetch.setFixedHeight(22)
-        btn_fetch.setFont(mono_font(8))
-        btn_fetch.setStyleSheet(
-            f"QPushButton {{ background:{COLORS['panel_bg']}; color:{COLORS['green']}; "
-            f"border:1px solid {COLORS['green']}; border-radius:2px; padding:1px 4px; }}"
-            f"QPushButton:hover {{ background:#003a1f; }}"
-        )
-        btn_fetch.clicked.connect(self._fetch_github)
-        tb.addWidget(btn_fetch)
-
-        self.lbl_repo_status = QLabel("  no repo")
-        self.lbl_repo_status.setFont(mono_font(8))
-        self.lbl_repo_status.setStyleSheet(f"color:{COLORS['dim']}")
-        tb.addWidget(self.lbl_repo_status)
         tb.addSeparator()
 
         # CAN
@@ -286,9 +247,8 @@ class MainWindow(QMainWindow):
         a = QAction("Import ARXML…", self)
         a.triggered.connect(lambda: self.dbc_tab._import_arxml())
         file_menu.addAction(a)
-        file_menu.addSeparator()
-        a = QAction("Community Sync…", self)
-        a.triggered.connect(self._sync_community)
+        a = QAction("Import DBC…", self)
+        a.triggered.connect(self._import_dbc)
         file_menu.addAction(a)
 
         # Tools menu
@@ -382,18 +342,6 @@ class MainWindow(QMainWindow):
         self.lbl_connection.setFont(mono_font(8))
         self.lbl_connection.setStyleSheet(f"color:{COLORS['dim']}")
         sb.addWidget(self.lbl_connection)
-        sb.addWidget(_sep())
-
-        self.lbl_repo_sb = QLabel("REPO: none")
-        self.lbl_repo_sb.setFont(mono_font(8))
-        self.lbl_repo_sb.setStyleSheet(f"color:{COLORS['dim']}")
-        sb.addWidget(self.lbl_repo_sb)
-        sb.addWidget(_sep())
-
-        self.lbl_fingerprint_sb = QLabel("FP: —")
-        self.lbl_fingerprint_sb.setFont(mono_font(8))
-        self.lbl_fingerprint_sb.setStyleSheet(f"color:{COLORS['dim']}")
-        sb.addWidget(self.lbl_fingerprint_sb)
 
         # Bus load bar (right side)
         self.load_bar = QProgressBar()
@@ -430,8 +378,6 @@ class MainWindow(QMainWindow):
         self._state.id_selected.connect(self._on_id_selected)
         self._state.frames_loaded.connect(self._on_frames_loaded)
         self._state.can_connected.connect(self._on_can_status)
-        self._state.repo_loaded.connect(self._on_repo_loaded)
-        self._state.fingerprint_matched.connect(self._on_fingerprint)
         self._state.bus_load_update.connect(self._on_bus_load_update)
         self.id_panel.analyze_requested.connect(self._analyze_id)
         self.id_panel.plot_requested.connect(self._plot_id)
@@ -456,9 +402,15 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Empty", "No frames found in file.")
                 return
             self._state.load_frames(df, os.path.basename(path))
-            self._correlate_annotations(df)
         except Exception as e:
             QMessageBox.critical(self, "Parse Error", str(e))
+
+    def _import_dbc(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import DBC", "", "DBC (*.dbc);;All Files (*)"
+        )
+        if path:
+            self._load_dbc_file(path)
 
     def _load_dbc_file(self, path: str):
         try:
@@ -503,96 +455,6 @@ class MainWindow(QMainWindow):
             self.lbl_total_frames.animate_to(len(self._state.frames_df))
         except Exception as e:
             QMessageBox.critical(self, "Load Error", str(e))
-
-    # ── GitHub fetch ──────────────────────────────────────────────────────────
-
-    def _fetch_github(self):
-        from core.github_fetcher import GitHubRepoDialog
-        url = self.gh_url_edit.text().strip()
-        dlg = GitHubRepoDialog(
-            initial_url=url,
-            token=self._gh_token,
-            parent=self,
-        )
-        dlg.logs_ready.connect(self._on_github_logs_ready)
-        dlg.dbcs_ready.connect(self._on_github_dbcs_ready)
-        dlg.readme_ready.connect(self._on_github_readme)
-        dlg.repo_meta_ready.connect(self._on_repo_meta)
-        dlg.exec()
-
-    def _on_github_logs_ready(self, paths: list):
-        loaded = 0
-        for path in paths:
-            try:
-                self._load_log_file(path)
-                loaded += 1
-            except Exception as e:
-                self.statusBar().showMessage(
-                    f"Could not load {os.path.basename(path)}: {e}", 5000
-                )
-        if loaded:
-            self.statusBar().showMessage(f"Loaded {loaded} log file(s) from repo.", 4000)
-
-    def _on_github_dbcs_ready(self, paths: list):
-        loaded = 0
-        for path in paths:
-            try:
-                self._load_dbc_file(path)
-                loaded += 1
-            except Exception as e:
-                self.statusBar().showMessage(
-                    f"Could not import {os.path.basename(path)}: {e}", 5000
-                )
-        if loaded:
-            self.statusBar().showMessage(f"Imported {loaded} DBC file(s) from repo.", 4000)
-
-    def _on_github_readme(self, readme: str):
-        self._state.repo_readme = readme
-        events = parse_annotations(readme)
-        self._pending_events = events
-        if not self._state.frames_df.empty:
-            self._correlate_with_events(self._state.frames_df, events)
-
-    def _on_repo_meta(self, info: dict):
-        self._state.set_repo_context(
-            info=info,
-            readme=self._state.repo_readme,
-            url=self.gh_url_edit.text().strip(),
-        )
-
-    def _on_repo_loaded(self, info: dict):
-        name = f"{info.get('owner','')}/{info.get('repo','')}"
-        self.lbl_repo_status.setText(f"  {name}")
-        self.lbl_repo_status.setStyleSheet(f"color:{COLORS['green']}")
-        self.lbl_repo_sb.setText(f"REPO: {name}")
-        self.lbl_repo_sb.setStyleSheet(f"color:{COLORS['green']}")
-        self.setWindowTitle(
-            f"CANLAB — {name}  ({info.get('description','')})"
-        )
-
-    def _on_fingerprint(self, result: dict):
-        model = result.get("model", "?")
-        conf  = int(result.get("confidence", 0) * 100)
-        self.lbl_fingerprint_sb.setText(f"FP: {model} ({conf}%)")
-        self.lbl_fingerprint_sb.setStyleSheet(f"color:{COLORS['green']}")
-
-    # ── Annotation correlation ────────────────────────────────────────────────
-
-    def _correlate_annotations(self, df: pd.DataFrame):
-        events = getattr(self, "_pending_events", [])
-        if events and not df.empty:
-            self._correlate_with_events(df, events)
-
-    def _correlate_with_events(self, df: pd.DataFrame, events: list):
-        if not events or df.empty:
-            return
-        correlations = correlate_events(df, events)
-        self._state.annotations = correlations
-        total_ids = sum(len(v) for v in correlations.values())
-        if correlations:
-            self.statusBar().showMessage(
-                f"Correlated {len(correlations)} events across {total_ids} IDs", 5000
-            )
 
     # ── CAN live ──────────────────────────────────────────────────────────────
 
@@ -939,7 +801,6 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self)
         if dlg.exec():
             self._api_key      = dlg.get_api_key()
-            self._gh_token     = dlg.get_gh_token()
             self._can_settings = dlg.get_can_settings()
             self._state.rest_api_port = dlg.get_rest_api_port()
             self.ai_tab.set_api_key(self._api_key)
@@ -949,9 +810,6 @@ class MainWindow(QMainWindow):
                 groq_key=dlg.get_groq_key(),
                 api_key=self._api_key,
             )
-            gh_url = dlg.get_github_url()
-            if gh_url and not self.gh_url_edit.text().strip():
-                self.gh_url_edit.setText(gh_url)
             self._multibus_config = dlg.get_multibus_config()
 
     def _open_rlog(self):
@@ -1020,17 +878,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Import Error", str(e))
 
-    def _sync_community(self):
-        url = getattr(self._state, "community_profiles_url", "")
-        if not url:
-            QMessageBox.information(
-                self, "No URL",
-                "Set a Community Profiles URL in Settings → GITHUB."
-            )
-            return
-        self.tabs.setCurrentIndex(6)   # INTELLIGENCE tab
-        self.intelligence_tab._comm_fetch()
-
     def _analyze_id(self, hex_id: str):
         self.tabs.setCurrentIndex(3)
         self.ai_tab.queue_id(hex_id)
@@ -1047,9 +894,6 @@ class MainWindow(QMainWindow):
 
     def _on_frames_loaded(self, count: int):
         self.lbl_total_frames.animate_to(count)
-        events = getattr(self, "_pending_events", [])
-        if events and not self._state.frames_df.empty:
-            self._correlate_with_events(self._state.frames_df, events)
 
     def _on_can_status(self, connected: bool):
         self._can_dot.set_active(connected)

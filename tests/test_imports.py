@@ -18,7 +18,7 @@ MODULES = [
     "settings_dialog",
     "core.canid", "core.safety", "core.isotp", "core.uds", "core.rest_api",
     "core.gateway", "core.replay", "core.fuzzer", "core.injection",
-    "core.plugin_loader", "core.community_sync", "core.bus_health",
+    "core.plugin_loader", "core.bus_health",
     "tabs.frames_tab", "tabs.signals_tab", "tabs.plot_tab", "tabs.ai_engine_tab",
     "tabs.dbc_builder_tab", "tabs.code_gen_tab", "tabs.intelligence_tab",
     "tabs.injection_tab", "tabs.diagnostics_tab", "tabs.dashboard_tab",

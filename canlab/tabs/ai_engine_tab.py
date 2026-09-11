@@ -30,7 +30,6 @@ class AIEngineTab(QWidget):
         self._queue:     list  = []
         self._worker     = None
         self._current_id = ""
-        self._event_correlations: list = []
         self._nl_worker  = None
         self._btn_pulse  = None   # ButtonPulse — set after _build_ui
         self._tw_cursor  = None   # TypewriterCursor — set after _build_ui
@@ -39,7 +38,6 @@ class AIEngineTab(QWidget):
         self._btn_pulse = ButtonPulse(self.btn_analyze)
         self._tw_cursor = TypewriterCursor(self.response_text)
         self._state.id_selected.connect(self._load_id)
-        self._state.repo_loaded.connect(self._on_repo_loaded)
         self._state.anomaly_requested.connect(self._on_anomaly_requested)
         # Load persisted memory
         from core.ai_memory import load_memory
@@ -82,12 +80,6 @@ class AIEngineTab(QWidget):
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(4, 4, 4, 4)
         left_lay.setSpacing(4)
-
-        self.lbl_repo_badge = QLabel("No repo loaded")
-        self.lbl_repo_badge.setFont(mono_font(8))
-        self.lbl_repo_badge.setObjectName("label_dim")
-        self.lbl_repo_badge.setWordWrap(True)
-        left_lay.addWidget(self.lbl_repo_badge)
 
         self.lbl_provider_badge = QLabel("AI: Anthropic / claude-sonnet-4-6")
         self.lbl_provider_badge.setFont(mono_font(7))
@@ -169,16 +161,6 @@ class AIEngineTab(QWidget):
         self.lbl_stats.setFont(mono_font(8))
         ws_lay.addWidget(self.lbl_stats)
 
-        self.repo_grp = QGroupBox("REPO CONTEXT")
-        repo_lay = QVBoxLayout(self.repo_grp)
-        repo_lay.setContentsMargins(4, 4, 4, 4)
-        self.lbl_repo_info = QLabel("No GitHub repo loaded.")
-        self.lbl_repo_info.setFont(mono_font(8))
-        self.lbl_repo_info.setObjectName("label_dim")
-        self.lbl_repo_info.setWordWrap(True)
-        repo_lay.addWidget(self.lbl_repo_info)
-        ws_lay.addWidget(self.repo_grp)
-
         self.raw_preview = QTextEdit()
         self.raw_preview.setReadOnly(True)
         self.raw_preview.setMaximumHeight(110)
@@ -217,12 +199,6 @@ class AIEngineTab(QWidget):
         self._spinner.hide()
         analyze_row.addWidget(self._spinner)
         ws_lay.addLayout(analyze_row)
-
-        self.lbl_events = QLabel("")
-        self.lbl_events.setObjectName("label_amber")
-        self.lbl_events.setFont(mono_font(8))
-        self.lbl_events.setWordWrap(True)
-        ws_lay.addWidget(self.lbl_events)
 
         right_splitter.addWidget(workspace)
 
@@ -324,24 +300,6 @@ class AIEngineTab(QWidget):
         splitter.setSizes([210, 790])
         layout.addWidget(splitter)
 
-    # ── Repo context ──────────────────────────────────────────────────────────
-
-    def _on_repo_loaded(self, info: dict):
-        owner = info.get("owner", "")
-        repo  = info.get("repo", "")
-        desc  = info.get("description", "")
-        name  = f"{owner}/{repo}" if owner else repo
-        self.lbl_repo_badge.setText(f"REPO: {name}")
-        self.lbl_repo_badge.setStyleSheet(f"color:{COLORS['green']}")
-        readme = self._state.repo_readme
-        from core.event_correlator import parse_annotations
-        n_events = len(parse_annotations(readme))
-        self.lbl_repo_info.setText(
-            f"{name}  —  {desc}\n"
-            f"README: {'yes' if readme else 'no'}  |  Events: {n_events}"
-        )
-        self.lbl_repo_info.setStyleSheet(f"color:{COLORS['green']}")
-
     # ── Queue management ──────────────────────────────────────────────────────
 
     def queue_id(self, hex_id: str):
@@ -432,16 +390,6 @@ class AIEngineTab(QWidget):
             t = t - t[0]
             y = s.values.astype(float) + i * 30
             self.sparkline_widget.plot(t, y, pen=pg.mkPen(color=color, width=1))
-        ann = self._state.annotations
-        if ann:
-            corr = [lbl for lbl, ids in ann.items() if hex_id in ids]
-            if corr:
-                self._event_correlations = corr
-                self.lbl_events.setText("Events: " + " | ".join(corr[:4]))
-                self.context_input.setPlainText("; ".join(corr[:3]))
-                return
-        self._event_correlations = []
-        self.lbl_events.setText("")
 
     # ── Anomaly ───────────────────────────────────────────────────────────────
 
@@ -553,11 +501,6 @@ class AIEngineTab(QWidget):
         # Build ML pre-analysis to supercharge the prompt
         ml_insights = self._build_ml_insights(frames)
 
-        repo_ctx = None
-        if self._state.repo_info:
-            repo_ctx = dict(self._state.repo_info)
-            repo_ctx["readme"] = self._state.repo_readme
-
         self.response_text.setPlainText("")
         self.btn_analyze.setEnabled(False)
         self.btn_accept_dbc.setEnabled(False)
@@ -572,8 +515,6 @@ class AIEngineTab(QWidget):
             id_hex=self._current_id,
             frames_df=frames,
             context=context,
-            event_correlations=self._event_correlations,
-            repo_context=repo_ctx,
             provider=self._provider,
             model=self._model,
             groq_key=self._groq_key,
@@ -707,26 +648,14 @@ class AIEngineTab(QWidget):
         if mem_ctx:
             summary_lines.append(mem_ctx)
 
-        if self._state.annotations:
-            summary_lines.append("\n=== Annotated Events ===")
-            for event, ids in list(self._state.annotations.items())[:10]:
-                summary_lines.append(f"{event}: IDs {ids}")
-
         context_text = "\n".join(summary_lines)
 
         # Reuse AIWorker with a dummy id_hex
-        repo_ctx = None
-        if self._state.repo_info:
-            repo_ctx = dict(self._state.repo_info)
-            repo_ctx["readme"] = self._state.repo_readme
-
         self._nl_worker = AIWorker(
             api_key=self._api_key,
             id_hex="NL_QUERY",
             frames_df=pd.DataFrame(),
             context=context_text,
-            event_correlations=[],
-            repo_context=repo_ctx,
             provider=self._provider,
             model=self._model,
             groq_key=self._groq_key,

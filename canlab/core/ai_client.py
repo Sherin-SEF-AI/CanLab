@@ -27,24 +27,10 @@ def build_prompt(
     id_hex: str,
     frames_df: pd.DataFrame,
     context: str = "",
-    event_correlations: list = None,
-    repo_context: dict = None,
     ml_insights: str = "",
 ) -> str:
     lines = [f"CAN ID: 0x{id_hex}  ({int(id_hex, 16)} decimal)"]
     lines.append(f"Frame count: {len(frames_df)}")
-
-    # Repo context block — gives Claude vehicle/project knowledge
-    if repo_context:
-        repo_name = repo_context.get("repo", "")
-        repo_desc = repo_context.get("description", "")
-        readme_snippet = repo_context.get("readme_snippet", "")
-        if repo_name:
-            lines.append(f"\nSource repository: {repo_context.get('owner','')}/{repo_name}")
-        if repo_desc:
-            lines.append(f"Repo description: {repo_desc}")
-        if readme_snippet:
-            lines.append(f"\nRepository notes (README excerpt):\n{readme_snippet}")
 
     if not frames_df.empty:
         total_time = frames_df["Timestamp"].iloc[-1] - frames_df["Timestamp"].iloc[0]
@@ -85,30 +71,10 @@ def build_prompt(
         lines.append(ml_insights.strip())
         lines.append("=== END ML PRE-ANALYSIS ===")
 
-    if event_correlations:
-        lines.append("\nCorrelated events (this ID changed near these timestamps):")
-        for evt in event_correlations:
-            lines.append(f"  - {evt}")
-
     if context.strip():
         lines.append(f"\nUser context: {context.strip()}")
 
     return "\n".join(lines)
-
-
-def _readme_snippet(readme: str, max_chars: int = 800) -> str:
-    """Return the most annotation-rich portion of a README."""
-    if not readme:
-        return ""
-    lines = readme.splitlines()
-    # Prefer lines with TS / timestamp markers
-    ts_lines = [l for l in lines if "ts" in l.lower() or "timestamp" in l.lower()
-                or any(c.isdigit() for c in l[:10])]
-    if ts_lines:
-        snippet = "\n".join(ts_lines[:40])
-    else:
-        snippet = "\n".join(lines[:40])
-    return snippet[:max_chars]
 
 
 class AIWorker(QThread):
@@ -122,8 +88,6 @@ class AIWorker(QThread):
         id_hex:     str,
         frames_df:  pd.DataFrame,
         context:    str = "",
-        event_correlations: list = None,
-        repo_context: dict = None,
         provider:   str = "Anthropic",
         model:      str = "",
         groq_key:   str = "",
@@ -135,8 +99,6 @@ class AIWorker(QThread):
         self.id_hex             = id_hex
         self.frames_df          = frames_df
         self.context            = context
-        self.event_correlations = event_correlations or []
-        self.repo_context       = repo_context
         self.provider           = provider
         self.model              = model or {
             "Groq":   GROQ_DEFAULT_MODEL,
@@ -155,14 +117,8 @@ class AIWorker(QThread):
             self._run_anthropic()
 
     def _build_context(self):
-        rc = None
-        if self.repo_context:
-            rc = dict(self.repo_context)
-            rc["readme_snippet"] = _readme_snippet(rc.get("readme", ""))
         return build_prompt(
-            self.id_hex, self.frames_df,
-            self.context, self.event_correlations,
-            repo_context=rc,
+            self.id_hex, self.frames_df, self.context,
             ml_insights=self.ml_insights,
         )
 
