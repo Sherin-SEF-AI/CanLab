@@ -1,0 +1,738 @@
+1
+00:00:00,000 --> 00:00:04,487
+This is CanLab, a workstation for reverse engineering a CAN
+bus.
+
+2
+00:00:04,487 --> 00:00:06,590
+We start by loading a capture.
+
+3
+00:00:06,590 --> 00:00:13,040
+This one is ten seconds of traffic in SavvyCAN format, about
+six and a half thousand frames.
+
+4
+00:00:13,040 --> 00:00:15,213
+The FRAMES tab is the raw view:
+
+5
+00:00:15,213 --> 00:00:22,014
+every frame in time order, with its timestamp, arbitration ID,
+bus, length, the eight data bytes,
+
+6
+00:00:22,014 --> 00:00:25,519
+and the gap since the last frame with the same ID.
+
+7
+00:00:25,519 --> 00:00:31,899
+A byte lights up green when it changed, so you can see at a
+glance which parts of a message
+
+8
+00:00:31,899 --> 00:00:33,792
+carry something that moves.
+
+9
+00:00:33,792 --> 00:00:38,518
+On the left, every arbitration ID the capture contains,
+grouped by bus,
+
+10
+00:00:38,518 --> 00:00:42,246
+with how often it appears and how many frames there are.
+
+11
+00:00:42,246 --> 00:00:45,241
+Ten IDs here, from one hertz up to a hundred.
+
+12
+00:00:45,241 --> 00:00:48,902
+Selecting an ID opens it in the inspector on the right:
+
+13
+00:00:48,902 --> 00:00:54,760
+the last ten frames in hex, a per-byte activity bar showing
+which bytes actually change,
+
+14
+00:00:54,760 --> 00:00:57,689
+and minimum, maximum and mean for each byte.
+
+15
+00:00:57,689 --> 00:01:02,016
+That is usually the first question you ask of an unknown
+message.
+
+16
+00:01:02,016 --> 00:01:05,377
+The SIGNALS tab classifies every message for you.
+
+17
+00:01:05,377 --> 00:01:09,836
+It runs offline, with no API key and nothing leaving the
+machine.
+
+18
+00:01:09,836 --> 00:01:15,118
+For each ID it reports the frame count, the rate, the entropy
+of the payload,
+
+19
+00:01:15,118 --> 00:01:16,558
+and a suspected role:
+
+20
+00:01:16,558 --> 00:01:22,732
+a sensor carrying a physical value, a status message, a
+counter, or a diagnostic response.
+
+21
+00:01:22,732 --> 00:01:27,534
+These are heuristics that point you at the interesting
+messages first,
+
+22
+00:01:27,534 --> 00:01:30,072
+not identifications to trust blindly.
+
+23
+00:01:30,072 --> 00:01:31,895
+AUTO-RE does the tedious part.
+
+24
+00:01:31,895 --> 00:01:35,662
+It sweeps every message at once, looking for rolling counters,
+
+25
+00:01:35,662 --> 00:01:39,611
+bytes that increment each frame and wrap, and for checksum
+bytes,
+
+26
+00:01:39,611 --> 00:01:44,958
+by testing whether a byte is the sum, the exclusive or, or the
+nibble sum of the others.
+
+27
+00:01:44,958 --> 00:01:49,636
+A match only counts if it beats simply guessing the byte's
+most common value,
+
+28
+00:01:49,636 --> 00:01:55,287
+so padding does not read as a checksum, and a relation that
+holds for every byte of a message
+
+29
+00:01:55,287 --> 00:01:59,297
+is thrown away rather than reported, because it localises
+nothing.
+
+30
+00:01:59,297 --> 00:02:04,948
+Counters and checksums are not signals, and knowing which
+bytes they occupy removes them from
+
+31
+00:02:04,948 --> 00:02:05,616
+the search.
+
+32
+00:02:05,616 --> 00:02:07,769
+That sweep tells you which byte.
+
+33
+00:02:07,769 --> 00:02:14,093
+To find out which algorithm, the CHECKSUM GUESSER takes one
+message and one byte and tries all
+
+34
+00:02:14,093 --> 00:02:14,564
+twelve:
+
+35
+00:02:14,564 --> 00:02:21,091
+plain and inverted sums, two's complement, nibble sums, CRC-8
+in its SAE J1850 and AUTOSAR forms,
+
+36
+00:02:21,091 --> 00:02:25,935
+and the manufacturer variants used by Hyundai, Toyota, Honda
+and Subaru.
+
+37
+00:02:25,935 --> 00:02:31,250
+It fits on the first seventy per cent of the capture and
+validates on the rest,
+
+38
+00:02:31,250 --> 00:02:37,575
+and reports both numbers, so an algorithm that merely
+memorised the training frames is visible
+
+39
+00:02:37,575 --> 00:02:41,208
+as a high training score with a poor validation score.
+
+40
+00:02:41,208 --> 00:02:47,139
+The same tab measures per-bit entropy across a message to
+suggest where one signal ends and the
+
+41
+00:02:47,139 --> 00:02:47,889
+next begins.
+
+42
+00:02:47,889 --> 00:02:50,074
+Bits that never change are padding;
+
+43
+00:02:50,074 --> 00:02:53,508
+bits that change constantly belong together in a value.
+
+44
+00:02:53,508 --> 00:02:58,128
+It is a suggestion for the boundaries, which you then confirm
+by decoding.
+
+45
+00:02:58,128 --> 00:02:59,668
+Now we define a signal.
+
+46
+00:02:59,668 --> 00:03:03,285
+The DBC BUILDER is where a guess becomes a definition.
+
+47
+00:03:03,285 --> 00:03:07,304
+We are describing the front-left wheel speed on message 0A6:
+
+48
+00:03:07,304 --> 00:03:10,519
+sixteen bits, big-endian, starting at bit seven,
+
+49
+00:03:10,519 --> 00:03:14,001
+scaled by one thirty-second of a kilometre per hour.
+
+50
+00:03:14,001 --> 00:03:19,561
+The bit grid underneath shows the live payload with the
+selected field highlighted,
+
+51
+00:03:19,561 --> 00:03:23,780
+and it converts between the grid and DBC bit numbering for
+you,
+
+52
+00:03:23,780 --> 00:03:26,928
+which is the part everybody gets wrong by hand.
+
+53
+00:03:26,928 --> 00:03:29,982
+Underneath the editor is the live decode preview:
+
+54
+00:03:29,982 --> 00:03:35,902
+real frames from the capture, their raw bytes, and the
+physical value your definition produces.
+
+55
+00:03:35,902 --> 00:03:42,009
+Sixty to eighty kilometres per hour here, which is the right
+order of magnitude for a wheel speed,
+
+56
+00:03:42,009 --> 00:03:43,629
+so the scale is plausible.
+
+57
+00:03:43,629 --> 00:03:49,736
+Every decode in CanLab runs through cantools, the same library
+that will read the file you export,
+
+58
+00:03:49,736 --> 00:03:52,416
+so what you see here is what you get later.
+
+59
+00:03:52,416 --> 00:03:54,398
+The PLOT tab draws it over time.
+
+60
+00:03:54,398 --> 00:03:59,105
+Raw bytes and decoded signals can be plotted together on a
+shared time axis,
+
+61
+00:03:59,105 --> 00:04:04,741
+each with its own scale, so you can compare a decoded value
+against the bytes it came from,
+
+62
+00:04:04,741 --> 00:04:07,219
+or against a different message entirely.
+
+63
+00:04:07,219 --> 00:04:12,359
+A wheel speed that rises and falls smoothly is a good sign the
+definition is right;
+
+64
+00:04:12,359 --> 00:04:15,456
+a sawtooth would tell you the byte order is wrong.
+
+65
+00:04:15,456 --> 00:04:19,412
+INTELLIGENCE looks across messages rather than within one.
+
+66
+00:04:19,412 --> 00:04:25,756
+It measures how often each ID repeats, so you can tell a
+hundred-hertz control message from a
+
+67
+00:04:25,756 --> 00:04:27,393
+one-hertz status report.
+
+68
+00:04:27,393 --> 00:04:31,417
+It correlates bytes between different IDs with a lag sweep,
+
+69
+00:04:31,417 --> 00:04:36,192
+which is how you find the same physical quantity reported by
+two ECUs.
+
+70
+00:04:36,192 --> 00:04:40,899
+It diffs two captures to show what changed when you pressed a
+button.
+
+71
+00:04:40,899 --> 00:04:45,264
+And it decodes J1939 parameter group numbers for heavy
+vehicles.
+
+72
+00:04:45,264 --> 00:04:47,239
+ML INTEL goes further per byte.
+
+73
+00:04:47,239 --> 00:04:53,228
+It classifies each byte as a counter, a checksum, a boolean
+flag, a physical value or padding,
+
+74
+00:04:53,228 --> 00:04:56,031
+with a confidence and the entropy behind it.
+
+75
+00:04:56,031 --> 00:05:00,873
+It fits a baseline from normal traffic and then scores frames
+for anomalies,
+
+76
+00:05:00,873 --> 00:05:06,416
+which is how you find the one message that behaves differently
+when a fault is present.
+
+77
+00:05:06,416 --> 00:05:11,832
+It also detects change points and finds messages with similar
+behaviour by embedding.
+
+78
+00:05:11,832 --> 00:05:13,648
+The DASHBOARD is the overview.
+
+79
+00:05:13,648 --> 00:05:18,371
+The heatmap shows how much each byte of each message moves
+across the capture,
+
+80
+00:05:18,371 --> 00:05:23,094
+so a dense column is a message worth investigating and a blank
+one is padding.
+
+81
+00:05:23,094 --> 00:05:26,666
+There is a message timeline showing when each ID is active,
+
+82
+00:05:26,666 --> 00:05:30,057
+and gauges you can point at any signal you have defined,
+
+83
+00:05:30,057 --> 00:05:34,416
+so a decoded value can be watched as an instrument rather than
+a number.
+
+84
+00:05:34,416 --> 00:05:36,673
+TIMELINE is for questions about when.
+
+85
+00:05:36,673 --> 00:05:41,187
+Several signals are stacked on one scrubbable axis with a
+shared playhead,
+
+86
+00:05:41,187 --> 00:05:46,311
+so you can line up the moment a flag flips against the moment
+a value starts moving.
+
+87
+00:05:46,311 --> 00:05:51,252
+It also syncs to a video of the dashboard or the road, with an
+adjustable offset,
+
+88
+00:05:51,252 --> 00:05:54,912
+so you can match what the bus did to what the car was doing.
+
+89
+00:05:54,912 --> 00:05:59,566
+Once the definitions are right, CODE GEN turns them into a
+working program.
+
+90
+00:05:59,566 --> 00:06:02,669
+Pick the signals, the interface and the direction,
+
+91
+00:06:02,669 --> 00:06:08,440
+and it writes Python that opens the bus and decodes those
+signals, or encodes and sends them.
+
+92
+00:06:08,440 --> 00:06:14,273
+The generated encoder goes through cantools and applies the
+counter and checksum convention of
+
+93
+00:06:14,273 --> 00:06:19,920
+whichever vehicle profile you have selected, so the frames it
+produces are properly formed.
+
+94
+00:06:19,920 --> 00:06:24,120
+Your work leaves in whatever format the next tool needs.
+
+95
+00:06:24,120 --> 00:06:27,946
+A standard DBC that cantools and Vector tools read.
+
+96
+00:06:27,946 --> 00:06:33,346
+An openpilot DBC with the comma dot ai checksum and counter
+annotations.
+
+97
+00:06:33,346 --> 00:06:38,372
+Vector CANdb++ with the cycle times measured from your own
+capture.
+
+98
+00:06:38,372 --> 00:06:40,697
+AUTOSAR ARXML four point three.
+
+99
+00:06:40,697 --> 00:06:46,847
+And a Wireshark Lua dissector, so your signals appear by name
+in a packet capture.
+
+100
+00:06:46,847 --> 00:06:53,823
+Each of these is verified in the test suite by loading it back
+with the tool that has to read
+
+101
+00:06:53,823 --> 00:06:54,048
+it.
+
+102
+00:06:54,048 --> 00:06:56,782
+DIAGNOSTICS is the request side.
+
+103
+00:06:56,782 --> 00:06:58,063
+UDS, ISO 14229:
+
+104
+00:06:58,063 --> 00:07:06,264
+read diagnostic trouble codes, read ECU identification, and
+scan which services an ECU supports.
+
+105
+00:07:06,264 --> 00:07:13,440
+That scan is read-only by default, because probing a service
+like ECU Reset or Clear
+
+106
+00:07:13,440 --> 00:07:18,395
+Diagnostics on a live bus does exactly what the name says.
+
+107
+00:07:18,395 --> 00:07:25,485
+There is OBD-II mode one with automatic PID discovery, J1939,
+a bus health monitor,
+
+108
+00:07:25,485 --> 00:07:30,696
+XCP for reading ECU memory, and DoIP for diagnostics over IP.
+
+109
+00:07:30,696 --> 00:07:36,841
+Security access, service 0x27, is the seed and key exchange
+that unlocks a protected session.
+
+110
+00:07:36,841 --> 00:07:43,118
+CanLab requests a seed and tries the common algorithms, or
+your own key function from a script.
+
+111
+00:07:43,118 --> 00:07:46,686
+Brute force is available for short keys, rate limited,
+
+112
+00:07:46,686 --> 00:07:51,575
+and it stops the moment the ECU reports that the attempt limit
+is reached,
+
+113
+00:07:51,575 --> 00:07:57,456
+because tripping that counter can lock a module until it is
+power cycled, or permanently.
+
+114
+00:07:57,456 --> 00:07:59,649
+Everything so far only listened.
+
+115
+00:07:59,649 --> 00:08:02,869
+Before anything can be sent, there is one gate.
+
+116
+00:08:02,869 --> 00:08:07,596
+ARM TX is off by default and nothing leaves the tool while it
+is off:
+
+117
+00:08:07,596 --> 00:08:11,913
+not injection, not replay, not fuzzing, not gateway
+forwarding,
+
+118
+00:08:11,913 --> 00:08:14,311
+and not diagnostic requests either.
+
+119
+00:08:14,311 --> 00:08:15,887
+The status bar says so.
+
+120
+00:08:15,887 --> 00:08:20,272
+Turning it on requires confirming a warning that names the
+risk,
+
+121
+00:08:20,272 --> 00:08:24,520
+and turning it off again does not merely block the next frame,
+
+122
+00:08:24,520 --> 00:08:27,192
+it stops anything already transmitting.
+
+123
+00:08:27,192 --> 00:08:32,623
+With transmit armed, and only on an isolated bench, the
+INJECTION tab can send.
+
+124
+00:08:32,623 --> 00:08:36,061
+Set a signal to a physical value and send it once,
+
+125
+00:08:36,061 --> 00:08:41,079
+or loop it at a chosen period with the counter and checksum
+kept correct.
+
+126
+00:08:41,079 --> 00:08:46,304
+Replay a capture back onto the bus at real speed or faster,
+with a scrubber.
+
+127
+00:08:46,304 --> 00:08:49,811
+Define trigger rules that fire on a byte condition.
+
+128
+00:08:49,811 --> 00:08:55,723
+Sweep an actuator between limits with a watchdog that aborts
+if a message goes silent.
+
+129
+00:08:55,723 --> 00:09:00,192
+And run scripted test sequences of inject, wait and assert
+steps.
+
+130
+00:09:00,192 --> 00:09:04,488
+The GATEWAY tab bridges two CAN channels and puts you in
+between.
+
+131
+00:09:04,488 --> 00:09:06,272
+Rules are applied in order:
+
+132
+00:09:06,272 --> 00:09:12,022
+pass a message through, block it, or modify a byte or the
+arbitration ID as it crosses.
+
+133
+00:09:12,022 --> 00:09:17,177
+That is how you test what an ECU does when a message it
+depends on disappears,
+
+134
+00:09:17,177 --> 00:09:19,424
+or arrives with a different value.
+
+135
+00:09:19,424 --> 00:09:25,438
+It needs two hardware channels, and like everything else it
+will not forward a single frame
+
+136
+00:09:25,438 --> 00:09:27,024
+until transmit is armed.
+
+137
+00:09:27,024 --> 00:09:31,094
+The OBD-II tab is the standardised subset any car will answer.
+
+138
+00:09:31,094 --> 00:09:34,049
+It discovers which PIDs the vehicle supports,
+
+139
+00:09:34,049 --> 00:09:38,973
+walking the continuation windows rather than assuming the
+first thirty-two,
+
+140
+00:09:38,973 --> 00:09:43,109
+and then polls the ones you pick and shows them as live
+gauges:
+
+141
+00:09:43,109 --> 00:09:47,376
+engine speed, coolant temperature, road speed, throttle
+position.
+
+142
+00:09:47,376 --> 00:09:51,205
+The AI ENGINE is optional and off unless you configure it.
+
+143
+00:09:51,205 --> 00:09:55,101
+It sends one message ID's statistics to Anthropic, to Groq,
+
+144
+00:09:55,101 --> 00:10:01,043
+or to a local Ollama model that never leaves your machine, and
+asks for an interpretation.
+
+145
+00:10:01,043 --> 00:10:05,863
+What makes it useful is that the offline analysis goes with
+the question:
+
+146
+00:10:05,863 --> 00:10:09,692
+the byte roles, the detected checksum, the message period.
+
+147
+00:10:09,692 --> 00:10:13,587
+The model reasons about measured facts rather than raw hex.
+
+148
+00:10:13,587 --> 00:10:19,859
+Its answers are still suggestions, and accepting one into the
+DBC is refused unless it actually
+
+149
+00:10:19,859 --> 00:10:21,312
+states a bit position.
+
+150
+00:10:21,312 --> 00:10:24,221
+Connected to a real bus, frames stream in live.
+
+151
+00:10:24,221 --> 00:10:29,235
+One receive thread reads the adapter and hands frames to
+everyone who needs them,
+
+152
+00:10:29,235 --> 00:10:34,064
+so a diagnostic scan and the live table never steal responses
+from each other.
+
+153
+00:10:34,064 --> 00:10:37,840
+Frames go into a capped buffer that appends in constant time,
+
+154
+00:10:37,840 --> 00:10:41,492
+so a busy bus does not slow the tool down as the log grows:
+
+155
+00:10:41,492 --> 00:10:46,320
+the frame counter and the rate keep climbing while the table
+stays responsive.
+
+156
+00:10:46,320 --> 00:10:47,418
+That is the loop:
+
+157
+00:10:47,418 --> 00:10:52,326
+load a capture, let the offline analysis narrow it down,
+define the signals,
+
+158
+00:10:52,326 --> 00:10:56,912
+verify them by decoding real frames, and export to whatever
+comes next.
+
+159
+00:10:56,912 --> 00:11:02,079
+A project file saves the frames, the signal definitions and
+your notes together.
+
+160
+00:11:02,079 --> 00:11:07,181
+A REST API and an MCP server expose the same analysis to
+scripts and to agents.
+
+161
+00:11:07,181 --> 00:11:10,992
+And the one rule that does not change is the transmit gate:
+
+162
+00:11:10,992 --> 00:11:16,998
+it is off until you turn it on, and you should only turn it on
+when the bus you are connected
+
+163
+00:11:16,998 --> 00:11:18,096
+to is on a bench.

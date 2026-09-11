@@ -44,7 +44,7 @@ gateway.
 git clone https://github.com/Sherin-SEF-AI/CanLab.git
 cd CanLab
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[ai,rest,mcp]"      # extras: ai, rest, mcp, mdf, dev
+pip install -e ".[ai,rest,mcp]"      # extras: ai, rest, mcp, mdf, dev, demo
 
 canlab                                # or: python -m canlab
 ```
@@ -53,6 +53,27 @@ Python 3.11+ (developed and tested on 3.12). API keys for the optional AI
 providers are entered in Settings → API Keys and stored in the OS keyring; a
 local Ollama server needs no key. Logs are written to
 `~/.canlab/logs/canlab.log`.
+
+---
+
+## Demo
+
+A narrated walkthrough of every tab, recorded from the real application:
+**[`docs/canlab-demo.mp4`](docs/canlab-demo.mp4)** (1080p, subtitled, ~11 min).
+Subtitles are burned in, and also separate in
+[`docs/canlab-demo.srt`](docs/canlab-demo.srt).
+
+It is generated, not hand-edited, so it cannot drift out of date:
+[`docs/demo/record.py`](docs/demo/record.py) drives a real `MainWindow`
+off-screen through the whole workflow and captures each screen, and
+[`docs/demo/build.py`](docs/demo/build.py) synthesises the narration and muxes
+it with `ffmpeg`. To rebuild it:
+
+```bash
+pip install -e ".[demo]"                   # plus ffmpeg on PATH
+QT_QPA_PLATFORM=offscreen python docs/demo/record.py
+python docs/demo/build.py
+```
 
 ---
 
