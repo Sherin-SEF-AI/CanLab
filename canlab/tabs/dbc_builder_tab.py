@@ -566,7 +566,13 @@ class DBCBuilderTab(QWidget):
             return
         try:
             from canlab.core.candbpp_export import to_candbpp_string
-            dbc_str = to_candbpp_string(self._state.dbc_signals)
+            from canlab.core.periodicity import compute_periodicity
+            # Cycle times come from the capture, so GenMsgCycleTime is real
+            # rather than always zero.
+            periods = compute_periodicity(self._state.frames_df) or {}
+            meta = {mid: {"cycle_time_ms": int(round(ms))}
+                    for mid, ms in periods.items()}
+            dbc_str = to_candbpp_string(self._state.dbc_signals, meta)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(dbc_str)
             self.status_label.setText(f"CANdb++ exported: {path}")

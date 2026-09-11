@@ -1,130 +1,200 @@
-"""AUTOSAR 4.3 System Template ARXML exporter.
+"""Export signal definitions as an AUTOSAR 4.3 System Template (ARXML).
 
-Produces a minimal but valid ARXML file containing:
-  I-SIGNAL, I-SIGNAL-I-PDU, CAN-FRAME, COMPU-METHOD per signal.
+The previous exporter emitted a private dialect — a ``CAN-ID`` element inside
+``CAN-FRAME``, and linear coefficients as a bare ``NUMERATOR`` text node — that
+only its own importer understood. Loading it anywhere else, cantools included,
+yielded zero messages.
 
-Input schema (same as load_dbc / parse_can_matrix):
-  message_id (hex str), message_name, signal_name, start_bit, length,
-  byte_order, value_type, scale, offset, min_val, max_val, unit, description.
+This writes the structure an AUTOSAR system loader actually looks for:
+
+    CAN-CLUSTER
+      └ CAN-PHYSICAL-CHANNEL
+          └ CAN-FRAME-TRIGGERING (IDENTIFIER, addressing mode, FRAME-REF)
+    CAN-FRAME (FRAME-LENGTH, PDU-TO-FRAME-MAPPING → PDU-REF)
+    I-SIGNAL-I-PDU (I-SIGNAL-TO-I-PDU-MAPPING: START-POSITION, byte order)
+    I-SIGNAL (LENGTH, SYSTEM-SIGNAL-REF)
+    SYSTEM-SIGNAL (→ COMPU-METHOD, → UNIT)
+    COMPU-METHOD (COMPU-RATIONAL-COEFFS: numerator [offset, scale], denom [1])
+
+The round trip is verified against cantools in the tests, which is the only
+way to know this stays loadable.
 """
+from __future__ import annotations
+
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 
+from canlab.core.dbc_manager import (dbc_identifier, frame_id_int, norm_signal)
 
-_NS = "http://autosar.org/schema/r4.3"
-_XSI = "http://www.w3.org/2001/XMLSchema-instance"
-_SCHEMA = "http://autosar.org/schema/r4.3 AUTOSAR_4-3-0.xsd"
+NS = "http://autosar.org/schema/r4.0"
+XSI = "http://www.w3.org/2001/XMLSchema-instance"
+PKG = "/CanLab"
 
 
-def _sub(parent: ET.Element, tag: str, text: str | None = None) -> ET.Element:
-    el = ET.SubElement(parent, tag)
+def _e(parent, tag, text=None, **attrs):
+    el = ET.SubElement(parent, tag, attrs)
     if text is not None:
         el.text = str(text)
     return el
 
 
+def _ref(parent, tag, dest, path):
+    return _e(parent, tag, path, DEST=dest)
+
+
+def _package(parent, name):
+    """A sub-package; returns its ELEMENTS container.
+
+    References are absolute paths, so the nesting here has to match them:
+    sub-packages live under the root package that PKG names.
+    """
+    pkg = _e(parent, "AR-PACKAGE")
+    _e(pkg, "SHORT-NAME", name)
+    return _e(pkg, "ELEMENTS")
+
+
 def to_arxml_string(signal_defs: list[dict], msg_meta: dict | None = None) -> str:
-    """Return an ARXML 4.3 string for the given signal definitions."""
-    msg_meta = msg_meta or {}
+    """Render these signals as an AUTOSAR 4.3 ARXML document."""
+    messages: dict[int, dict] = {}
+    for raw in signal_defs:
+        sig = norm_signal(raw)
+        fid = frame_id_int(sig)
+        msg = messages.setdefault(fid, {
+            "name": dbc_identifier(sig.get("message_name"), f"MSG_{sig['message_id']}"),
+            "extended": bool(sig.get("extended")),
+            "length": 8,
+            "signals": [],
+            "used": set(),
+        })
+        name = dbc_identifier(sig.get("signal_name"), "SIG")
+        base, n = name, 2
+        while name in msg["used"]:
+            name = f"{base}_{n}"
+            n += 1
+        msg["used"].add(name)
+        sig["_name"] = name
+        msg["signals"].append(sig)
+        msg["length"] = max(msg["length"], int(sig.get("msg_length", 8) or 8),
+                            -(-(sig["start_bit"] + sig["length"]) // 8))
 
     root = ET.Element("AUTOSAR", {
-        "xmlns":              _NS,
-        "xmlns:xsi":          _XSI,
-        "xsi:schemaLocation": _SCHEMA,
+        "xmlns": NS,
+        "xmlns:xsi": XSI,
+        "xsi:schemaLocation": f"{NS} AUTOSAR_4-3-0.xsd",
     })
+    root_packages = _e(root, "AR-PACKAGES")
+    root_pkg = _e(root_packages, "AR-PACKAGE")
+    _e(root_pkg, "SHORT-NAME", PKG.lstrip("/"))
+    packages = _e(root_pkg, "AR-PACKAGES")
 
-    # Group signals by message
-    messages: dict[int, dict] = {}
-    for sig in signal_defs:
-        try:
-            mid = int(sig.get("message_id", "0"), 16)
-        except (ValueError, TypeError):
-            mid = 0
-        if mid not in messages:
-            messages[mid] = {
-                "name":    sig.get("message_name", f"MSG_{mid:03X}"),
-                "signals": [],
-                "length":  int(sig.get("msg_length", 8)),
-            }
-        messages[mid]["signals"].append(sig)
-        messages[mid]["length"] = max(
-            messages[mid]["length"], int(sig.get("msg_length", 8))
-        )
+    cluster_elems = _package(packages, "Cluster")
+    frame_elems = _package(packages, "Frames")
+    pdu_elems = _package(packages, "Pdus")
+    isignal_elems = _package(packages, "ISignals")
+    syssignal_elems = _package(packages, "SystemSignals")
+    compu_elems = _package(packages, "CompuMethods")
+    unit_elems = _package(packages, "Units")
 
-    pkgs = _sub(root, "AR-PACKAGES")
+    # ── cluster / physical channel / frame triggerings ───────────────────
+    cluster = _e(cluster_elems, "CAN-CLUSTER")
+    _e(cluster, "SHORT-NAME", "CanLabCluster")
+    variants = _e(cluster, "CAN-CLUSTER-VARIANTS")
+    conditional = _e(variants, "CAN-CLUSTER-CONDITIONAL")
+    _e(conditional, "BAUDRATE", "500000")
+    channels = _e(conditional, "PHYSICAL-CHANNELS")
+    channel = _e(channels, "CAN-PHYSICAL-CHANNEL")
+    _e(channel, "SHORT-NAME", "Channel1")
+    triggerings = _e(channel, "FRAME-TRIGGERINGS")
 
-    # ── Signals package ───────────────────────────────────────────────────────
-    sig_pkg = _sub(pkgs, "AR-PACKAGE")
-    _sub(sig_pkg, "SHORT-NAME", "Signals")
-    sig_elements = _sub(sig_pkg, "ELEMENTS")
+    units_written: set[str] = set()
 
-    for mid, mdata in messages.items():
-        for sig in mdata["signals"]:
-            sname = sig.get("signal_name", "UnknownSig")
-            isig  = _sub(sig_elements, "I-SIGNAL")
-            _sub(isig, "SHORT-NAME", sname)
-            _sub(isig, "LENGTH", str(sig.get("length", 8)))
-            _sub(_sub(isig, "INIT-VALUE"), "NUMERICAL-VALUE", "0")
-            unit = sig.get("unit", "")
-            if unit:
-                _sub(isig, "UNIT-REF", unit)
+    for fid, msg in sorted(messages.items()):
+        mname = msg["name"]
 
-    # ── PDU / Frame package ───────────────────────────────────────────────────
-    frame_pkg = _sub(pkgs, "AR-PACKAGE")
-    _sub(frame_pkg, "SHORT-NAME", "Frames")
-    frame_elements = _sub(frame_pkg, "ELEMENTS")
+        trig = _e(triggerings, "CAN-FRAME-TRIGGERING")
+        _e(trig, "SHORT-NAME", f"FT_{mname}")
+        _ref(trig, "FRAME-REF", "CAN-FRAME", f"{PKG}/Frames/{mname}")
+        _e(trig, "CAN-ADDRESSING-MODE",
+           "EXTENDED" if msg["extended"] else "STANDARD")
+        _e(trig, "IDENTIFIER", fid)
 
-    for mid, mdata in messages.items():
-        mname = mdata["name"]
+        # ── frame -> pdu ─────────────────────────────────────────────────
+        frame = _e(frame_elems, "CAN-FRAME")
+        _e(frame, "SHORT-NAME", mname)
+        _e(frame, "FRAME-LENGTH", msg["length"])
+        mappings = _e(frame, "PDU-TO-FRAME-MAPPINGS")
+        mapping = _e(mappings, "PDU-TO-FRAME-MAPPING")
+        _e(mapping, "SHORT-NAME", f"PM_{mname}")
+        _ref(mapping, "PDU-REF", "I-SIGNAL-I-PDU", f"{PKG}/Pdus/PDU_{mname}")
 
-        # I-SIGNAL-I-PDU
-        pdu = _sub(frame_elements, "I-SIGNAL-I-PDU")
-        _sub(pdu, "SHORT-NAME", f"{mname}_PDU")
-        _sub(pdu, "LENGTH", str(mdata["length"] * 8))   # in bits
-        mapping_set = _sub(pdu, "I-SIGNAL-TO-PDU-MAPPINGS")
-        for sig in mdata["signals"]:
-            sname    = sig.get("signal_name", "UnknownSig")
-            mapping  = _sub(mapping_set, "I-SIGNAL-TO-I-PDU-MAPPING")
-            _sub(mapping, "SHORT-NAME", f"{sname}_MAP")
-            _sub(mapping, "I-SIGNAL-REF", f"/Signals/{sname}")
-            _sub(mapping, "START-POSITION", str(sig.get("start_bit", 0)))
-            bo = "LITTLE-ENDIAN" if sig.get("byte_order", "little") == "little" else "BIG-ENDIAN"
-            _sub(mapping, "PACKING-BYTE-ORDER", bo)
+        # ── pdu -> signals ───────────────────────────────────────────────
+        pdu = _e(pdu_elems, "I-SIGNAL-I-PDU")
+        _e(pdu, "SHORT-NAME", f"PDU_{mname}")
+        _e(pdu, "LENGTH", msg["length"])
+        sig_mappings = _e(pdu, "I-SIGNAL-TO-PDU-MAPPINGS")
 
-        # CAN-FRAME
-        frame = _sub(frame_elements, "CAN-FRAME")
-        _sub(frame, "SHORT-NAME", mname)
-        _sub(frame, "FRAME-LENGTH", str(mdata["length"]))
-        _sub(frame, "CAN-ID", str(mid))
-        _sub(_sub(frame, "PDU-TO-FRAME-MAPPINGS"), "PDU-REF", f"/Frames/{mname}_PDU")
+        for sig in msg["signals"]:
+            sname = sig["_name"]
+            unit_name = dbc_identifier(sig.get("unit") or "NoUnit", "NoUnit")
 
-    # ── CompuMethod package ───────────────────────────────────────────────────
-    compu_pkg = _sub(pkgs, "AR-PACKAGE")
-    _sub(compu_pkg, "SHORT-NAME", "CompuMethods")
-    compu_elements = _sub(compu_pkg, "ELEMENTS")
+            sm = _e(sig_mappings, "I-SIGNAL-TO-I-PDU-MAPPING")
+            _e(sm, "SHORT-NAME", f"SM_{mname}_{sname}")
+            _ref(sm, "I-SIGNAL-REF", "I-SIGNAL", f"{PKG}/ISignals/{sname}")
+            _e(sm, "PACKING-BYTE-ORDER",
+               "MOST-SIGNIFICANT-BYTE-LAST" if sig["byte_order"] == "little"
+               else "MOST-SIGNIFICANT-BYTE-FIRST")
+            _e(sm, "START-POSITION", sig["start_bit"])
 
-    for mid, mdata in messages.items():
-        for sig in mdata["signals"]:
-            sname  = sig.get("signal_name", "UnknownSig")
-            scale  = float(sig.get("scale", 1.0))
-            offset = float(sig.get("offset", 0.0))
-            cm     = _sub(compu_elements, "COMPU-METHOD")
-            _sub(cm, "SHORT-NAME", f"{sname}_CM")
-            cs     = _sub(_sub(cm, "COMPU-INTERNAL-TO-PHYS"), "COMPU-SCALES")
-            cscale = _sub(cs, "COMPU-SCALE")
-            _sub(cscale, "COMPU-RATIONAL-COEFFS")   # placeholder structure
-            _sub(cscale, "NUMERATOR", f"{offset} {scale}")
-            _sub(cscale, "DENOMINATOR", "1")
-            unit = sig.get("unit", "")
-            if unit:
-                _sub(cm, "UNIT-REF", unit)
+            isig = _e(isignal_elems, "I-SIGNAL")
+            _e(isig, "SHORT-NAME", sname)
+            _e(isig, "LENGTH", sig["length"])
+            _ref(isig, "SYSTEM-SIGNAL-REF", "SYSTEM-SIGNAL",
+                 f"{PKG}/SystemSignals/{sname}")
 
-    # Pretty-print
-    raw = ET.tostring(root, encoding="unicode")
-    pretty = minidom.parseString(raw).toprettyxml(indent="  ")
-    # Remove the extra XML declaration minidom prepends (we'll add our own)
-    lines = pretty.splitlines()
-    if lines and lines[0].startswith("<?xml"):
-        lines = lines[1:]
-    header = '<?xml version="1.0" encoding="UTF-8"?>\n'
-    return header + "\n".join(lines)
+            sysig = _e(syssignal_elems, "SYSTEM-SIGNAL")
+            _e(sysig, "SHORT-NAME", sname)
+            if sig.get("description"):
+                _e(sysig, "DESC", sig["description"])
+            props = _e(sysig, "PHYSICAL-PROPS")
+            variants_el = _e(props, "SW-DATA-DEF-PROPS-VARIANTS")
+            cond = _e(variants_el, "SW-DATA-DEF-PROPS-CONDITIONAL")
+            _ref(cond, "COMPU-METHOD-REF", "COMPU-METHOD",
+                 f"{PKG}/CompuMethods/CM_{sname}")
+            _ref(cond, "UNIT-REF", "UNIT", f"{PKG}/Units/{unit_name}")
+
+            # ── linear conversion ────────────────────────────────────────
+            cm = _e(compu_elems, "COMPU-METHOD")
+            _e(cm, "SHORT-NAME", f"CM_{sname}")
+            _e(cm, "CATEGORY", "LINEAR")
+            _ref(cm, "UNIT-REF", "UNIT", f"{PKG}/Units/{unit_name}")
+            internal = _e(cm, "COMPU-INTERNAL-TO-PHYS")
+            scales = _e(internal, "COMPU-SCALES")
+            scale_el = _e(scales, "COMPU-SCALE")
+            _e(scale_el, "LOWER-LIMIT", _limit(sig.get("min_val"), 0))
+            _e(scale_el, "UPPER-LIMIT",
+               _limit(sig.get("max_val"), (1 << sig["length"]) - 1))
+            coeffs = _e(scale_el, "COMPU-RATIONAL-COEFFS")
+            numerator = _e(coeffs, "COMPU-NUMERATOR")
+            _e(numerator, "V", _num(sig["offset"]))
+            _e(numerator, "V", _num(sig["scale"]))
+            denominator = _e(coeffs, "COMPU-DENOMINATOR")
+            _e(denominator, "V", "1")
+
+            if unit_name not in units_written:
+                unit = _e(unit_elems, "UNIT")
+                _e(unit, "SHORT-NAME", unit_name)
+                _e(unit, "DISPLAY-NAME", sig.get("unit") or "")
+                units_written.add(unit_name)
+
+    raw = ET.tostring(root, encoding="utf-8")
+    return minidom.parseString(raw).toprettyxml(indent="  ")
+
+
+def _num(value) -> str:
+    """Render a coefficient without a trailing .0 for whole numbers."""
+    value = float(value)
+    return str(int(value)) if value.is_integer() else repr(value)
+
+
+def _limit(value, fallback) -> str:
+    return _num(fallback if value is None or value == "" else value)
