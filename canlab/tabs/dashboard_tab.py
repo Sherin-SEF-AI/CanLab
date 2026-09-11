@@ -7,6 +7,12 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont
+# These two stay eager, deliberately. Matplotlib renders text through its own
+# ft2font extension, and if that is first loaded *after* the plugins Qt pulls in
+# while the main window is built, every draw containing text fails with
+# "FT_Render_Glyph ... raster overflow" at any font size, while a draw with no
+# text succeeds. Importing them here, during module import, wins that race.
+# Deferring them to save startup time looks tempting and breaks the heatmap.
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 

@@ -15,16 +15,45 @@ _classify:
 
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr
 import logging
 
 log = logging.getLogger(__name__)
 
-try:
-    from sklearn.metrics import mutual_info_score as _mi_score
-    _SKLEARN = True
-except ImportError:
+try:                          # presence check only; importing costs ~160 ms
+    import importlib.util
+    _SKLEARN = importlib.util.find_spec("sklearn") is not None
+except (ImportError, ValueError):
     _SKLEARN = False
+_spearmanr = None
+
+
+def spearmanr(*args, **kwargs):
+    """Thin wrapper so importing this module does not pull in SciPy.
+
+    SciPy costs real time to import and nothing needs it until this analysis is
+    actually requested, so the handle is resolved on first call and cached.
+    """
+    global _spearmanr
+    if _spearmanr is None:
+        from scipy.stats import spearmanr as _impl
+        _spearmanr = _impl
+    return _spearmanr(*args, **kwargs)
+
+
+__mi_score = None
+
+
+def _mi_score(*args, **kwargs):
+    """Thin wrapper so importing this module does not pull in scikit-learn.
+
+    scikit-learn costs real time to import and nothing needs it until this analysis is
+    actually requested, so the handle is resolved on first call and cached.
+    """
+    global __mi_score
+    if __mi_score is None:
+        from sklearn.metrics import mutual_info_score as _impl
+        __mi_score = _impl
+    return __mi_score(*args, **kwargs)
 
 
 BYTE_COLS = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]

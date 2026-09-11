@@ -9,10 +9,25 @@ lag sweep (±50 ms) to catch feed-forward / delayed relationships.
 
 import numpy as np
 import pandas as pd
-from scipy.stats import pearsonr
 
 BYTE_COLS = [f"B{i}" for i in range(8)]
 LAG_OFFSETS_MS = [-50, -25, -12, 0, 12, 25, 50]
+
+
+_pearsonr = None
+
+
+def pearsonr(*args, **kwargs):
+    """Thin wrapper so importing this module does not pull in SciPy.
+
+    SciPy costs real time to import and nothing needs it until this analysis is
+    actually requested, so the handle is resolved on first call and cached.
+    """
+    global _pearsonr
+    if _pearsonr is None:
+        from scipy.stats import pearsonr as _impl
+        _pearsonr = _impl
+    return _pearsonr(*args, **kwargs)
 
 
 def _align(s1: np.ndarray, t1: np.ndarray,

@@ -4,6 +4,7 @@ This is the test that catches wiring breakage the unit tests cannot see —
 a removed signal a tab still connects to, a renamed helper, a tab that fails
 to build. It runs headless (QT_QPA_PLATFORM=offscreen, set in conftest).
 """
+from pathlib import Path
 import gc
 import time
 
@@ -180,3 +181,74 @@ def test_frames_table_refresh_stays_cheap_while_visible(window, app):
     elapsed = time.perf_counter() - started
     assert elapsed < 5.0, f"refresh took {elapsed:.1f}s with the table visible"
     assert table.rowCount() > 0
+
+
+def test_heavy_analysis_libraries_are_not_imported_at_startup():
+    """SciPy and scikit-learn cost about 430 ms to import between them.
+
+    Nothing needs either until the user asks for a correlation, a change point
+    or an anomaly scan, so importing them at module scope was a third of the
+    application's startup time, paid by everyone. They are bound on first call
+    instead; this pins that so a stray top-level import cannot creep back.
+
+    It has to run in a fresh interpreter: by the time the rest of this suite
+    has run, plenty of tests have imported SciPy for their own reasons.
+    """
+    import os
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys\n"
+        "from PyQt6.QtWidgets import QApplication\n"
+        "app = QApplication([])\n"
+        "from canlab.mainwindow import MainWindow\n"
+        "w = MainWindow()\n"
+        "app.processEvents()\n"
+        "print(','.join(sorted({m.split('.')[0] for m in sys.modules\n"
+        "                       if m.split('.')[0] in ('scipy', 'sklearn')})))\n"
+    )
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+    result = subprocess.run([sys.executable, "-c", probe], env=env,
+                            capture_output=True, text=True, timeout=180)
+    assert result.returncode == 0, result.stderr[-2000:]
+    eager = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
+    assert eager == "", f"imported at startup: {eager}"
+
+
+def test_the_lazily_bound_statistics_still_work(qcore):
+    """The bindings must resolve to the real functions when called."""
+    import numpy as np
+
+    from canlab.core.change_detector import mannwhitneyu
+    from canlab.core.correlation_engine import pearsonr
+    from canlab.core.signal_analyzer import spearmanr
+
+    rng = np.random.default_rng(0)
+    a = rng.normal(size=200)
+    b = a * 2 + rng.normal(scale=0.1, size=200)
+
+    r, p = pearsonr(a, b)
+    assert r > 0.99 and p < 0.01
+    assert spearmanr(a, b)[0] > 0.99
+    assert 0.0 <= float(mannwhitneyu(a, b, alternative="two-sided")[1]) <= 1.0
+
+
+def test_the_heatmap_renders_text_without_a_freetype_failure(window, app):
+    """Matplotlib must be imported before Qt's plugins claim FreeType.
+
+    Loaded afterwards, every draw containing text dies with a raster overflow
+    while a draw with no text succeeds, so only a real render catches it.
+    """
+    from canlab.core.log_parser import parse_log_file
+    from canlab.core.state import get_state
+
+    sample = (Path(__file__).resolve().parent.parent
+              / "canlab" / "sample_data" / "sample_kona_drive.csv")
+    get_state().load_frames(parse_log_file(str(sample)), "sample.csv")
+    app.processEvents()
+
+    window.dashboard_tab._render_heatmap()      # raises if FreeType is unhappy
+    app.processEvents()
+    image = window.dashboard_tab._heatmap_canvas.grab()
+    assert image.width() > 0 and image.height() > 0

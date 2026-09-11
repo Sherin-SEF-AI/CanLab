@@ -12,7 +12,6 @@ Improvements over v1:
 from typing import Optional
 import numpy as np
 import pandas as pd
-from scipy.stats import mannwhitneyu
 
 BYTE_COLS = [f"B{i}" for i in range(8)]
 MIN_FRAMES_PER_WINDOW = 5
@@ -107,6 +106,22 @@ class ChangeRecorder:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+_mannwhitneyu = None
+
+
+def mannwhitneyu(*args, **kwargs):
+    """Thin wrapper so importing this module does not pull in SciPy.
+
+    SciPy costs real time to import and nothing needs it until this analysis is
+    actually requested, so the handle is resolved on first call and cached.
+    """
+    global _mannwhitneyu
+    if _mannwhitneyu is None:
+        from scipy.stats import mannwhitneyu as _impl
+        _mannwhitneyu = _impl
+    return _mannwhitneyu(*args, **kwargs)
+
 
 def _col_vals(frames: pd.DataFrame, col: str) -> Optional[np.ndarray]:
     if col not in frames.columns or frames.empty:
