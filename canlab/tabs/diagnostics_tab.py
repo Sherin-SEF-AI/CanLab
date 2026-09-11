@@ -27,6 +27,12 @@ class DiagnosticsTab(QWidget):
         self._build_ui()
         self._state.can_connected.connect(self._on_can_status)
         self._state.bus_load_update.connect(self._on_bus_load)
+        # Passive "RX" log of diagnostic traffic. It reads its own subscription,
+        # so it never competes with a running scanner for responses.
+        self._rx_log_owner = object()
+        self._rx_log_timer = QTimer()
+        self._rx_log_timer.setInterval(500)
+        self._rx_log_timer.timeout.connect(self._drain_rx_log)
 
     def _build_ui(self):
         outer = QHBoxLayout(self)
@@ -93,7 +99,6 @@ class DiagnosticsTab(QWidget):
         self.uds_log.setReadOnly(True)
         self.uds_log.setFont(mono_font(8))
         lay.addWidget(self.uds_log)
-        self._state.uds_response.connect(self._on_uds_response)
         return w
 
     # ── Security Access tab ───────────────────────────────────────────────────
@@ -235,7 +240,7 @@ class DiagnosticsTab(QWidget):
             self.sa_script_edit.setText(path)
 
     def _sa_start(self):
-        bus = self._state.can_bus
+        bus = self._get_bus()
         if bus is None:
             self.sa_log.append("ERROR: CAN bus not connected.")
             return
@@ -391,18 +396,26 @@ class DiagnosticsTab(QWidget):
         if connected:
             self.lbl_diag_status.setText("CAN: connected")
             self.lbl_diag_status.setStyleSheet(f"color:{COLORS['green']}")
+            self._rx_log_timer.start()
         else:
             self.lbl_diag_status.setText("CAN: disconnected")
             self.lbl_diag_status.setStyleSheet(f"color:{COLORS['error']}")
+            self._rx_log_timer.stop()
+            self._health_timer.stop()
 
     # ── UDS / OBD actions ─────────────────────────────────────────────────────
 
+    # Diagnostic responses: 11-bit 0x7E8-0x7EF and 29-bit 0x18DAF1xx.
+    _RESPONSE_FILTER = staticmethod(
+        lambda arb: 0x7E0 <= arb <= 0x7EF or (arb & 0xFFFF0000) == 0x18DA0000)
+
     def _get_bus(self):
-        return self._state.can_bus
+        return self._state.bus_view(self, self._RESPONSE_FILTER)
 
     def cleanup(self):
         """Stop every worker/timer this tab owns (called on app close)."""
         self._health_timer.stop()
+        self._rx_log_timer.stop()
         for attr in ("_uds_worker", "_dtc_worker", "_deep_worker", "_svc_worker",
                      "_sa_worker"):
             w = getattr(self, attr, None)
@@ -481,6 +494,16 @@ class DiagnosticsTab(QWidget):
     def _on_uds_response(self, arb_id: int, data: bytes):
         hex_data = " ".join(f"{b:02X}" for b in data)
         self.uds_log.append(f"RX 0x{arb_id:03X}: {hex_data}")
+
+    def _drain_rx_log(self, limit: int = 50):
+        sub = self._state.bus_view(self._rx_log_owner, self._RESPONSE_FILTER)
+        if sub is None:
+            return
+        for _ in range(limit):
+            msg = sub.recv(timeout=0)
+            if msg is None:
+                return
+            self._on_uds_response(msg.arbitration_id, bytes(msg.data))
 
     # ── UDS Deep Scan tab ─────────────────────────────────────────────────────
 
@@ -731,39 +754,26 @@ class DiagnosticsTab(QWidget):
         return w
 
     def _health_start(self):
-        from canlab.core.bus_health import BusHealthMeter
-        self._health_meter = BusHealthMeter()
+        if self._state.bus_hub is None:
+            self.health_silent.setPlainText("Connect a CAN bus first.")
+            return
         self._health_timer.start()
         self.btn_health_start.setEnabled(False)
         self.btn_health_start.setText("Monitoring…")
-        self._state.bus_health_update.connect(self._on_health_update)
 
     def _health_reset(self):
-        if self._health_meter:
-            self._health_meter.reset()
+        hub = self._state.bus_hub
+        if hub is not None:
+            hub.health_meter.reset()
         self._health_history.clear()
 
     def _health_tick(self):
-        if self._health_meter is None:
+        # The receive hub feeds its own health meter from the single rx thread,
+        # so this only reads a snapshot — it must never call recv() itself.
+        hub = self._state.bus_hub
+        if hub is None:
             return
-        # Feed live frames from live CAN worker if connected
-        bus = self._state.can_bus
-        if bus:
-            import time
-            now = time.monotonic()
-            # Non-blocking check
-            frame = None
-            try:
-                frame = bus.recv(timeout=0.0)
-            except Exception:
-                log.debug("suppressed exception", exc_info=True)
-            if frame:
-                is_err = getattr(frame, "is_error_frame", False)
-                can_id = f"{frame.arbitration_id:03X}"
-                self._health_meter.add_frame(
-                    getattr(frame, "dlc", 8), now, can_id, is_err
-                )
-        snap = self._health_meter.snapshot()
+        snap = hub.health_snapshot()
         self._state.bus_health = snap
         self._state.bus_health_update.emit(snap)
 

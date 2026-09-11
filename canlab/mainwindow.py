@@ -5,14 +5,13 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QTabWidget, QToolBar, QStatusBar, QLabel, QFileDialog,
     QMessageBox, QPushButton, QProgressBar, QMenu,
 )
-from PyQt6.QtCore import QTimer, QThread, pyqtSignal
+from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtGui import QAction
 
 from canlab.theme import COLORS, mono_font
 from canlab.core.state import get_state
 from canlab.core.log_parser import parse_log_file
 from canlab.core.dbc_manager import load_dbc
-from canlab.core.bus_load import BusLoadMeter
 from canlab.panels.id_panel import IDPanel
 from canlab.panels.inspector_panel import InspectorPanel
 from canlab.tabs.frames_tab import FramesTab
@@ -40,107 +39,25 @@ import logging
 log = logging.getLogger(__name__)
 
 
-class LiveCANWorker(QThread):
-    frame_received = pyqtSignal(object)
-    error          = pyqtSignal(str)
-
-    def __init__(self, interface, channel, bitrate, bus=None, parent=None,
-                 fd=False, data_bitrate=None):
-        """
-        If `bus` is provided (e.g. PandaBus), it is used directly instead of
-        creating a new python-can Bus. This is the pluggable-backend entry point.
-        """
-        super().__init__(parent)
-        self._interface   = interface
-        self._channel     = channel
-        self._bitrate     = bitrate
-        self._fd          = fd
-        self._data_bitrate = data_bitrate
-        self._injected_bus = bus   # pre-created Bus (Panda, virtual, etc.)
-        self._running     = True
-        self._bus         = None
-
-    def get_bus(self):
-        return self._bus
-
-    def run(self):
-        try:
-            if self._injected_bus is not None:
-                self._bus = self._injected_bus
-            else:
-                kwargs = dict(
-                    channel=self._channel,
-                    interface=self._interface,
-                    bitrate=self._bitrate,
-                )
-                if self._fd:
-                    kwargs["fd"] = True
-                    if self._data_bitrate:
-                        kwargs["data_bitrate"] = self._data_bitrate
-                self._bus = can.interface.Bus(**kwargs)
-            while self._running:
-                msg = self._bus.recv(timeout=0.1)
-                if msg:
-                    self.frame_received.emit(msg)
-        except Exception as e:
-            self.error.emit(str(e))
-
-    def stop(self):
-        self._running = False
-        if self._bus:
-            try:
-                self._bus.shutdown()
-            except Exception:
-                log.warning("suppressed exception", exc_info=True)
-
-
-class MultiBusWorker(QThread):
-    """Spawn one LiveCANWorker per configured bus; tag frames with bus name."""
-    frame_received = pyqtSignal(str, object)   # bus_name, frame
-    error          = pyqtSignal(str, str)       # bus_name, error
-
-    def __init__(self, bus_configs: list, parent=None):
-        super().__init__(parent)
-        self._configs  = bus_configs
-        self._workers  = []
-
-    def start_all(self):
-        for cfg in self._configs:
-            w = LiveCANWorker(
-                interface=cfg.get("interface", "socketcan"),
-                channel=cfg.get("channel", "can0"),
-                bitrate=cfg.get("bitrate", 500000),
-            )
-            name = cfg.get("name", cfg.get("channel", "?"))
-            w.frame_received.connect(lambda msg, n=name: self.frame_received.emit(n, msg))
-            w.error.connect(lambda e, n=name: self.error.emit(n, e))
-            w.start()
-            self._workers.append(w)
-
-    def stop_all(self):
-        for w in self._workers:
-            w.stop()
-        self._workers.clear()
-
-
 class MainWindow(QMainWindow):
+    # Emitted from a bus receive thread; queued to the GUI thread by Qt.
+    live_error = pyqtSignal(str)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("CANLAB — CAN Reverse Engineering Suite")
         self.showMaximized()
 
         self._state        = get_state()
-        self._live_worker  = None
+        self._hubs: list   = []        # one BusHub per connected bus
         self._can_settings = {"interface": "socketcan", "channel": "can0", "bitrate": 500000}
         self._api_key      = load_api_key()
         self._frame_rate_timer = QTimer()
+        self._drain_timer      = QTimer()
         self._live_frame_count = 0
-        self._live_rows: list  = []
-        self._bus_load_meter   = BusLoadMeter()
         self._rest_api_server  = None
         self._plugins          = []
         self._multibus_config  = []
-        self._multibus_worker  = None
 
         self._build_central()
         self._build_toolbar()
@@ -151,6 +68,12 @@ class MainWindow(QMainWindow):
         self._frame_rate_timer.setInterval(1000)
         self._frame_rate_timer.timeout.connect(self._update_frame_rate)
         self._frame_rate_timer.start()
+
+        # Captured frames are handed from the receive threads to the GUI in
+        # batches on a timer, so a busy bus cannot drive the UI update rate.
+        self._drain_timer.setInterval(250)
+        self._drain_timer.timeout.connect(self._drain_live_frames)
+        self.live_error.connect(self._on_live_error)
 
         self.ai_tab.set_api_key(self._api_key)
         self.ai_tab.set_ai_config(
@@ -488,101 +411,80 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.warning(self, "Panda Error", str(e))
 
-        self._live_worker = LiveCANWorker(iface, channel, bitrate, bus=injected_bus,
-                                          fd=fd, data_bitrate=data_bitrate)
-        self._live_worker.frame_received.connect(self._on_live_frame)
-        self._live_worker.error.connect(self._on_live_error)
-        self._live_worker.started.connect(self._on_worker_started)
-        self._live_worker.start()
+        try:
+            bus = injected_bus or self._open_bus(iface, channel, bitrate,
+                                                 fd, data_bitrate)
+        except Exception as e:
+            QMessageBox.critical(self, "CAN Error",
+                                 f"Could not open {channel}: {e}")
+            return
 
-        # Multi-bus recording: if extra buses are configured in Settings, spawn a
-        # MultiBusWorker and route each tagged frame through the same pipeline.
-        if self._multibus_config:
-            self._multibus_worker = MultiBusWorker(self._multibus_config)
-            self._multibus_worker.frame_received.connect(
-                lambda name, m: self._on_live_frame(m, bus_name=name))
-            self._multibus_worker.error.connect(
-                lambda name, e: self._on_live_error(f"[{name}] {e}"))
-            self._multibus_worker.start_all()
+        hubs = [self._make_hub(bus, channel, bitrate, 0)]
+        # Extra buses configured in Settings each get their own hub and bus index.
+        for i, cfg in enumerate(self._multibus_config, start=1):
+            name = cfg.get("name") or cfg.get("channel", "?")
+            try:
+                extra = self._open_bus(cfg.get("interface", "socketcan"),
+                                       cfg.get("channel", "can0"),
+                                       int(cfg.get("bitrate", 500000)))
+            except Exception as e:
+                self.statusBar().showMessage(f"Bus {name}: {e}", 5000)
+                continue
+            hubs.append(self._make_hub(extra, name,
+                                       int(cfg.get("bitrate", 500000)), i))
+
+        self._hubs = hubs
+        for hub in self._hubs:
+            hub.start()
+        self._state.bus_hub      = self._hubs[0]
+        self._state.can_bus      = self._hubs[0]   # gated .send for REST /inject
+        self._state.is_connected = True
+        self._drain_timer.start()
 
         self._act_connect.setEnabled(False)
         self._act_disconnect.setEnabled(True)
         self._state.can_connected.emit(True)
 
-    def _on_worker_started(self):
-        # Share the bus handle with state so injection + diagnostics can use it.
-        # The Bus object is created inside the worker thread and may not exist
-        # immediately, so poll for it rather than assuming it's ready after a
-        # fixed 500 ms (slow USB/Panda opens raced that and left can_bus=None).
-        self._share_bus_attempts = 0
-        self._poll_share_bus()
+    def _open_bus(self, interface: str, channel: str, bitrate: int,
+                  fd: bool = False, data_bitrate=None):
+        kwargs = dict(channel=channel, interface=interface, bitrate=bitrate)
+        if fd:
+            kwargs["fd"] = True
+            if data_bitrate:
+                kwargs["data_bitrate"] = data_bitrate
+        return can.interface.Bus(**kwargs)
 
-    def _poll_share_bus(self):
-        if not self._live_worker:
-            return
-        bus = self._live_worker.get_bus()
-        if bus is not None:
-            self._state.can_bus      = bus
-            self._state.is_connected = True
-            return
-        self._share_bus_attempts += 1
-        if self._share_bus_attempts < 50:      # retry up to ~5 s
-            QTimer.singleShot(100, self._poll_share_bus)
-        else:
-            self.statusBar().showMessage(
-                "CAN bus handle not ready — injection/diagnostics unavailable", 5000
-            )
+    def _make_hub(self, bus, name: str, bitrate: int, index: int):
+        from canlab.core.bus_hub import BusHub
+        return BusHub(
+            bus, name=name, bus_index=index, bitrate=bitrate,
+            on_error=self.live_error.emit,
+            on_load=self._state.bus_load_update.emit,
+            on_trigger=lambda rule, msg: self._state.trigger_fired.emit(rule, msg),
+            triggers_getter=lambda: self._state.triggers,
+        )
+
+    def _drain_live_frames(self):
+        rows = []
+        for hub in self._hubs:
+            rows.extend(hub.drain())
+        if rows:
+            self._live_frame_count += len(rows)
+            self._state.append_rows(rows)
 
     def _disconnect_can(self):
-        if self._live_worker:
-            self._live_worker.stop()
-            self._live_worker.wait(2000)
-            self._live_worker = None
-        if self._multibus_worker:
-            self._multibus_worker.stop_all()
-            self._multibus_worker = None
+        self._drain_timer.stop()
+        self._drain_live_frames()       # flush the tail so no frames are lost
+        self._state.drop_bus_views()
+        for hub in self._hubs:
+            hub.shutdown()
+        self._hubs = []
+        self._state.bus_hub      = None
         self._state.can_bus      = None
         self._state.is_connected = False
         self._act_connect.setEnabled(True)
         self._act_disconnect.setEnabled(False)
         self._state.can_connected.emit(False)
-        self._bus_load_meter.reset()
-
-    def _on_live_frame(self, msg, bus_name=None):
-        self._live_frame_count += 1
-
-        # Bus load
-        load = self._bus_load_meter.add_frame(msg.dlc, msg.timestamp)
-        if load is not None:
-            self._state.bus_load_update.emit(load)
-
-        # Trigger check
-        if self._state.triggers:
-            from canlab.core.trigger import check_triggers
-            fired = check_triggers(
-                self._state.triggers, msg.arbitration_id, bytes(msg.data)
-            )
-            for rule in fired:
-                self._state.trigger_fired.emit(rule, msg)
-
-        # UDS response routing
-        if 0x7E8 <= msg.arbitration_id <= 0x7EF:
-            self._state.uds_response.emit(msg.arbitration_id, bytes(msg.data))
-
-        byte_data = list(msg.data) + [None] * (8 - len(msg.data))
-        row = {
-            "Timestamp": msg.timestamp,
-            "ID":        format(msg.arbitration_id, "03X"),
-            "Bus":       bus_name if bus_name is not None else "live",
-            "DLC":       msg.dlc,
-            "Delta":     0.0,
-            **{f"B{i}": byte_data[i] for i in range(8)},
-        }
-        self._live_rows.append(row)
-        if len(self._live_rows) >= 50:
-            df = pd.DataFrame(self._live_rows)
-            self._state.append_frames(df)
-            self._live_rows.clear()
 
     def _on_live_error(self, err: str):
         QMessageBox.critical(self, "CAN Error", err)
@@ -923,11 +825,8 @@ class MainWindow(QMainWindow):
         from canlab.core.safety import set_armed
         set_armed(False)                       # stops every registered TX worker
         self._stop_rest_api()
-        if self._live_worker:
-            self._live_worker.stop()
-            self._live_worker.wait(2000)
-        if self._multibus_worker:
-            self._multibus_worker.stop_all()
+        if self._hubs:
+            self._disconnect_can()
         for i in range(self.tabs.count()):
             tab = self.tabs.widget(i)
             if hasattr(tab, "cleanup"):

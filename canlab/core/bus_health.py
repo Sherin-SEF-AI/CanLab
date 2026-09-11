@@ -15,6 +15,10 @@ from collections import deque
 from canlab.core.bus_load import BusLoadMeter
 
 
+# SocketCAN error-class bits (linux/can/error.h)
+CAN_ERR_BUSOFF = 0x00000040
+
+
 class BusHealthMeter:
     """
     Drop-in companion to BusLoadMeter. Call add_frame() for every received
@@ -38,16 +42,18 @@ class BusHealthMeter:
         self._last_ts:    float           = 0.0   # most recent frame timestamp seen
 
     def add_frame(self, dlc: int, timestamp: float, can_id: str = "",
-                  is_error: bool = False):
+                  is_error: bool = False, error_class: int = 0):
         """
         Call for every CAN frame (including error frames).
-        Pass is_error=True for frames with python-can's is_error_frame flag set.
+
+        Pass is_error=True for frames with python-can's is_error_frame flag set,
+        and error_class = the error frame's arbitration id. SocketCAN encodes the
+        error reason in that id; bit 0x40 (CAN_ERR_BUSOFF) is the bus-off event.
         """
         # Error frame detection
         if is_error:
             self._error_frames += 1
-            # Bus-off: error frame with DLC == 0 and specific CAN controller pattern
-            if dlc == 0:
+            if int(error_class) & CAN_ERR_BUSOFF:
                 self._bus_off_events += 1
             return  # error frames don't count toward load
 

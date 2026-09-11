@@ -146,7 +146,7 @@ class OBDDashboardTab(QWidget):
                 for item in self.pid_list.selectedItems()]
 
     def _start_polling(self):
-        bus = self._state.can_bus
+        bus = self._state.bus_view(self, range(0x7E8, 0x7F0))
         if bus is None:
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return
@@ -185,7 +185,7 @@ class OBDDashboardTab(QWidget):
                 setattr(self, attr, None)
 
     def _discover_pids(self):
-        bus = self._state.can_bus
+        bus = self._state.bus_view(self, range(0x7E8, 0x7F0))
         if bus is None:
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return

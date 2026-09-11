@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QTabWidget, QFileDialog,
     QProgressBar, QLineEdit, QMessageBox, QTextEdit,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
 
 from canlab.theme import COLORS, mono_font
@@ -22,13 +22,13 @@ class InjectionTab(QWidget):
         self._state           = get_state()
         self._inj_worker      = None
         self._replay_worker   = None
-        self._trigger_timer   = QTimer()
         self._trigger_log     = []
         self._build_ui()
         self._state.dbc_updated.connect(self._refresh_signal_list)
         self._state.can_connected.connect(self._on_can_status)
-        self._trigger_timer.setInterval(200)
-        self._trigger_timer.timeout.connect(self._poll_triggers)
+        # Triggers are evaluated once per frame inside the receive hub; this tab
+        # only renders the hits.
+        self._state.trigger_fired.connect(self._on_trigger_fired)
 
     # ── UI ────────────────────────────────────────────────────────────────────
 
@@ -295,7 +295,7 @@ class InjectionTab(QWidget):
     # ── Injection actions ─────────────────────────────────────────────────────
 
     def _get_bus(self):
-        return self._state.can_bus
+        return self._state.bus_view(self)
 
     def _get_selected_sig(self) -> dict | None:
         idx = self.sig_combo.currentIndex()
@@ -503,50 +503,26 @@ class InjectionTab(QWidget):
         if self._triggers_active:
             self.btn_trig_start.setText("Disable Triggers")
             self.btn_trig_start.setStyleSheet(f"color:{COLORS['error']}")
-            self._trigger_timer.start()
         else:
             self.btn_trig_start.setText("Enable Triggers")
             self.btn_trig_start.setStyleSheet("")
-            self._trigger_timer.stop()
-            try:
-                self._state.frames_updated.disconnect(self._check_live_triggers)
-            except Exception:
-                log.debug("suppressed exception", exc_info=True)
 
-    def _check_live_triggers(self):
-        from canlab.core.trigger import check_triggers
-        df = self._state.frames_df
-        if df.empty or not self._state.triggers:
+    def _on_trigger_fired(self, rule: dict, msg):
+        """A hub-evaluated trigger matched a live frame."""
+        if not self._triggers_active:
             return
-        last = df.tail(10)
-        for _, row in last.iterrows():
-            try:
-                arb_id = int(str(row["ID"]), 16) if isinstance(row["ID"], str) else int(row["ID"])
-                data   = bytes(
-                    int(row[f"B{i}"]) if __import__("pandas").notna(row.get(f"B{i}")) else 0
-                    for i in range(8)
-                )
-            except Exception:
-                continue
-            fired = check_triggers(self._state.triggers, arb_id, data)
-            for rule in fired:
-                msg = f"[{row.get('Timestamp',0):.3f}]  {rule['label']}  — 0x{arb_id:03X}"
-                if not self._trigger_log or self._trigger_log[-1] != msg:
-                    self._trigger_log.append(msg)
-                    self._state.trigger_fired.emit(rule, row)
-                    self._refresh_trigger_log()
+        ts = getattr(msg, "timestamp", 0.0) or 0.0
+        arb = getattr(msg, "arbitration_id", 0)
+        line = f"[{ts:.3f}]  {rule.get('label', '?')}  — 0x{arb:03X}"
+        self._trigger_log.append(line)
+        if len(self._trigger_log) > 500:
+            del self._trigger_log[:-500]
+        self._refresh_trigger_log()
 
     def _refresh_trigger_log(self):
         self.trig_log_text.setPlainText(
             "\n".join(reversed(self._trigger_log[-100:]))
         )
-
-    def _poll_triggers(self):
-        # Driven by the 200 ms timer while triggers are active. (Previously a
-        # no-op, so the timer did nothing.)
-        self._check_live_triggers()
-
-    # ── Safety Scan sub-tab ───────────────────────────────────────────────────
 
     def _build_safety_tab(self) -> QWidget:
         w   = QWidget()
@@ -999,7 +975,7 @@ class InjectionTab(QWidget):
                 self.seq_table.setItem(i, ci, item)
 
     def _seq_run(self):
-        bus = self._state.can_bus
+        bus = self._get_bus()
         if bus is None:
             QMessageBox.warning(self, "No Bus", "Connect CAN first.")
             return

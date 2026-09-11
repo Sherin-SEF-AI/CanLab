@@ -14,7 +14,6 @@ class AppState(QObject):
     # New signals for advanced features
     project_loaded      = pyqtSignal()
     trigger_fired       = pyqtSignal(dict, object)   # rule, frame
-    uds_response        = pyqtSignal(int, bytes)     # arb_id, data
     replay_tick         = pyqtSignal(int, int)       # current, total
     bus_load_update     = pyqtSignal(float)          # 0.0–1.0
     anomaly_requested   = pyqtSignal(str, object)    # hex_id, frames_df
@@ -53,7 +52,10 @@ class AppState(QObject):
         self.frames_df:        pd.DataFrame = pd.DataFrame()
         self.selected_id:      str          = ""
         self.sources:          list         = []
-        self.can_bus           = None
+        self.can_bus           = None      # the BusHub while connected (has .send)
+        self.bus_hub           = None      # core.bus_hub.BusHub
+        self._bus_views: dict  = {}        # owner id -> (hub, Subscription)
+        self._last_ts_by_id: dict = {}     # live per-ID timestamp, for Delta
         self.is_connected:     bool         = False
         self.dbc_signals:      list         = []
         self.analyzed_ids:     dict         = {}
@@ -102,7 +104,45 @@ class AppState(QObject):
         self.selected_id = hex_id
         self.id_selected.emit(hex_id)
 
+    def bus_view(self, owner, id_filter=None):
+        """A private receive queue on the live bus for ``owner`` (None if offline).
+
+        The returned object duck-types a python-can bus (send/recv), so workers
+        take it in place of the raw bus and never compete for frames.
+        """
+        hub = self.bus_hub
+        if hub is None:
+            return None
+        cached = self._bus_views.get(id(owner))
+        if cached is not None and cached[0] is hub and not cached[1].closed:
+            return cached[1]
+        sub = hub.subscribe(id_filter)
+        self._bus_views[id(owner)] = (hub, sub)
+        return sub
+
+    def drop_bus_views(self):
+        for _hub, sub in self._bus_views.values():
+            try:
+                sub.close()
+            except Exception:
+                pass
+        self._bus_views.clear()
+
+    def append_rows(self, rows: list):
+        """Append canonical live-capture rows (from BusHub.drain())."""
+        if not rows:
+            return
+        df = pd.DataFrame(rows)
+        deltas = []
+        for ts, cid in zip(df["Timestamp"].to_numpy(), df["ID"].to_numpy()):
+            prev = self._last_ts_by_id.get(cid)
+            deltas.append(0.0 if prev is None else float(ts) - float(prev))
+            self._last_ts_by_id[cid] = ts
+        df["Delta"] = deltas
+        self.append_frames(df)
+
     def load_frames(self, df: pd.DataFrame, source_name: str):
+        self._last_ts_by_id.clear()
         self.frames_df = df
         count = len(df)
         self.sources.append({"name": source_name, "count": count})
