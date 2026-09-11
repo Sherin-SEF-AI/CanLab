@@ -3,7 +3,6 @@ import pandas as pd
 
 from canlab.core.frame_store import FrameStore
 
-
 class AppState(QObject):
     id_selected       = pyqtSignal(str)
     frames_loaded     = pyqtSignal(int)
@@ -13,34 +12,23 @@ class AppState(QObject):
     frames_updated    = pyqtSignal()
     source_added      = pyqtSignal(str, int)
 
-    # New signals for advanced features
     project_loaded      = pyqtSignal()
     trigger_fired       = pyqtSignal(dict, object)   # rule, frame
     replay_tick         = pyqtSignal(int, int)       # current, total
     bus_load_update     = pyqtSignal(float)          # 0.0–1.0
-    anomaly_requested   = pyqtSignal(str, object)    # hex_id, frames_df
 
-    # ── New signals for 12-feature additions ──────────────────────────────────
+    # Signals below are the event bus plugins can connect to (see docs/PLUGINS.md).
     canfd_toggled        = pyqtSignal(bool)
     change_detected      = pyqtSignal(list)           # list of delta dicts
-    fuzz_progress        = pyqtSignal(int, int)        # done, total
-    multibus_frame       = pyqtSignal(str, object)     # bus_name, frame
     safety_cutout        = pyqtSignal(float, str)      # value_at_cutout, reason
     note_updated         = pyqtSignal(str)             # signal_key
 
-    # ── New signals for 8 production enhancements ─────────────────────────────
-    isotp_response       = pyqtSignal(int, bytes)      # arb_id, full assembled payload
     bus_health_update    = pyqtSignal(dict)             # health snapshot
-    test_step_completed  = pyqtSignal(int, bool, str)  # step_idx, ok, message
-    j1939_decoded        = pyqtSignal(int, dict)        # pgn, {spn: value}
     dbc_db_updated       = pyqtSignal()                 # cantools cache rebuilt
     tx_armed_changed     = pyqtSignal(bool)             # ARM TX toggled
 
-    # ── OBD-II live gauges ────────────────────────────────────────────────────
     pid_value_updated    = pyqtSignal(int, float, str)  # pid, value, unit
 
-    # ── Signal Intelligence (ML) ──────────────────────────────────────────────
-    ml_analysis_ready    = pyqtSignal(str, dict)         # id, roles_dict
     anomaly_detected     = pyqtSignal(str, float)        # id, score
 
     def __init__(self, parent=None):
@@ -77,8 +65,6 @@ class AppState(QObject):
 
         # ── New fields for 12-feature additions ───────────────────────────────
         self.canfd_enabled:     bool         = False
-        self.multibus_buses:    dict         = {}   # name -> Bus instance
-        self.change_baseline                 = None # ChangeRecorder snapshot
         self.notes_by_signal:   dict         = {}   # "{msg_id}/{sig_name}" -> str
         self.fuzz_running:      bool         = False
         self.active_backend:    str          = "python-can"
@@ -196,7 +182,6 @@ class AppState(QObject):
 
     def get_unique_ids(self) -> list:
         return self._store.unique_ids()
-
 
 _state = None
 

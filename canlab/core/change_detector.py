@@ -161,19 +161,3 @@ def _changed_bits(before: int, after: int) -> list[int]:
     return [bit for bit in range(8) if (diff >> bit) & 1]
 
 
-def _summarise(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute median byte values per ID (kept for API compatibility)."""
-    rows = []
-    if df.empty:
-        return pd.DataFrame(columns=["ID"] + BYTE_COLS)
-    for can_id in df["ID"].unique():
-        grp = df[df["ID"] == can_id]
-        row = {"ID": can_id}
-        for col in BYTE_COLS:
-            if col in grp.columns:
-                vals = grp[col].dropna()
-                row[col] = float(vals.median()) if not vals.empty else 0.0
-            else:
-                row[col] = 0.0
-        rows.append(row)
-    return pd.DataFrame(rows)

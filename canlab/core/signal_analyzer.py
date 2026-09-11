@@ -218,7 +218,6 @@ def compute_timing_dependency_matrix(df: pd.DataFrame) -> pd.DataFrame:
 
 # Backwards-compatible alias. The old name implied signal-value correlation,
 # which this never computed; kept so existing callers keep working.
-compute_correlation_matrix = compute_timing_dependency_matrix
 
 
 def _dependency_score(a: np.ndarray, b: np.ndarray) -> float:

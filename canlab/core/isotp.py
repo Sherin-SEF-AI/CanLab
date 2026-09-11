@@ -289,15 +289,3 @@ class ISOTPSession:
             gated_send(self._bus, msg)
         except Exception:
             log.warning("suppressed exception", exc_info=True)
-
-
-def recv_isotp(bus, rx_id: int, timeout: float = 1.0) -> Optional[bytes]:
-    """
-    Passive receive only (no request sent). Useful for sniffing ISO-TP responses.
-    Returns assembled payload or None on timeout.
-    """
-    dummy_tx = rx_id - 8  # typical response offset reversed
-    session  = ISOTPSession(bus, tx_id=dummy_tx, rx_id=rx_id)
-    # passive=True: do not inject Flow Control while merely sniffing, which would
-    # otherwise put frames on the bus and could corrupt another tester's transfer.
-    return session._receive(None, timeout, passive=True)

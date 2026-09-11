@@ -358,15 +358,3 @@ class PlotTab(QWidget):
             exporter.export(path)
         except Exception as e:
             QMessageBox.warning(self, "Screenshot", f"Could not save screenshot: {e}")
-
-    def add_event_markers(self, events: list[dict]):
-        for pi, curve, color, label in self._plot_items.values():
-            for evt in events:
-                ts = evt.get("timestamp", 0)
-                line = pg.InfiniteLine(
-                    pos=ts, angle=90, movable=False,
-                    pen=pg.mkPen(color=COLORS["amber"], width=1, style=Qt.PenStyle.DashLine),
-                    label=evt.get("event", ""),
-                    labelOpts={"color": COLORS["amber"], "position": 0.9},
-                )
-                pi.addItem(line)

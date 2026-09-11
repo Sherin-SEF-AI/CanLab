@@ -40,7 +40,6 @@ class AIEngineTab(QWidget):
         self._btn_pulse = ButtonPulse(self.btn_analyze)
         self._tw_cursor = TypewriterCursor(self.response_text)
         self._state.id_selected.connect(self._load_id)
-        self._state.anomaly_requested.connect(self._on_anomaly_requested)
         # Load persisted memory
         from canlab.core.ai_memory import load_memory
         self._state.ai_memory = load_memory()
@@ -392,15 +391,6 @@ class AIEngineTab(QWidget):
             t = t - t[0]
             y = s.values.astype(float) + i * 30
             self.sparkline_widget.plot(t, y, pen=pg.mkPen(color=color, width=1))
-
-    # ── Anomaly ───────────────────────────────────────────────────────────────
-
-    def _on_anomaly_requested(self, hex_id: str, frames_df):
-        self._load_id(hex_id)
-        self.context_input.setPlainText(
-            "Anomalous frames detected — please explain what might cause this."
-        )
-        self._run_analysis()
 
     # ── Analysis ──────────────────────────────────────────────────────────────
 
