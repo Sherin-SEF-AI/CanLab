@@ -20,8 +20,11 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 
-from theme import COLORS, mono_font
-from core.state import get_state
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+import logging
+
+log = logging.getLogger(__name__)
 
 BYTE_COLS = [f"B{i}" for i in range(8)]
 MAX_ROWS  = 8
@@ -289,7 +292,7 @@ class TimelineTab(QWidget):
                     f"0x{mid} {name}")
 
         if kind == "dbc":
-            from core.dbc_manager import decode_frame
+            from canlab.core.dbc_manager import decode_frame
             sigs   = [s for s in self._state.dbc_signals
                       if s.get("message_id", "").upper() == mid.upper()]
             frames = df[df["ID"] == mid].sort_values("Timestamp")
@@ -320,7 +323,7 @@ class TimelineTab(QWidget):
                 line.setValue(t)
             self._seek_video_to_log_time(t)
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Video player

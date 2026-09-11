@@ -1,13 +1,11 @@
 import keyring
-from pathlib import Path
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QLabel, QLineEdit, QPushButton, QComboBox,
-    QGroupBox, QGridLayout, QFileDialog, QMessageBox,
-    QSpinBox, QListWidget, QListWidgetItem, QCheckBox,
+    QGroupBox, QGridLayout, QSpinBox, QListWidget, QCheckBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QRadioButton, QButtonGroup,
 )
-from theme import COLORS, mono_font
+from canlab.theme import mono_font
 
 KEYRING_SERVICE    = "canlab"
 KEYRING_API_KEY    = "anthropic_api_key"
@@ -320,7 +318,7 @@ class SettingsDialog(QDialog):
         if midx >= 0:
             self.model_combo.setCurrentIndex(midx)
 
-        from core.state import get_state
+        from canlab.core.state import get_state
         state = get_state()
         # Backend
         backend = getattr(state, "active_backend", "python-can")
@@ -341,7 +339,7 @@ class SettingsDialog(QDialog):
         save_ai_model(self.model_combo.currentText())
 
         # Persist new settings to AppState
-        from core.state import get_state
+        from canlab.core.state import get_state
         state = get_state()
         state.active_backend = "panda" if self.radio_panda.isChecked() else "python-can"
         state.panda_safety_model = self.panda_safety_combo.currentText()
@@ -351,7 +349,7 @@ class SettingsDialog(QDialog):
         self.accept()
 
     def _refresh_plugins(self):
-        from core.plugin_loader import discover_plugins
+        from canlab.core.plugin_loader import discover_plugins
         plugins = discover_plugins()
         self.plugins_list.clear()
         if not plugins:

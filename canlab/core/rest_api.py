@@ -125,7 +125,7 @@ def _build_app(state_getter, token: str):
     @app.post("/inject", dependencies=auth)
     def inject_frame(req: InjectRequest):
         import can
-        from core.safety import is_armed
+        from canlab.core.safety import is_armed
         state = state_getter()
         if state.can_bus is None:
             raise HTTPException(status_code=503, detail="CAN bus not connected")

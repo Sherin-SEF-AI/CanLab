@@ -1,4 +1,4 @@
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtGui import QFont
 
 COLORS = {
     "bg":           "#0a0a0a",

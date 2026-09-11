@@ -6,8 +6,8 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 import pandas as pd
 
-from core.rest_api import _build_app
-import core.safety as safety
+from canlab.core.rest_api import _build_app
+import canlab.core.safety as safety
 
 
 def _state():

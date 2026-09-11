@@ -3,7 +3,7 @@ import pytest
 
 pytest.importorskip("PyQt6")   # core.uds imports QThread at module load
 
-from core.uds import DESTRUCTIVE_SERVICES
+from canlab.core.uds import DESTRUCTIVE_SERVICES
 
 
 def test_dangerous_services_are_flagged_destructive():

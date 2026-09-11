@@ -15,7 +15,10 @@ _classify improvements:
 
 import numpy as np
 import pandas as pd
-from scipy.stats import entropy as scipy_entropy, spearmanr
+from scipy.stats import spearmanr
+import logging
+
+log = logging.getLogger(__name__)
 
 try:
     from sklearn.metrics import mutual_info_score as _mi_score
@@ -90,8 +93,6 @@ def _classify(stats: dict, frames: pd.DataFrame) -> str:
     entropies  = [b["entropy"] for b in byte_stats.values()]
     if not entropies:
         return "UNKNOWN"
-
-    mean_ent = np.mean(entropies)
 
     # Counter: one byte has near-linear increment pattern
     for col, bstats in byte_stats.items():
@@ -233,7 +234,7 @@ def _dependency_score(a: np.ndarray, b: np.ndarray) -> float:
         spear, _ = spearmanr(a, b)
         scores.append(abs(float(spear)) if not np.isnan(spear) else 0.0)
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
 
     # Mutual information (catches any statistical dependency)
     if _SKLEARN:
@@ -246,6 +247,6 @@ def _dependency_score(a: np.ndarray, b: np.ndarray) -> float:
             mi_norm = min(1.0, mi / np.log2(16))
             scores.append(mi_norm)
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
     return round(max(scores) if scores else 0.0, 3)

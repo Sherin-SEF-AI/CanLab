@@ -46,7 +46,7 @@ class ReplayWorker(QThread):
 
     def run(self):
         import can
-        from core.safety import require_armed, BusNotArmedError
+        from canlab.core.safety import require_armed, BusNotArmedError
         rows = self._df.sort_values("Timestamp").reset_index(drop=True)
         n    = len(rows)
         if n == 0:

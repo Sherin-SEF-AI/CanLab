@@ -2,6 +2,9 @@
 import json
 from pathlib import Path
 from datetime import datetime
+import logging
+
+log = logging.getLogger(__name__)
 
 MEMORY_FILE = Path.home() / ".canlab" / "memory.json"
 
@@ -11,7 +14,7 @@ def load_memory() -> list:
         if MEMORY_FILE.exists():
             return json.loads(MEMORY_FILE.read_text())
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
     return []
 
 
@@ -20,7 +23,7 @@ def save_memory(entries: list):
     try:
         MEMORY_FILE.write_text(json.dumps(entries, indent=2))
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
 
 
 def add_entry(entries: list, hex_id: str, conclusion: str, source: str = "AI") -> list:

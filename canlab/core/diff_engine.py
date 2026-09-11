@@ -1,6 +1,5 @@
 """Compare two log DataFrames and highlight per-ID / per-byte differences."""
 import pandas as pd
-import numpy as np
 
 BYTE_COLS = [f"B{i}" for i in range(8)]
 

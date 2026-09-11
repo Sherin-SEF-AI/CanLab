@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-import mcp_server
+from canlab import mcp_server
 
 SAMPLE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                       "canlab", "sample_data", "sample_kona_drive.csv")

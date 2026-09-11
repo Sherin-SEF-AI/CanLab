@@ -1,6 +1,6 @@
 """INJECTION tab — signal injection wizard, replay mode, trigger capture."""
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QPushButton, QLabel,
+    QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
     QComboBox, QDoubleSpinBox, QSpinBox, QCheckBox, QGroupBox, QSlider,
     QTableWidget, QTableWidgetItem, QHeaderView, QTabWidget, QFileDialog,
     QProgressBar, QLineEdit, QMessageBox, QTextEdit,
@@ -8,9 +8,12 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QBrush
 
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.canid import normalize_id
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+from canlab.core.canid import normalize_id
+import logging
+
+log = logging.getLogger(__name__)
 
 
 class InjectionTab(QWidget):
@@ -309,7 +312,7 @@ class InjectionTab(QWidget):
         if bus is None:
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return
-        from core.injection import pack_signal, hyundai_checksum
+        from canlab.core.injection import pack_signal, hyundai_checksum
         value = self.val_spin.value()
         data  = pack_signal(value, sig)
         mid_str = sig.get("message_id", "0")
@@ -342,7 +345,7 @@ class InjectionTab(QWidget):
         if bus is None:
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return
-        from core.injection import InjectionWorker
+        from canlab.core.injection import InjectionWorker
         value  = self.val_spin.value()
         period = self.period_spin.value()
         self._inj_worker = InjectionWorker(
@@ -373,7 +376,7 @@ class InjectionTab(QWidget):
     # ── Replay actions ────────────────────────────────────────────────────────
 
     def _load_replay_log(self):
-        from core.log_parser import parse_log_file
+        from canlab.core.log_parser import parse_log_file
         path, _ = QFileDialog.getOpenFileName(
             self, "Open Log for Replay", "", "Log Files (*.csv *.log);;All (*)"
         )
@@ -395,7 +398,7 @@ class InjectionTab(QWidget):
         if bus is None:
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return
-        from core.replay import ReplayWorker
+        from canlab.core.replay import ReplayWorker
         self._replay_worker = ReplayWorker(
             bus=bus,
             frames_df=self._replay_df,
@@ -492,10 +495,10 @@ class InjectionTab(QWidget):
             try:
                 self._state.frames_updated.disconnect(self._check_live_triggers)
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
 
     def _check_live_triggers(self):
-        from core.trigger import check_triggers
+        from canlab.core.trigger import check_triggers
         df = self._state.frames_df
         if df.empty or not self._state.triggers:
             return
@@ -633,7 +636,7 @@ class InjectionTab(QWidget):
         min_val = float(sig.get("min_val", 0))
         max_val = float(sig.get("max_val", 255))
 
-        from core.safety_scanner import SafetyScanWorker
+        from canlab.core.safety_scanner import SafetyScanWorker
         self._scan_worker = SafetyScanWorker(
             bus=bus, sig=sig,
             min_val=min_val, max_val=max_val,
@@ -775,7 +778,7 @@ class InjectionTab(QWidget):
             QMessageBox.warning(self, "Invalid ID", "Enter a valid hex CAN ID.")
             return
 
-        from core.fuzzer import FuzzWorker
+        from canlab.core.fuzzer import FuzzWorker
         self._fuzz_worker = FuzzWorker(
             bus=bus,
             target_id=target_id,
@@ -827,7 +830,6 @@ class InjectionTab(QWidget):
     # ── Test Sequence sub-tab ─────────────────────────────────────────────────
 
     def _build_sequence_tab(self) -> QWidget:
-        from PyQt6.QtWidgets import QSplitter
         w   = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(8, 8, 8, 8)
@@ -932,7 +934,7 @@ class InjectionTab(QWidget):
         return w
 
     def _seq_add_step(self):
-        from core.test_sequence import TestStep, StepType
+        from canlab.core.test_sequence import TestStep, StepType
         stype = StepType(self.seq_type.currentText())
         step  = TestStep(
             step_type    = stype,
@@ -988,7 +990,7 @@ class InjectionTab(QWidget):
         if not self._seq_steps:
             QMessageBox.information(self, "Empty", "Add steps first.")
             return
-        from core.test_sequence import TestSequenceWorker
+        from canlab.core.test_sequence import TestSequenceWorker
         self._seq_worker = TestSequenceWorker(list(self._seq_steps), bus)
         self._seq_worker.step_started.connect(
             lambda idx: self.seq_log.append(f"→ Step {idx}: {self._seq_steps[idx].step_type.value}…")

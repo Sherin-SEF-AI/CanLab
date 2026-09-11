@@ -15,6 +15,9 @@ Usage:
 """
 import time
 from typing import Optional
+import logging
+
+log = logging.getLogger(__name__)
 
 # Flow Control constants
 FC_CTS   = 0x30   # Continue To Send
@@ -151,7 +154,6 @@ class ISOTPSession:
         If expected_len is None we infer from the SF/FF length byte.
         When passive=True (sniffing), no Flow Control is transmitted.
         """
-        import can
         deadline  = time.monotonic() + timeout
         payload   = bytearray()
         total_len = expected_len  # None until we parse SF/FF
@@ -209,7 +211,7 @@ class ISOTPSession:
             )
             self._bus.send(msg)
         except Exception:
-            pass
+            log.warning("suppressed exception", exc_info=True)
 
 
 def recv_isotp(bus, rx_id: int, timeout: float = 1.0) -> Optional[bytes]:

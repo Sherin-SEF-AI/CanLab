@@ -2,13 +2,13 @@
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QFileDialog,
-    QTextEdit, QMessageBox, QProgressBar, QTabWidget, QLineEdit,
+    QTextEdit, QMessageBox,
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QBrush, QFont
+from PyQt6.QtGui import QColor, QBrush
 
-from theme import COLORS, mono_font
-from core.state import get_state
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
 
 
 STATUS_COLORS = {
@@ -236,7 +236,7 @@ class IntelligenceTab(QWidget):
     # ── Periodicity ───────────────────────────────────────────────────────────
 
     def _compute_periodicity(self):
-        from core.periodicity import compute_periodicity, classify_period
+        from canlab.core.periodicity import compute_periodicity, classify_period
         periods = compute_periodicity(self._state.frames_df)
         self._state.periodicities = periods
         self.period_table.setRowCount(len(periods))
@@ -255,7 +255,7 @@ class IntelligenceTab(QWidget):
     # ── Auto DBC ──────────────────────────────────────────────────────────────
 
     def _auto_build_dbc(self):
-        from core.auto_dbc import build_from_analyzer
+        from canlab.core.auto_dbc import build_from_analyzer
         if self._state.frames_df.empty:
             QMessageBox.information(self, "No Data", "Load a CAN log first.")
             return
@@ -281,8 +281,8 @@ class IntelligenceTab(QWidget):
         self.lbl_baseline.setStyleSheet(f"color:{COLORS['amber']}")
 
     def _run_diff(self):
-        from core.diff_engine import diff_logs
-        from core.log_parser import parse_log_file
+        from canlab.core.diff_engine import diff_logs
+        from canlab.core.log_parser import parse_log_file
         if self._state.diff_baseline_df.empty:
             QMessageBox.information(self, "No Baseline", "Set a baseline first.")
             return
@@ -321,7 +321,7 @@ class IntelligenceTab(QWidget):
     # ── opendbc cross-ref ─────────────────────────────────────────────────────
 
     def _run_xref(self):
-        from core.opendbc_matcher import scan
+        from canlab.core.opendbc_matcher import scan
         if not self._state.dbc_signals:
             self.xref_text.setPlainText("No signals in DBC Builder yet.")
             return
@@ -343,7 +343,7 @@ class IntelligenceTab(QWidget):
 
     def _get_recorder(self):
         if self._change_recorder is None:
-            from core.change_detector import ChangeRecorder
+            from canlab.core.change_detector import ChangeRecorder
             self._change_recorder = ChangeRecorder()
         return self._change_recorder
 
@@ -415,7 +415,7 @@ class IntelligenceTab(QWidget):
         if df.empty:
             QMessageBox.information(self, "No Data", "Load frames first.")
             return
-        from core.j1939 import scan_for_j1939, decode_pgn
+        from canlab.core.j1939 import scan_for_j1939, decode_pgn
         hits = scan_for_j1939(df)
         if not hits:
             self.lbl_j1939.setText("No J1939 IDs detected (all IDs are ≤ 0x7FF).")
@@ -462,7 +462,7 @@ class IntelligenceTab(QWidget):
             return
         target = self.vr_target.value()
         tol    = self.vr_tol.value()
-        from core.value_reverse import find_signal_for_value
+        from canlab.core.value_reverse import find_signal_for_value
         candidates = find_signal_for_value(df, target, tol)
         self.vr_table.setRowCount(0)
         if not candidates:

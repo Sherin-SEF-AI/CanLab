@@ -7,10 +7,10 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.canid import normalize_id
-from core.dbc_manager import signals_to_dbc_string, load_dbc, decode_frame, validate_signals
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+from canlab.core.canid import normalize_id
+from canlab.core.dbc_manager import signals_to_dbc_string, load_dbc, decode_frame, validate_signals
 
 BYTE_COLS = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
 
@@ -207,7 +207,7 @@ class DBCBuilderTab(QWidget):
         right_lay.addWidget(self.status_label)
 
         # Bit editor panel
-        from tabs.widgets.bit_editor import BitGridWidget
+        from canlab.tabs.widgets.bit_editor import BitGridWidget
         self.bit_editor = BitGridWidget()
         self.bit_editor.selection_changed.connect(self._on_bit_selection)
         right_lay.addWidget(self.bit_editor)
@@ -405,7 +405,7 @@ class DBCBuilderTab(QWidget):
         self._state.remove_dbc_signal(idx)
 
     def _auto_build(self):
-        from core.auto_dbc import build_from_analyzer
+        from canlab.core.auto_dbc import build_from_analyzer
         if self._state.frames_df.empty:
             QMessageBox.information(self, "No Data", "Load a CAN log first.")
             return
@@ -450,8 +450,8 @@ class DBCBuilderTab(QWidget):
         if not path:
             return
         try:
-            from core.dbc_manager import export_opendbc
-            from core.openpilot_export import HYUNDAI_MSG_META
+            from canlab.core.dbc_manager import export_opendbc
+            from canlab.core.openpilot_export import HYUNDAI_MSG_META
             dbc_str = export_opendbc(self._state.dbc_signals, HYUNDAI_MSG_META)
             with open(path, "w") as f:
                 f.write(dbc_str)
@@ -470,7 +470,7 @@ class DBCBuilderTab(QWidget):
         if not path:
             return
         try:
-            from core.lua_exporter import signals_to_lua_dissector
+            from canlab.core.lua_exporter import signals_to_lua_dissector
             lua_str = signals_to_lua_dissector(self._state.dbc_signals)
             with open(path, "w") as f:
                 f.write(lua_str)
@@ -480,7 +480,7 @@ class DBCBuilderTab(QWidget):
             QMessageBox.critical(self, "Export Error", str(e))
 
     def _cross_ref(self):
-        from core.opendbc_matcher import scan
+        from canlab.core.opendbc_matcher import scan
         if not self._state.dbc_signals:
             QMessageBox.information(self, "Empty", "No signals to cross-reference.")
             return
@@ -500,7 +500,7 @@ class DBCBuilderTab(QWidget):
         if not path:
             return
         try:
-            from core.can_matrix_parser import parse_can_matrix
+            from canlab.core.can_matrix_parser import parse_can_matrix
             signals = parse_can_matrix(path)
             if not signals:
                 QMessageBox.warning(self, "Empty", "No signals found in the file.")
@@ -508,7 +508,7 @@ class DBCBuilderTab(QWidget):
             for sig in signals:
                 self._state.add_dbc_signal(sig)
             # Rebuild cantools cache
-            from core.dbc_manager import build_db_from_signals
+            from canlab.core.dbc_manager import build_db_from_signals
             build_db_from_signals(self._state.dbc_signals)
             self.status_label.setText(
                 f"Imported {len(signals)} signal(s) from CAN matrix."
@@ -525,14 +525,14 @@ class DBCBuilderTab(QWidget):
         if not path:
             return
         try:
-            from core.arxml_import import parse_arxml
+            from canlab.core.arxml_import import parse_arxml
             signals = parse_arxml(path)
             if not signals:
                 QMessageBox.warning(self, "Empty", "No signals found in ARXML.")
                 return
             for sig in signals:
                 self._state.add_dbc_signal(sig)
-            from core.dbc_manager import build_db_from_signals
+            from canlab.core.dbc_manager import build_db_from_signals
             build_db_from_signals(self._state.dbc_signals)
             self.status_label.setText(f"Imported {len(signals)} signal(s) from ARXML.")
             self.status_label.setStyleSheet(f"color:{COLORS['green']}")
@@ -550,7 +550,7 @@ class DBCBuilderTab(QWidget):
         if not path:
             return
         try:
-            from core.arxml_export import to_arxml_string
+            from canlab.core.arxml_export import to_arxml_string
             arxml = to_arxml_string(self._state.dbc_signals)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(arxml)
@@ -569,7 +569,7 @@ class DBCBuilderTab(QWidget):
         if not path:
             return
         try:
-            from core.candbpp_export import to_candbpp_string
+            from canlab.core.candbpp_export import to_candbpp_string
             dbc_str = to_candbpp_string(self._state.dbc_signals)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(dbc_str)

@@ -3,10 +3,9 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QMenu, QSplitter,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QBrush, QFont
-import pandas as pd
-from theme import COLORS, mono_font
-from core.state import get_state
+from PyQt6.QtGui import QColor, QBrush
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
 
 
 class IDPanel(QWidget):

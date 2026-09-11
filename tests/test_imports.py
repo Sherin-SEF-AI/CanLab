@@ -13,18 +13,18 @@ pytest.importorskip("PyQt6")
 pytest.importorskip("pyqtgraph")
 
 MODULES = [
-    "theme",
-    "mainwindow",
-    "settings_dialog",
-    "core.canid", "core.safety", "core.isotp", "core.uds", "core.rest_api",
-    "core.gateway", "core.replay", "core.fuzzer", "core.injection",
-    "core.plugin_loader", "core.bus_health",
-    "tabs.frames_tab", "tabs.signals_tab", "tabs.plot_tab", "tabs.ai_engine_tab",
-    "tabs.dbc_builder_tab", "tabs.code_gen_tab", "tabs.intelligence_tab",
-    "tabs.injection_tab", "tabs.diagnostics_tab", "tabs.dashboard_tab",
-    "tabs.auto_re_tab", "tabs.timeline_tab", "tabs.obd_dashboard_tab",
-    "tabs.signal_intelligence_tab", "tabs.gateway_tab",
-    "ui.compute_worker",
+    "canlab.theme",
+    "canlab.mainwindow",
+    "canlab.settings_dialog",
+    "canlab.core.canid", "canlab.core.safety", "canlab.core.isotp", "canlab.core.uds", "canlab.core.rest_api",
+    "canlab.core.gateway", "canlab.core.replay", "canlab.core.fuzzer", "canlab.core.injection",
+    "canlab.core.plugin_loader", "canlab.core.bus_health",
+    "canlab.tabs.frames_tab", "canlab.tabs.signals_tab", "canlab.tabs.plot_tab", "canlab.tabs.ai_engine_tab",
+    "canlab.tabs.dbc_builder_tab", "canlab.tabs.code_gen_tab", "canlab.tabs.intelligence_tab",
+    "canlab.tabs.injection_tab", "canlab.tabs.diagnostics_tab", "canlab.tabs.dashboard_tab",
+    "canlab.tabs.auto_re_tab", "canlab.tabs.timeline_tab", "canlab.tabs.obd_dashboard_tab",
+    "canlab.tabs.signal_intelligence_tab", "canlab.tabs.gateway_tab",
+    "canlab.ui.compute_worker",
 ]
 
 

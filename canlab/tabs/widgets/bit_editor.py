@@ -10,10 +10,10 @@ Bit numbering follows cantools / DBC convention:
   Big-endian (Motorola): MSB = start_bit
 """
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox
-from PyQt6.QtCore    import Qt, pyqtSignal, QRect, QPoint
+from PyQt6.QtCore    import Qt, pyqtSignal, QPoint
 from PyQt6.QtGui     import QPainter, QPen, QBrush, QColor, QFont
 
-from theme import COLORS, mono_font
+from canlab.theme import COLORS, mono_font
 
 
 CELL  = 28    # px per bit cell

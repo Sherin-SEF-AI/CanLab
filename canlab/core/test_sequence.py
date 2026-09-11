@@ -15,11 +15,14 @@ TestSequenceWorker(QThread) executes the sequence and emits:
 """
 from __future__ import annotations
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
+import logging
+
+log = logging.getLogger(__name__)
 
 
 class StepType(str, Enum):
@@ -106,7 +109,7 @@ class TestSequenceWorker(QThread):
         if step.step_type == StepType.INJECT:
             try:
                 import can
-                from core.safety import require_armed
+                from canlab.core.safety import require_armed
                 require_armed()
                 data = bytearray(8)
                 data[step.byte_idx] = step.value & 0xFF
@@ -146,5 +149,5 @@ class TestSequenceWorker(QThread):
                     if len(frame.data) > byte_idx:
                         return float(frame.data[byte_idx])
         except Exception:
-            pass
+            log.warning("suppressed exception", exc_info=True)
         return None

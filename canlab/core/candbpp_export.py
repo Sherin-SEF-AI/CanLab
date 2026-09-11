@@ -8,7 +8,7 @@ msg_meta shape (same as HYUNDAI_MSG_META in openpilot_export.py, extended):
   {hex_id_str: {"cycle_time_ms": int, "has_counter": bool, "has_checksum": bool}}
 """
 
-from core.dbc_manager import signals_to_dbc_string
+from canlab.core.dbc_manager import signals_to_dbc_string
 
 
 def to_candbpp_string(signal_defs: list[dict],

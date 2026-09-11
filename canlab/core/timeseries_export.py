@@ -6,6 +6,9 @@ external analysis (pandas, Grafana/InfluxDB via CSV, or Parquet for big logs).
 from __future__ import annotations
 
 import pandas as pd
+import logging
+
+log = logging.getLogger(__name__)
 
 BYTE_COLS = [f"B{i}" for i in range(8)]
 
@@ -20,8 +23,8 @@ def decode_timeseries(frames_df: pd.DataFrame, dbc_signals: list[dict]) -> pd.Da
         return pd.DataFrame()
 
     import cantools
-    from core.dbc_manager import signals_to_dbc_string
-    from core.canid import normalize_id
+    from canlab.core.dbc_manager import signals_to_dbc_string
+    from canlab.core.canid import normalize_id
 
     try:
         db = cantools.database.load_string(
@@ -50,7 +53,7 @@ def decode_timeseries(frames_df: pd.DataFrame, dbc_signals: list[dict]) -> pd.Da
                 for k, v in decoded.items():
                     rec[str(k)] = float(v) if isinstance(v, (int, float)) else v
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
         records.append(rec)
 
     return pd.DataFrame(records)

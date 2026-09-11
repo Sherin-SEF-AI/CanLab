@@ -6,8 +6,11 @@ from PyQt6.QtWidgets import (
     QPushButton, QFileDialog, QLabel, QMessageBox,
 )
 from PyQt6.QtCore import Qt
-from theme import COLORS, mono_font
-from core.state import get_state
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+import logging
+
+log = logging.getLogger(__name__)
 
 pg.setConfigOption("background", COLORS["bg"])
 pg.setConfigOption("foreground", COLORS["text"])
@@ -223,7 +226,7 @@ class PlotTab(QWidget):
             y = s.values.astype(float)
             label = f"{can_id} {detail}"
         elif kind == "dbc" and detail:
-            from core.dbc_manager import decode_frame
+            from canlab.core.dbc_manager import decode_frame
             vals, times = [], []
             for _, row in df.iterrows():
                 byte_data = bytes(
@@ -332,7 +335,7 @@ class PlotTab(QWidget):
                             t_vals.append(float(row["Timestamp"]))
                             y_vals.append(float(decoded[detail]))
                     except Exception:
-                        pass
+                        log.debug("suppressed exception", exc_info=True)
                 if t_vals:
                     curve.setData(np.array(t_vals), np.array(y_vals))
                     pi.autoRange()

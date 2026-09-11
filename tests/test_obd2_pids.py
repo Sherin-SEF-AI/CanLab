@@ -1,6 +1,6 @@
 """Tests for OBD-II supported-PID mask decoding, including continuation
 windows above 0x20 (#17)."""
-from core.obd2_pids import supported_pids_from_mask
+from canlab.core.obd2_pids import supported_pids_from_mask
 
 
 def test_base_window_pids_1_to_32():

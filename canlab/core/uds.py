@@ -5,6 +5,9 @@ Functional request ID : 0x7DF
 Response IDs          : 0x7E8 – 0x7EF (ECU 0 – ECU 7)
 """
 from PyQt6.QtCore import QThread, pyqtSignal
+import logging
+
+log = logging.getLogger(__name__)
 
 # OBD-II PID names (Mode 01)
 OBD2_PIDS = {
@@ -142,7 +145,7 @@ class UDSScanner(QThread):
             return None
         rx_id = arb_id + 0x08
         try:
-            from core.isotp import ISOTPSession
+            from canlab.core.isotp import ISOTPSession
             session = ISOTPSession(self._bus, tx_id=arb_id, rx_id=rx_id)
             payload = session.send(data, timeout=timeout)
             if payload:
@@ -172,7 +175,7 @@ class UDSScanner(QThread):
                 if resp and 0x7E8 <= resp.arbitration_id <= 0x7EF:
                     pci = (resp.data[0] >> 4) & 0x0F if resp.data else 0xFF
                     if pci == 0x1:   # First Frame — reassemble via ISO-TP
-                        from core.isotp import ISOTPSession
+                        from canlab.core.isotp import ISOTPSession
                         rx_id   = resp.arbitration_id
                         session = ISOTPSession(self._bus, tx_id=rx_id - 0x08, rx_id=rx_id)
                         session._send_fc()
@@ -215,7 +218,7 @@ class UDSScanner(QThread):
                     value = float(a) * (scale if isinstance(scale, float) else 1.0)
                 self.pid_result.emit(pid, name, round(value, 2), unit or "")
             except Exception:
-                pass
+                log.warning("PID %s decode failed", pid, exc_info=True)
 
     def _read_dtc(self):
         self.status.emit("Reading DTCs (service 0x19)…")
@@ -263,8 +266,6 @@ class UDSScanner(QThread):
         for ecu_id in active_ecus:
             if not self._running:
                 return
-            resp_id = ecu_id + 0x08   # physical response ID
-
             # Open extended session (0x10 0x03)
             self.status.emit(f"Opening extended session on 0x{ecu_id:03X}…")
             self._send_to(ecu_id, bytes([0x02, 0x10, 0x03, 0, 0, 0, 0, 0]))

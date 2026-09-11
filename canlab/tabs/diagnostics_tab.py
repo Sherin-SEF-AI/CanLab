@@ -1,15 +1,18 @@
 """DIAGNOSTICS tab — UDS/OBD-II scanner, DTC reader, bus-load gauge, bus health."""
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QPushButton, QLabel,
+    QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QProgressBar,
     QTextEdit, QTabWidget, QComboBox, QSpinBox, QLineEdit, QFileDialog,
-    QDoubleSpinBox, QCheckBox, QMessageBox,
+    QCheckBox, QMessageBox,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QColor, QBrush
 
-from theme import COLORS, mono_font
-from core.state import get_state
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+import logging
+
+log = logging.getLogger(__name__)
 
 
 class DiagnosticsTab(QWidget):
@@ -243,7 +246,7 @@ class DiagnosticsTab(QWidget):
             self.sa_log.append("ERROR: invalid ECU address.")
             return
 
-        from core.security_access import SecurityAccessWorker
+        from canlab.core.security_access import SecurityAccessWorker
         self._sa_worker = SecurityAccessWorker(
             bus          = bus,
             ecu_addr     = ecu_addr,
@@ -318,7 +321,7 @@ class DiagnosticsTab(QWidget):
         self.sa_bf_progress.setValue(current)
 
     def _sa_show_history(self):
-        from core.security_access import load_history
+        from canlab.core.security_access import load_history
         history = load_history()
         if not history:
             self.sa_log.append("No session history yet.")
@@ -402,7 +405,7 @@ class DiagnosticsTab(QWidget):
         if bus is None:
             self.uds_log.append("ERROR: CAN bus not connected.")
             return
-        from core.uds import UDSScanner
+        from canlab.core.uds import UDSScanner
         self._uds_worker = UDSScanner(bus, mode="PID")
         self._uds_worker.pid_result.connect(self._on_pid_result)
         self._uds_worker.status.connect(lambda s: self.uds_log.append(s))
@@ -427,7 +430,7 @@ class DiagnosticsTab(QWidget):
         if bus is None:
             self.uds_log.append("ERROR: CAN bus not connected.")
             return
-        from core.uds import UDSScanner
+        from canlab.core.uds import UDSScanner
         # Store on self: a local QThread is garbage-collected the moment this
         # method returns, aborting with "QThread: Destroyed while thread is
         # still running".
@@ -513,7 +516,7 @@ class DiagnosticsTab(QWidget):
         if bus is None:
             self.deep_log.append("ERROR: CAN bus not connected.")
             return
-        from core.uds import UDSScanner
+        from canlab.core.uds import UDSScanner
         self._deep_worker = UDSScanner(bus, mode="DEEP")
         self._deep_worker.ecu_result.connect(self._on_ecu_result)
         self._deep_worker.status.connect(lambda s: (self.deep_status.setText(s), self.deep_log.append(s)))
@@ -595,7 +598,7 @@ class DiagnosticsTab(QWidget):
         if bus is None:
             self.svc_status.setText("ERROR: CAN bus not connected.")
             return
-        from core.uds import UDSScanner, UDS_SERVICES
+        from canlab.core.uds import UDSScanner
         unsafe = self.svc_unsafe.isChecked()
         if unsafe:
             ok = QMessageBox.warning(
@@ -628,7 +631,7 @@ class DiagnosticsTab(QWidget):
         self.svc_status.setText("Service scan complete.")
 
     def _on_svc_result(self, ecu_addr: int, svc_id: int, supported: bool, resp_data: bytes):
-        from core.uds import UDS_SERVICES
+        from canlab.core.uds import UDS_SERVICES
         row = self.svc_table.rowCount()
         self.svc_table.insertRow(row)
         svc_name  = UDS_SERVICES.get(svc_id, f"0x{svc_id:02X}")
@@ -712,7 +715,7 @@ class DiagnosticsTab(QWidget):
         return w
 
     def _health_start(self):
-        from core.bus_health import BusHealthMeter
+        from canlab.core.bus_health import BusHealthMeter
         self._health_meter = BusHealthMeter()
         self._health_timer.start()
         self.btn_health_start.setEnabled(False)
@@ -737,7 +740,7 @@ class DiagnosticsTab(QWidget):
             try:
                 frame = bus.recv(timeout=0.0)
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
             if frame:
                 is_err = getattr(frame, "is_error_frame", False)
                 can_id = f"{frame.arbitration_id:03X}"

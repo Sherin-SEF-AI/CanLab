@@ -2,7 +2,7 @@
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QPushButton, QLabel,
+    QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
     QTabWidget, QGroupBox, QComboBox,
 )
 from PyQt6.QtCore import Qt, QTimer
@@ -10,8 +10,8 @@ from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
-from theme import COLORS, mono_font
-from core.state import get_state
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
 
 BYTE_COLS = [f"B{i}" for i in range(8)]
 
@@ -76,7 +76,6 @@ class SpeedGaugeWidget(QWidget):
         self.update()
 
     def paintEvent(self, event):
-        import math
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()

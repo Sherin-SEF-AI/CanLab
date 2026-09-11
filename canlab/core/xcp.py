@@ -34,6 +34,9 @@ from __future__ import annotations
 
 import time
 from typing import Dict, List, Optional, Tuple
+import logging
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # XCP command (CTO) packet identifiers  (tester -> slave)
@@ -478,5 +481,5 @@ class XCPPollWorker(QThread):
             try:
                 client.disconnect()
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
             self.finished.emit()

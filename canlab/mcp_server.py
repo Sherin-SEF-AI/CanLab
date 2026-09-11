@@ -1,20 +1,15 @@
 """CanLab MCP server — expose CAN reverse-engineering tools to an MCP client
 (e.g. Claude Code / Claude Desktop) so the analysis loop is agent-drivable.
 
-Run it as a stdio MCP server:
-    python canlab/mcp_server.py
+Run it as a stdio MCP server (after `pip install -e .`):
+    canlab-mcp            # or: python -m canlab.mcp_server
 
 Register it with Claude Code (example ~/.config claude mcp entry):
-    { "command": "/path/to/.venv/bin/python", "args": ["/path/to/canlab/mcp_server.py"] }
+    { "command": "/path/to/.venv/bin/canlab-mcp" }
 
 Tools operate on a single loaded log held in this process (call load_log first).
 It does NOT need the GUI running.
 """
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 _SESSION: dict = {"df": None, "path": None}
 
 
@@ -22,7 +17,7 @@ _SESSION: dict = {"df": None, "path": None}
 
 def load_log(path: str) -> dict:
     """Load a CAN capture (CSV/candump/blf/asc/pcap/rlog/mdf) for analysis."""
-    from core.log_parser import parse_log_file
+    from canlab.core.log_parser import parse_log_file
     df = parse_log_file(path)
     _SESSION["df"] = df
     _SESSION["path"] = path
@@ -51,7 +46,7 @@ def list_ids() -> list:
 
 def detect_counters_checksums() -> dict:
     """Run counter/checksum byte detection across all IDs."""
-    from core.counter_checksum_detector import detect_counters_and_checksums
+    from canlab.core.counter_checksum_detector import detect_counters_and_checksums
     res = detect_counters_and_checksums(_df())
     return {k: v for k, v in res.items()
             if v.get("counters") or v.get("checksums")}
@@ -59,21 +54,21 @@ def detect_counters_checksums() -> dict:
 
 def correlate(id1: str, id2: str) -> list:
     """Byte-level Pearson correlation between two CAN IDs."""
-    from core.correlation_engine import correlate_id_pair
-    from core.canid import normalize_id
+    from canlab.core.correlation_engine import correlate_id_pair
+    from canlab.core.canid import normalize_id
     return correlate_id_pair(_df(), normalize_id(id1), normalize_id(id2))
 
 
 def match_opendbc(top_k: int = 5) -> list:
     """Match the loaded capture's IDs against the opendbc DBC library."""
-    from core.opendbc_matcher import match_capture
+    from canlab.core.opendbc_matcher import match_capture
     ids = set(_df()["ID"].unique().tolist())
     return match_capture(ids, top_k=top_k)
 
 
 def detect_multiplexers() -> dict:
     """Find multiplexed (mode-dependent) messages in the loaded log."""
-    from core.mux_detector import detect_all_multiplexers
+    from canlab.core.mux_detector import detect_all_multiplexers
     return detect_all_multiplexers(_df())
 
 
@@ -82,7 +77,7 @@ def calibrate(reference_csv: str, top_k: int = 8) -> list:
     physical reference. reference_csv has columns timestamp,value. Returns ranked
     candidates with scale/offset (OEM-snapped), R², and PASS/UNCONFIRMED verdict."""
     import pandas as pd
-    from core.reference_calibrate import calibrate_against_reference
+    from canlab.core.reference_calibrate import calibrate_against_reference
     ref = pd.read_csv(reference_csv)
     cols = [c.lower() for c in ref.columns]
     tcol = ref.columns[cols.index("timestamp")] if "timestamp" in cols else ref.columns[0]
@@ -93,8 +88,7 @@ def calibrate(reference_csv: str, top_k: int = 8) -> list:
 
 def byte_stats(can_id: str) -> dict:
     """Per-byte min/max/mean/unique-count for one CAN ID."""
-    import numpy as np
-    from core.canid import normalize_id
+    from canlab.core.canid import normalize_id
     grp = _df()
     grp = grp[grp["ID"] == normalize_id(can_id)]
     if grp.empty:

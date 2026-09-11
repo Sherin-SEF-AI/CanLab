@@ -3,8 +3,8 @@ scale snapping) and their effect on the reference calibrator."""
 import numpy as np
 import pandas as pd
 
-from core.calibrate_refine import nice_scale, mask_sentinels, snap_calibration  # noqa: F401
-from core.reference_calibrate import best_signal
+from canlab.core.calibrate_refine import nice_scale, mask_sentinels, snap_calibration  # noqa: F401
+from canlab.core.reference_calibrate import best_signal
 
 
 def test_nice_scale():

@@ -128,7 +128,7 @@ class AppState(QObject):
     def get_frames_for_id(self, hex_id: str) -> pd.DataFrame:
         if self.frames_df.empty:
             return pd.DataFrame()
-        from core.canid import normalize_id
+        from canlab.core.canid import normalize_id
         return self.frames_df[self.frames_df["ID"] == normalize_id(hex_id)].copy()
 
     def get_unique_ids(self) -> list:

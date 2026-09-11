@@ -9,16 +9,18 @@ openpilot log format (simplified):
     address, busTime, dat (bytes), src (bus index).
 """
 from pathlib import Path
-from typing import Optional
 import numpy as np
 import pandas as pd
+import logging
+
+log = logging.getLogger(__name__)
 
 _CAPNP_AVAILABLE = False
 try:
     import capnp  # noqa: F401
     _CAPNP_AVAILABLE = True
 except ImportError:
-    pass
+    log.debug("suppressed exception", exc_info=True)
 
 
 def is_available() -> bool:
@@ -43,7 +45,6 @@ def parse_rlog(filepath: str) -> pd.DataFrame:
             "Run: pip install pycapnp --break-system-packages"
         )
 
-    import capnp  # noqa: F811
     path = Path(filepath)
 
     # openpilot logs are a concatenated stream of capnp-encoded Event messages.

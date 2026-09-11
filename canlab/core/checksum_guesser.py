@@ -14,8 +14,6 @@ Supported algorithms:
   HYUNDAI_XOR, HYUNDAI_FULL
 """
 
-from typing import Optional
-import numpy as np
 import pandas as pd
 
 MIN_FRAMES = 50

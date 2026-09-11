@@ -202,13 +202,6 @@ def parse_mdf(filepath: str) -> pd.DataFrame:
 
     rows = []
     with MDF(filepath) as mdf:
-        # asammdf exposes raw CAN frames through the bus-logging helper; each
-        # returned Signal carries a structured record with ID/DLC/DataBytes.
-        try:
-            bus_signals = mdf.get_bus_signals("CAN") if hasattr(mdf, "get_bus_signals") else []
-        except Exception:
-            bus_signals = []
-
         # Preferred path: iterate raw CAN_DataFrame records directly.
         frame_names = [
             name for name in mdf.channels_db
@@ -266,7 +259,7 @@ def parse_log_file(filepath: str) -> pd.DataFrame:
     suffix = path.suffix.lower()
     try:
         if suffix in (".rlog", ".qlog"):
-            from core.openpilot_parser import parse_rlog
+            from canlab.core.openpilot_parser import parse_rlog
             return parse_rlog(filepath)
         if suffix in (".pcap", ".pcapng"):
             return parse_pcap(filepath)
@@ -338,7 +331,7 @@ def parse_candump_fd(filepath: str) -> pd.DataFrame:
 
 def _normalize_id(val) -> str:
     # Kept for backwards compatibility; canonical logic lives in core.canid.
-    from core.canid import normalize_id
+    from canlab.core.canid import normalize_id
     return normalize_id(val)
 
 

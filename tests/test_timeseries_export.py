@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 pytest.importorskip("cantools")
-from core.timeseries_export import decode_timeseries, export_timeseries
+from canlab.core.timeseries_export import decode_timeseries, export_timeseries
 
 
 def _frames_and_signals():

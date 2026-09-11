@@ -2,7 +2,7 @@
 import time
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from core.obd2_pids import PID_TABLE, decode_pid, supported_pids_from_mask
+from canlab.core.obd2_pids import PID_TABLE, decode_pid, supported_pids_from_mask
 
 # Physical ECU address: tx=0x7E0 → rx=0x7E8 (primary ECU)
 _TX_ID = 0x7E0
@@ -29,7 +29,7 @@ class OBD2Poller(QThread):
         self.wait(2000)
 
     def run(self):
-        from core.isotp import ISOTPSession
+        from canlab.core.isotp import ISOTPSession
         session = ISOTPSession(self._bus, tx_id=_TX_ID, rx_id=_RX_ID)
 
         if self._discover:

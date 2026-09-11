@@ -8,13 +8,16 @@ Gracefully disabled if panda is not installed.
 """
 import time
 from typing import Optional
+import logging
+
+log = logging.getLogger(__name__)
 
 _PANDA_AVAILABLE = False
 try:
     import panda as _panda_lib  # noqa: F401
     _PANDA_AVAILABLE = True
 except ImportError:
-    pass
+    log.debug("suppressed exception", exc_info=True)
 
 
 def is_available() -> bool:
@@ -114,7 +117,7 @@ class PandaBus:
         try:
             self._p.close()
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
     # ── python-can compatibility shims ────────────────────────────────────────
 

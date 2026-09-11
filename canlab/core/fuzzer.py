@@ -43,7 +43,7 @@ class FuzzWorker(QThread):
 
     def run(self):
         import can
-        from core.safety import require_armed, BusNotArmedError
+        from canlab.core.safety import require_armed, BusNotArmedError
         interval = 1.0 / self._rate_hz
         try:
             require_armed()

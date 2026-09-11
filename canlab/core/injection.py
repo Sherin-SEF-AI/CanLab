@@ -1,5 +1,4 @@
 """Signal injection: pack a value into a CAN frame and send it."""
-import struct
 from PyQt6.QtCore import QThread, pyqtSignal
 
 
@@ -14,8 +13,6 @@ def pack_signal(value: float, sig: dict) -> bytearray:
 
     start_bit = int(sig.get("start_bit", 0))
     length    = int(sig.get("length",    8))
-    byte_idx  = start_bit // 8
-    bit_off   = start_bit % 8
 
     data = bytearray(8)
     # Write raw value into the correct byte(s) — simple little-endian
@@ -62,7 +59,7 @@ class InjectionWorker(QThread):
     def run(self):
         import time
         import can
-        from core.safety import require_armed, BusNotArmedError
+        from canlab.core.safety import require_armed, BusNotArmedError
         try:
             mid_str = self._sig.get("message_id", "0")
             mid = int(mid_str, 16) if mid_str else 0

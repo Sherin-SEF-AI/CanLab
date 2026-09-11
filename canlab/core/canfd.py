@@ -33,7 +33,6 @@ def is_fd_frame(dlc: int) -> bool:
 
 def pad_classic_row(row_dict: dict) -> dict:
     """Ensure a row dict has all B0..B7 even if some are absent."""
-    import numpy as np
     for col in CLASSIC_COLS:
         if col not in row_dict:
             row_dict[col] = float("nan")
@@ -45,7 +44,6 @@ def columns_for_dataframe(df) -> list[str]:
     Return the display byte columns for a DataFrame.
     If any row has DLC > 8, include columns up to the maximum DLC present.
     """
-    import pandas as pd
     if df.empty or "DLC" not in df.columns:
         return CLASSIC_COLS
     max_dlc = int(df["DLC"].max())

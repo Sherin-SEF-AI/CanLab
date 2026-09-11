@@ -13,17 +13,19 @@ cache and no connectivity. Nothing here requires the network at import time.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import requests
+import logging
+
+log = logging.getLogger(__name__)
 
 try:  # cantools is a hard dependency of the app, but stay import-safe for tests
     import cantools
 except Exception:  # pragma: no cover - only if cantools is missing
     cantools = None
 
-from core.canid import normalize_id
+from canlab.core.canid import normalize_id
 
 # ── Locations ───────────────────────────────────────────────────────────────────
 
@@ -150,7 +152,7 @@ def refresh_index(force: bool = False, token: str = "", progress=None) -> dict:
         try:
             INDEX_PATH.write_text(json.dumps({"version": _INDEX_VERSION, "dbcs": index}))
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
         _say(f"Indexed {len(index)} opendbc DBC files.")
         return index
 

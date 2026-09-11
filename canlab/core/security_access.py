@@ -28,6 +28,9 @@ from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
+import logging
+
+log = logging.getLogger(__name__)
 
 # ── UDS constants ─────────────────────────────────────────────────────────────
 
@@ -152,7 +155,7 @@ class SecurityAccessWorker(QThread):
         if not self._running:
             return None
         try:
-            from core.isotp import ISOTPSession
+            from canlab.core.isotp import ISOTPSession
             session = ISOTPSession(self._bus, self._ecu_addr, self._ecu_addr + 0x08)
             return session.send(data, timeout=timeout)
         except Exception as e:
@@ -434,4 +437,4 @@ def _record_success(ecu: int, level: int, session: int, seed: bytes, key: bytes,
     try:
         append_history(entry)
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)

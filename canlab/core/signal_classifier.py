@@ -32,8 +32,8 @@ def classify_frame(frames_df: pd.DataFrame,
         {"B0": {"role": "COUNTER", "confidence": 0.99, "entropy": 0.4,
                 "unique": 16, "range": 15, "detail": "nibble_hi_counter"}, ...}
     """
-    from core.counter_checksum_detector import detect_counters_and_checksums
-    from core.checksum_guesser import guess_all_bytes
+    from canlab.core.counter_checksum_detector import detect_counters_and_checksums
+    from canlab.core.checksum_guesser import guess_all_bytes
 
     results: dict[str, dict] = {}
 
@@ -169,7 +169,7 @@ def classify_message_type(frames_df: pd.DataFrame) -> dict:
         {"type": "CYCLIC", "period_ms": 10.0,
          "class": "HIGH-FREQ (≤15ms)", "jitter_pct": 2.3}
     """
-    from core.periodicity import classify_period
+    from canlab.core.periodicity import classify_period
 
     if len(frames_df) < 5:
         return {"type": "EVENT", "period_ms": None, "class": "?", "jitter_pct": 0.0}

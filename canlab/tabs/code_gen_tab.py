@@ -11,8 +11,11 @@ from PyQt6.QtGui import (
     QFont, QSyntaxHighlighter, QTextCharFormat, QColor, QTextDocument,
 )
 import re
-from theme import COLORS, mono_font
-from core.state import get_state
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+import logging
+
+log = logging.getLogger(__name__)
 
 
 class PythonHighlighter(QSyntaxHighlighter):
@@ -232,7 +235,7 @@ class CodeGenTab(QWidget):
         try:
             subprocess.Popen(["xdg-open", tmp])
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
 
 def _build_code(mode, iface, channel, bitrate, sigs,
@@ -241,12 +244,12 @@ def _build_code(mode, iface, channel, bitrate, sigs,
 
     lines = [
         '#!/usr/bin/env python3',
-        f'"""',
+        '"""',
         f'CANLAB — Generated CAN {"Reader" if mode == "READ" else "Writer" if mode == "WRITE" else "Reader/Writer"}',
-        f'Vehicle: Hyundai Kona',
+        'Vehicle: Hyundai Kona',
         f'Generated: {ts}',
         f'Signals: {", ".join(sig_names) if sig_names else "all"}',
-        f'"""',
+        '"""',
         'import can',
         'import cantools',
         'import time',
@@ -317,10 +320,9 @@ def _build_code(mode, iface, channel, bitrate, sigs,
                 f'def send_{sname.lower()}(value: float):',
                 f'    """Send {sname} ({unit}) — scale={scale}, offset={offset}."""',
                 f'    raw = int((value - {offset}) / {scale})',
-                f'    data = bytearray(8)',
+                '    data = bytearray(8)',
             ]
             sb = int(sig.get("start_bit", 0))
-            lb = int(sig.get("length", 8))
             byte_idx = sb // 8
             bit_off  = sb % 8
             lines.append(f'    data[{byte_idx}] = (raw >> {bit_off}) & 0xFF')

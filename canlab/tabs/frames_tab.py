@@ -4,10 +4,10 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QComboBox, QPushButton, QCheckBox, QDialog,
     QTextEdit, QHeaderView,
 )
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor, QBrush, QFont
-from theme import COLORS, mono_font
-from core.state import get_state
+from PyQt6.QtCore import QTimer
+from PyQt6.QtGui import QColor, QBrush
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
 
 BYTE_COLS   = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
 ALL_COLUMNS = ["Timestamp", "ID", "Bus", "DLC"] + BYTE_COLS + ["Delta"]
@@ -17,7 +17,7 @@ MAX_DISPLAY = 5000
 def _active_byte_cols(df) -> list:
     """Return B0..B7 normally; extend to B0..B{n-1} if CAN FD frames present."""
     try:
-        from core.canfd import columns_for_dataframe
+        from canlab.core.canfd import columns_for_dataframe
         return columns_for_dataframe(df)
     except Exception:
         return BYTE_COLS
@@ -155,8 +155,6 @@ class FramesTab(QWidget):
             self.table.setHorizontalHeaderLabels(all_cols)
 
         self.table.setRowCount(len(fdf))
-        prev_bytes: dict = {}
-
         for row_idx, (_, row) in enumerate(fdf.iterrows()):
             cid = str(row.get("ID", ""))
             vals = [

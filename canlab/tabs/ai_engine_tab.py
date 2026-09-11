@@ -1,18 +1,20 @@
 import re
 import pandas as pd
-import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QListWidgetItem,
-    QPushButton, QLabel, QTextEdit, QProgressBar, QGroupBox, QLineEdit,
+    QPushButton, QLabel, QTextEdit, QProgressBar, QLineEdit,
     QTabWidget,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QBrush
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.ai_client import AIWorker
-from ui.animations import SpinnerWidget, ButtonPulse, TypewriterCursor, flash_widget
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+from canlab.core.ai_client import AIWorker
+from canlab.ui.animations import SpinnerWidget, ButtonPulse, TypewriterCursor, flash_widget
+import logging
+
+log = logging.getLogger(__name__)
 
 BYTE_COLS = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
 SPARKLINE_COLORS = ["#00ff88","#ffb300","#00aaff","#ff6b6b","#cc88ff",
@@ -40,7 +42,7 @@ class AIEngineTab(QWidget):
         self._state.id_selected.connect(self._load_id)
         self._state.anomaly_requested.connect(self._on_anomaly_requested)
         # Load persisted memory
-        from core.ai_memory import load_memory
+        from canlab.core.ai_memory import load_memory
         self._state.ai_memory = load_memory()
 
     def set_api_key(self, key: str):
@@ -319,7 +321,7 @@ class AIEngineTab(QWidget):
     def _add_all_unknown(self):
         if self._state.frames_df.empty:
             return
-        from core.signal_analyzer import analyze_id
+        from canlab.core.signal_analyzer import analyze_id
         for can_id in self._state.get_unique_ids():
             frames = self._state.get_frames_for_id(can_id)
             stats  = analyze_id(frames)
@@ -406,7 +408,7 @@ class AIEngineTab(QWidget):
         """Run lightweight ML analysis synchronously and return a summary string."""
         lines = []
         try:
-            from core.signal_classifier import classify_frame, classify_message_type
+            from canlab.core.signal_classifier import classify_frame, classify_message_type
             roles    = classify_frame(frames, self._current_id)
             msg_type = classify_message_type(frames)
             if roles:
@@ -429,10 +431,10 @@ class AIEngineTab(QWidget):
                     f"({msg_type.get('class','?')})"
                 )
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
         try:
-            from core.checksum_guesser import guess_all_bytes
+            from canlab.core.checksum_guesser import guess_all_bytes
             cs = guess_all_bytes(frames, self._current_id)
             for byte_idx, matches in cs.items():
                 if matches:
@@ -443,12 +445,12 @@ class AIEngineTab(QWidget):
                             f"of remaining bytes (confidence={top['confidence']:.0%})"
                         )
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
         try:
             idx = getattr(self._state, "_embedding_index", {})
             if idx and self._current_id in idx:
-                from core.signal_embedding import find_similar
+                from canlab.core.signal_embedding import find_similar
                 similar = find_similar(self._current_id, idx, top_k=3)
                 if similar:
                     sim_str = ", ".join(
@@ -456,7 +458,7 @@ class AIEngineTab(QWidget):
                     )
                     lines.append(f"Similar IDs in this log: {sim_str}")
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
         return "\n".join(lines)
 
@@ -493,7 +495,7 @@ class AIEngineTab(QWidget):
         context = self.context_input.toPlainText()
 
         # Inject memory context
-        from core.ai_memory import get_memory_context
+        from canlab.core.ai_memory import get_memory_context
         mem_ctx = get_memory_context(self._state.ai_memory)
         if mem_ctx:
             context = mem_ctx + "\n\n" + context
@@ -580,7 +582,7 @@ class AIEngineTab(QWidget):
             self._save_to_memory_silent(conclusion)
 
     def _save_to_memory_silent(self, conclusion: str):
-        from core.ai_memory import add_entry
+        from canlab.core.ai_memory import add_entry
         self._state.ai_memory = add_entry(
             self._state.ai_memory, self._current_id, conclusion
         )
@@ -588,7 +590,7 @@ class AIEngineTab(QWidget):
         self._refresh_memory_view()
 
     def _clear_memory(self):
-        from core.ai_memory import save_memory
+        from canlab.core.ai_memory import save_memory
         self._state.ai_memory = []
         save_memory([])
         self._refresh_memory_label()
@@ -632,8 +634,8 @@ class AIEngineTab(QWidget):
         self.btn_nl_ask.setEnabled(False)
 
         # Build a synthetic "frame" showing unique IDs + their analysis + memory
-        from core.ai_memory import get_memory_context
-        from core.signal_analyzer import analyze_id
+        from canlab.core.ai_memory import get_memory_context
+        from canlab.core.signal_analyzer import analyze_id
 
         summary_lines = [f"User question: {question}\n", "=== CAN Data Summary ==="]
         for can_id in self._state.get_unique_ids()[:20]:

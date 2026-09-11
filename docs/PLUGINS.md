@@ -32,14 +32,14 @@ def register(app):
   - `app._state.get_frames_for_id(id)` — frames for one ID.
   - signals: `frames_updated`, `dbc_updated`, `signal_analyzed`, … (connect to react to new data).
 - `app.menuBar()` — add your own menus/actions.
-- Anything in `core/` — reuse the detectors (`core.counter_checksum_detector`,
-  `core.correlation_engine`, `core.reference_calibrate`, `core.opendbc_matcher`, …).
+- Anything in `core/` — reuse the detectors (`canlab.core.counter_checksum_detector`,
+  `canlab.core.correlation_engine`, `canlab.core.reference_calibrate`, `canlab.core.opendbc_matcher`, …).
 
 ### Reusable helpers
 
-- CAN ID normalization: `from core.canid import normalize_id`.
+- CAN ID normalization: `from canlab.core.canid import normalize_id`.
 - Transmit safety: if your plugin sends frames, honor the ARM gate —
-  `from core.safety import require_armed; require_armed()` (raises when disarmed).
+  `from canlab.core.safety import require_armed; require_armed()` (raises when disarmed).
 
 ## Examples
 

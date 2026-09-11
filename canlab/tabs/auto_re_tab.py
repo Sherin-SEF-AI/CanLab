@@ -16,9 +16,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
 
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.canid import normalize_id
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+from canlab.core.canid import normalize_id
 
 
 class AutoRETab(QWidget):
@@ -86,8 +86,8 @@ class AutoRETab(QWidget):
 
         # Run the (heavy, iterrows-based) detection off the GUI thread so the
         # window stays responsive and the "Analysing…" label can repaint.
-        from core.counter_checksum_detector import detect_counters_and_checksums
-        from ui.compute_worker import ComputeWorker
+        from canlab.core.counter_checksum_detector import detect_counters_and_checksums
+        from canlab.ui.compute_worker import ComputeWorker
         self._ctr_worker = ComputeWorker(detect_counters_and_checksums, df)
         self._ctr_worker.done.connect(self._on_counter_checksum_done)
         self._ctr_worker.failed.connect(self._on_counter_checksum_failed)
@@ -194,8 +194,8 @@ class AutoRETab(QWidget):
         self.btn_run_entropy.setEnabled(False)
         self.lbl_entropy_status.setText("Computing bit entropies…")
 
-        from core.entropy_boundary import suggest_signals, detect_signal_boundaries
-        from ui.compute_worker import ComputeWorker
+        from canlab.core.entropy_boundary import suggest_signals, detect_signal_boundaries
+        from canlab.ui.compute_worker import ComputeWorker
 
         def _compute(frames):
             return detect_signal_boundaries(frames), suggest_signals(frames)
@@ -251,7 +251,7 @@ class AutoRETab(QWidget):
         if df.empty or can_id not in df["ID"].values:
             return
 
-        from core.entropy_boundary import _bit_entropy
+        from canlab.core.entropy_boundary import _bit_entropy
         frames = df[df["ID"] == can_id]
         ent = _bit_entropy(frames)
         x = list(range(64))
@@ -321,8 +321,8 @@ class AutoRETab(QWidget):
         self.btn_run_corr.setEnabled(False)
         self.lbl_corr_status.setText("Computing correlation matrix…")
 
-        from core.signal_analyzer import compute_timing_dependency_matrix
-        from ui.compute_worker import ComputeWorker
+        from canlab.core.signal_analyzer import compute_timing_dependency_matrix
+        from canlab.ui.compute_worker import ComputeWorker
         self._corr_worker = ComputeWorker(compute_timing_dependency_matrix, df)
         self._corr_worker.done.connect(self._on_correlation_done)
         self._corr_worker.failed.connect(self._on_correlation_failed)
@@ -451,7 +451,7 @@ class AutoRETab(QWidget):
             self.lbl_guesser_status.setText("Need at least 5 frames for this ID.")
             return
 
-        from core.checksum_guesser import guess_checksum
+        from canlab.core.checksum_guesser import guess_checksum
         results = guess_checksum(frames, byte_idx, can_id)
 
         self.guesser_table.setRowCount(len(results))

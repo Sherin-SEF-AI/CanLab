@@ -4,10 +4,10 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QComboBox, QHeaderView, QFileDialog,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QColor, QBrush, QFont
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.signal_analyzer import analyze_all
+from PyQt6.QtGui import QColor, QBrush
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+from canlab.core.signal_analyzer import analyze_all
 
 BYTE_COLS = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
 

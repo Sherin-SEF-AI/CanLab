@@ -4,12 +4,12 @@ from PyQt6.QtWidgets import (
     QLineEdit, QComboBox, QSpinBox, QGroupBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QTextEdit, QGridLayout, QCheckBox,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush, QFont
 
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.canid import normalize_id
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+from canlab.core.canid import normalize_id
 
 
 _DIR_OPTIONS    = ["A→B", "B→A", "Both"]
@@ -293,7 +293,7 @@ class GatewayTab(QWidget):
         }
 
     def _start(self):
-        from core.gateway import GatewayWorker
+        from canlab.core.gateway import GatewayWorker
         self._worker = GatewayWorker(
             bus_a_cfg=self._bus_cfg("a"),
             bus_b_cfg=self._bus_cfg("b"),

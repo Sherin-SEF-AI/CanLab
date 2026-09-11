@@ -50,7 +50,7 @@ class SafetyScanWorker(QThread):
         self._last_watchdog_ts = time.monotonic()
 
     def run(self):
-        from core.injection import pack_signal, hyundai_checksum
+        from canlab.core.injection import pack_signal, hyundai_checksum
         import can
 
         step_size = (self._max - self._min) / (self._steps - 1)

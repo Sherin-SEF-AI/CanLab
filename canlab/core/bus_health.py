@@ -10,10 +10,9 @@ Composes BusLoadMeter and adds:
 Emits health snapshots via AppState.bus_health_update signal.
 """
 
-import time
 import numpy as np
 from collections import deque
-from core.bus_load import BusLoadMeter
+from canlab.core.bus_load import BusLoadMeter
 
 
 class BusHealthMeter:

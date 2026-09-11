@@ -1,5 +1,5 @@
 """Tests for the ISO-TP multi-frame transmit fix (#7)."""
-from core.isotp import ISOTPSession
+from canlab.core.isotp import ISOTPSession
 
 
 class FakeMsg:

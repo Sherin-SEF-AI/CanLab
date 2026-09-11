@@ -1,6 +1,5 @@
 """AUTOSAR ARXML importer — returns the same list[dict] schema as load_dbc()."""
 import xml.etree.ElementTree as ET
-from pathlib import Path
 
 
 def _strip_ns(tag: str) -> str:

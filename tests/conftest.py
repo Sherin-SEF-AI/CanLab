@@ -1,16 +1,14 @@
-"""Shared test fixtures / path setup.
+"""Shared test setup.
 
-Puts the canlab/ source root on sys.path (imports are relative to it) and, if
-python-can isn't installed, injects a minimal fake `can` module so protocol
-logic (isotp/injection) can be unit-tested without the hardware library.
+Runs Qt headless by default and, if python-can isn't installed, injects a
+minimal fake `can` module so protocol logic can be unit-tested without the
+hardware library. The `canlab` package itself must be installed (pip install -e .).
 """
 import os
 import sys
 import types
 
-CANLAB_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "canlab")
-if CANLAB_ROOT not in sys.path:
-    sys.path.insert(0, CANLAB_ROOT)
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:  # pragma: no cover - exercised only when python-can is absent
     import can  # noqa: F401

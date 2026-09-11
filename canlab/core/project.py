@@ -2,7 +2,6 @@
 import io
 import json
 import zipfile
-from pathlib import Path
 
 import pandas as pd
 
@@ -41,7 +40,7 @@ def load_project(state, path: str):
             df = pd.read_csv(io.StringIO(zf.read("frames.csv").decode()),
                              dtype={"ID": str})
             if "ID" in df.columns:
-                from core.canid import normalize_id
+                from canlab.core.canid import normalize_id
                 df["ID"] = df["ID"].apply(normalize_id)
             state.frames_df = df
         else:

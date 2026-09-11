@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "canlab"
+version = "2.0.0"
+description = "CAN bus reverse-engineering workstation (PyQt6)"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+dependencies = [
+    "PyQt6==6.11.0",
+    "pyqtgraph==0.14.0",
+    "python-can==4.6.1",
+    "cantools==42.0.3",
+    "can-isotp==2.0.7",
+    "pandas==3.0.3",
+    "numpy==2.5.1",
+    "scipy==1.18.0",
+    "scikit-learn==1.9.0",
+    "matplotlib==3.11.0",
+    "pillow==12.3.0",
+    "requests==2.34.2",
+    "keyring==25.7.0",
+    "dpkt==1.9.8",
+]
+
+[project.optional-dependencies]
+ai = ["anthropic==0.116.0", "groq==1.5.0"]
+mdf = ["asammdf>=7.0.0"]
+rest = ["fastapi==0.139.0", "uvicorn==0.51.0", "pydantic==2.13.4"]
+mcp = ["mcp==1.28.1"]
+dev = ["pytest==9.1.1", "ruff==0.16.7", "httpx==0.28.1", "pyinstaller", "lupa"]
+
+[project.scripts]
+canlab = "canlab.main:main"
+canlab-mcp = "canlab.mcp_server:main"
+
+[tool.setuptools.packages.find]
+include = ["canlab*"]
+
+[tool.setuptools.package-data]
+canlab = ["canlab.png", "sample_data/*.csv"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["F", "E9", "B006", "B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

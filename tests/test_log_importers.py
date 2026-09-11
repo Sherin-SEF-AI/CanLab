@@ -8,7 +8,7 @@ import pytest
 
 can = pytest.importorskip("can")
 
-from core.log_parser import parse_asc, parse_blf, parse_log_file
+from canlab.core.log_parser import parse_asc, parse_blf, parse_log_file
 
 
 # (arbitration_id, data, is_extended_id)
@@ -92,10 +92,10 @@ def test_mdf_importer(tmp_path):
     """MDF4 importer round-trips when asammdf is available; skipped otherwise."""
     pytest.importorskip("asammdf")
     from asammdf import MDF  # noqa: F401
-    from core.log_parser import parse_mdf
+    from canlab.core.log_parser import parse_mdf
 
     # Build an MDF4 capture from the same frames using python-can's writer.
-    mf4 = pytest.importorskip("can.io.mf4", reason="python-can MF4 support unavailable")
+    pytest.importorskip("can.io.mf4", reason="python-can MF4 support unavailable")
     path = tmp_path / "capture.mf4"
     writer = can.MF4Writer(str(path))
     t = 1000.0

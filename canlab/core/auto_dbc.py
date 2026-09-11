@@ -1,6 +1,6 @@
 """Auto-generate DBC signal definitions from statistical analysis."""
-from core.signal_analyzer import analyze_id, _classify
-from core.state import get_state
+from canlab.core.signal_analyzer import analyze_id
+from canlab.core.state import get_state
 
 
 # Known Hyundai Kona message names keyed by hex ID
@@ -70,7 +70,6 @@ def build_from_analyzer(state=None) -> list:
         elif raw_range <= 65535:
             length = 16
 
-        freq = stats.get("frequency_hz", 0)
         scale = 1.0
         if "WHL_SPD" in msg_name or "SPD" in msg_name:
             scale = 0.03125

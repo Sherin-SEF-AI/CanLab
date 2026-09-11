@@ -43,16 +43,14 @@ This is the supported, verified way to run it.
 git clone https://github.com/Sherin-SEF-AI/CanLab.git
 cd CanLab
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e ".[ai,rest,mcp]"      # extras are optional: ai, rest, mcp, mdf, dev
 
-# Optional AI providers (all optional; the app works fully offline without them):
-export ANTHROPIC_API_KEY="sk-ant-..."   # Anthropic Claude
-export GROQ_API_KEY="gsk_..."           # Groq
-# or run a local Ollama server for offline AI (no key)
-
-cd canlab            # source root — imports are relative to here
-python3 main.py
+canlab                                # or: python -m canlab
 ```
+
+API keys for the optional AI providers are entered in Settings → API Keys
+(stored in the OS keyring); a local Ollama server needs no key. Logs go to
+`~/.canlab/logs/canlab.log`.
 
 Python 3.11+ is recommended (developed/tested on 3.12).
 

@@ -8,7 +8,7 @@ run with no hardware library present.
 """
 import pytest
 
-from core.xcp import XCPClient, XCPError, XCP_ERROR_CODES
+from canlab.core.xcp import XCPClient, XCPError, XCP_ERROR_CODES
 
 
 class FakeMsg:

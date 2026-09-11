@@ -1,14 +1,14 @@
 """OBD-II Live Gauge Dashboard tab."""
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QPushButton, QLabel,
-    QListWidget, QListWidgetItem, QSpinBox, QGroupBox, QMessageBox,
+    QListWidget, QListWidgetItem, QSpinBox, QMessageBox,
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont
+from PyQt6.QtGui import QPainter, QPen, QColor, QFont
 
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.obd2_pids import PID_TABLE, DEFAULT_PIDS
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+from canlab.core.obd2_pids import PID_TABLE, DEFAULT_PIDS
 
 
 class _GaugeWidget(QWidget):
@@ -29,7 +29,6 @@ class _GaugeWidget(QWidget):
         self.update()
 
     def paintEvent(self, _event):
-        import math
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h  = self.width(), self.height()
@@ -159,7 +158,7 @@ class OBDDashboardTab(QWidget):
         self._stop_polling()
         self._rebuild_gauges(pids)
 
-        from core.obd2_poller import OBD2Poller
+        from canlab.core.obd2_poller import OBD2Poller
         self._poller = OBD2Poller(bus=bus, pids=pids,
                                   interval_ms=self.rate_spin.value())
         self._poller.pid_value.connect(self._state.pid_value_updated)
@@ -180,7 +179,7 @@ class OBDDashboardTab(QWidget):
         if bus is None:
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return
-        from core.obd2_poller import OBD2Poller
+        from canlab.core.obd2_poller import OBD2Poller
         # Store on self: a local QThread is garbage-collected when this method
         # returns, crashing with "QThread: Destroyed while thread is running".
         self._discover_worker = OBD2Poller(bus=bus, pids=[], discover_only=True)

@@ -2,40 +2,42 @@ import os
 import can
 import pandas as pd
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
-    QTabWidget, QToolBar, QStatusBar, QLabel, QFileDialog,
-    QMessageBox, QLineEdit, QPushButton, QProgressBar, QMenu,
+    QMainWindow, QWidget, QHBoxLayout, QTabWidget, QToolBar, QStatusBar, QLabel, QFileDialog,
+    QMessageBox, QPushButton, QProgressBar, QMenu,
 )
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
-from PyQt6.QtGui import QFont, QColor, QAction
+from PyQt6.QtCore import QTimer, QThread, pyqtSignal
+from PyQt6.QtGui import QAction
 
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.log_parser import parse_log_file
-from core.dbc_manager import load_dbc
-from core.bus_load import BusLoadMeter
-from panels.id_panel import IDPanel
-from panels.inspector_panel import InspectorPanel
-from tabs.frames_tab import FramesTab
-from tabs.signals_tab import SignalsTab
-from tabs.plot_tab import PlotTab
-from tabs.ai_engine_tab import AIEngineTab
-from tabs.dbc_builder_tab import DBCBuilderTab
-from tabs.code_gen_tab import CodeGenTab
-from tabs.intelligence_tab import IntelligenceTab
-from tabs.injection_tab import InjectionTab
-from tabs.diagnostics_tab import DiagnosticsTab
-from tabs.dashboard_tab import DashboardTab
-from tabs.auto_re_tab import AutoRETab
-from tabs.timeline_tab import TimelineTab
-from tabs.obd_dashboard_tab import OBDDashboardTab
-from tabs.signal_intelligence_tab import SignalIntelligenceTab
-from tabs.gateway_tab import GatewayTab
-from ui.animations import PulsingDot, CountUpLabel
-from settings_dialog import (
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+from canlab.core.log_parser import parse_log_file
+from canlab.core.dbc_manager import load_dbc
+from canlab.core.bus_load import BusLoadMeter
+from canlab.panels.id_panel import IDPanel
+from canlab.panels.inspector_panel import InspectorPanel
+from canlab.tabs.frames_tab import FramesTab
+from canlab.tabs.signals_tab import SignalsTab
+from canlab.tabs.plot_tab import PlotTab
+from canlab.tabs.ai_engine_tab import AIEngineTab
+from canlab.tabs.dbc_builder_tab import DBCBuilderTab
+from canlab.tabs.code_gen_tab import CodeGenTab
+from canlab.tabs.intelligence_tab import IntelligenceTab
+from canlab.tabs.injection_tab import InjectionTab
+from canlab.tabs.diagnostics_tab import DiagnosticsTab
+from canlab.tabs.dashboard_tab import DashboardTab
+from canlab.tabs.auto_re_tab import AutoRETab
+from canlab.tabs.timeline_tab import TimelineTab
+from canlab.tabs.obd_dashboard_tab import OBDDashboardTab
+from canlab.tabs.signal_intelligence_tab import SignalIntelligenceTab
+from canlab.tabs.gateway_tab import GatewayTab
+from canlab.ui.animations import PulsingDot, CountUpLabel
+from canlab.settings_dialog import (
     SettingsDialog, load_api_key,
     load_groq_key, load_ai_provider, load_ai_model,
 )
+import logging
+
+log = logging.getLogger(__name__)
 
 
 class LiveCANWorker(QThread):
@@ -68,7 +70,7 @@ class LiveCANWorker(QThread):
             else:
                 kwargs = dict(
                     channel=self._channel,
-                    bustype=self._interface,
+                    interface=self._interface,
                     bitrate=self._bitrate,
                 )
                 if self._fd:
@@ -89,7 +91,7 @@ class LiveCANWorker(QThread):
             try:
                 self._bus.shutdown()
             except Exception:
-                pass
+                log.warning("suppressed exception", exc_info=True)
 
 
 class MultiBusWorker(QThread):
@@ -426,7 +428,7 @@ class MainWindow(QMainWindow):
     # ── Project save / load ───────────────────────────────────────────────────
 
     def _save_project(self):
-        from core.project import save_project
+        from canlab.core.project import save_project
         path, _ = QFileDialog.getSaveFileName(
             self, "Save Project", "project.canlab", "CANLAB Project (*.canlab)"
         )
@@ -442,7 +444,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save Error", str(e))
 
     def _open_project(self):
-        from core.project import load_project
+        from canlab.core.project import load_project
         path, _ = QFileDialog.getOpenFileName(
             self, "Open Project", "", "CANLAB Project (*.canlab)"
         )
@@ -469,7 +471,7 @@ class MainWindow(QMainWindow):
         injected_bus = None
         if getattr(self._state, "active_backend", "python-can") == "panda":
             try:
-                from core.panda_backend import PandaBus, is_available
+                from canlab.core.panda_backend import PandaBus, is_available
                 if is_available():
                     injected_bus = PandaBus(
                         bus_index=0, bitrate=bitrate,
@@ -555,7 +557,7 @@ class MainWindow(QMainWindow):
 
         # Trigger check
         if self._state.triggers:
-            from core.trigger import check_triggers
+            from canlab.core.trigger import check_triggers
             fired = check_triggers(
                 self._state.triggers, msg.arbitration_id, bytes(msg.data)
             )
@@ -593,10 +595,10 @@ class MainWindow(QMainWindow):
             return
         ids = set(self._state.frames_df["ID"].unique().tolist())
         self.statusBar().showMessage("Matching against opendbc (fetching index)…")
-        from ui.compute_worker import ComputeWorker
+        from canlab.ui.compute_worker import ComputeWorker
 
         def _work():
-            from core.opendbc_matcher import refresh_index, match_capture
+            from canlab.core.opendbc_matcher import refresh_index, match_capture
             refresh_index()                      # fetch+cache (network, best-effort)
             return match_capture(ids, top_k=8)
 
@@ -631,7 +633,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            from core.timeseries_export import export_timeseries
+            from canlab.core.timeseries_export import export_timeseries
             n = export_timeseries(self._state.frames_df, self._state.dbc_signals, path)
             QMessageBox.information(self, "Export", f"Wrote {n} rows to {path}")
         except Exception as e:
@@ -641,7 +643,7 @@ class MainWindow(QMainWindow):
         if self._state.frames_df.empty:
             QMessageBox.information(self, "Multiplexers", "Load a capture first.")
             return
-        from core.mux_detector import detect_all_multiplexers
+        from canlab.core.mux_detector import detect_all_multiplexers
         res = detect_all_multiplexers(self._state.frames_df)
         if not res:
             QMessageBox.information(self, "Multiplexers",
@@ -668,7 +670,7 @@ class MainWindow(QMainWindow):
             cols = [c.lower() for c in ref.columns]
             tcol = ref.columns[cols.index("timestamp")] if "timestamp" in cols else ref.columns[0]
             vcol = ref.columns[cols.index("value")] if "value" in cols else ref.columns[1]
-            from core.reference_calibrate import calibrate_against_reference
+            from canlab.core.reference_calibrate import calibrate_against_reference
             cand = calibrate_against_reference(
                 self._state.frames_df,
                 ref[tcol].to_numpy(), ref[vcol].to_numpy(), top_k=8)
@@ -685,7 +687,7 @@ class MainWindow(QMainWindow):
                                 "\n".join(lines))
 
     def _toggle_arm(self, checked: bool):
-        from core.safety import set_armed
+        from canlab.core.safety import set_armed
         if checked:
             ok = QMessageBox.warning(
                 self, "Arm Bus Transmit",
@@ -712,7 +714,7 @@ class MainWindow(QMainWindow):
             self._stop_rest_api()
 
     def _start_rest_api(self):
-        from core.rest_api import RestAPIServer
+        from canlab.core.rest_api import RestAPIServer
         try:
             self._rest_api_server = RestAPIServer(
                 state_getter=get_state,
@@ -746,7 +748,7 @@ class MainWindow(QMainWindow):
     # ── Plugins ───────────────────────────────────────────────────────────────
 
     def _load_plugins(self):
-        from core.plugin_loader import discover_plugins, activate_plugins
+        from canlab.core.plugin_loader import discover_plugins, activate_plugins
         self._plugins = discover_plugins()
         activated = activate_plugins(self._plugins, self)
         if activated:
@@ -755,7 +757,7 @@ class MainWindow(QMainWindow):
             )
 
     def _show_plugins_menu(self):
-        from core.plugin_loader import discover_plugins
+        from canlab.core.plugin_loader import discover_plugins
         self._plugins = discover_plugins()
         menu = QMenu(self)
         if not self._plugins:
@@ -830,8 +832,8 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            from core.dbc_manager import export_opendbc
-            from core.openpilot_export import HYUNDAI_MSG_META
+            from canlab.core.dbc_manager import export_opendbc
+            from canlab.core.openpilot_export import HYUNDAI_MSG_META
             dbc_str = export_opendbc(self._state.dbc_signals, HYUNDAI_MSG_META)
             with open(path, "w") as f:
                 f.write(dbc_str)
@@ -849,7 +851,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            from core.lua_exporter import signals_to_lua_dissector
+            from canlab.core.lua_exporter import signals_to_lua_dissector
             lua_str = signals_to_lua_dissector(self._state.dbc_signals)
             with open(path, "w") as f:
                 f.write(lua_str)
@@ -865,8 +867,8 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            from core.can_matrix_parser import parse_can_matrix
-            from core.dbc_manager import build_db_from_signals
+            from canlab.core.can_matrix_parser import parse_can_matrix
+            from canlab.core.dbc_manager import build_db_from_signals
             sigs = parse_can_matrix(path)
             for sig in sigs:
                 self._state.add_dbc_signal(sig)

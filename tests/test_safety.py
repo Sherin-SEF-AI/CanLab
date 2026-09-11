@@ -1,7 +1,7 @@
 """Tests for the global bus-transmit ARM gate (C8)."""
 import pytest
 
-from core import safety
+from canlab.core import safety
 
 
 def setup_function(_):

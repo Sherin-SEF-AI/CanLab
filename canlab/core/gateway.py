@@ -29,6 +29,9 @@ from typing import Optional
 
 import can
 from PyQt6.QtCore import QThread, pyqtSignal
+import logging
+
+log = logging.getLogger(__name__)
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
@@ -36,7 +39,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 def _open_bus(cfg: dict) -> can.BusABC:
     return can.interface.Bus(
         channel=cfg.get("channel", "can0"),
-        bustype=cfg.get("interface", "socketcan"),
+        interface=cfg.get("interface", "socketcan"),
         bitrate=cfg.get("bitrate", 500_000),
     )
 
@@ -65,7 +68,7 @@ def _apply_rule(rule: dict, arb_id: int, data: bytes) -> tuple[Optional[int], Op
         try:
             new_id = int(new_id_str, 16)
         except ValueError:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
     if rule.get("action") == "Modify":
         idx = int(rule.get("mod_byte", 0))
@@ -137,7 +140,7 @@ class GatewayWorker(QThread):
         self.wait(3000)
 
     def run(self):
-        from core.safety import require_armed, BusNotArmedError
+        from canlab.core.safety import require_armed, BusNotArmedError
         try:
             require_armed()
         except BusNotArmedError as e:
@@ -222,11 +225,11 @@ class GatewayWorker(QThread):
             try:
                 bus_a.shutdown()
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
             try:
                 bus_b.shutdown()
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
 
     def _maybe_emit_stats(self):
         now = time.monotonic()

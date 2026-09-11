@@ -1,7 +1,8 @@
 import cantools
-import pandas as pd
-from pathlib import Path
-from typing import Optional, List
+from typing import Optional
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def signal_dict_to_cantools(sig: dict) -> cantools.database.Signal:
@@ -109,7 +110,7 @@ def load_dbc(filepath: str) -> list[dict]:
 
 def decode_frame(signal_defs: list[dict], can_id: str, frame_bytes: bytes) -> dict:
     """Decode a single frame using signal definitions for matching ID."""
-    from core.canid import normalize_id
+    from canlab.core.canid import normalize_id
     target = normalize_id(can_id)
     matching = [s for s in signal_defs
                 if normalize_id(s.get("message_id", "")) == target]
@@ -152,18 +153,18 @@ def build_db_from_signals(signal_defs: list[dict]) -> Optional[cantools.database
             try:
                 ct_sigs.append(signal_dict_to_cantools(s))
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
         db.add_message(cantools.database.Message(
             frame_id=msg_id, name=md["name"],
             length=md["length"], signals=ct_sigs,
         ))
     try:
-        from core.state import get_state
+        from canlab.core.state import get_state
         state = get_state()
         state.dbc_db = db
         state.dbc_db_updated.emit()
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
     return db
 
 
@@ -173,15 +174,15 @@ def decode_frame_fast(can_id: str, frame_bytes: bytes) -> dict:
     Falls back to decode_frame if cache is missing.
     """
     try:
-        from core.state import get_state
+        from canlab.core.state import get_state
         db = get_state().dbc_db
         if db:
             msg_id = int(can_id, 16)
             return db.decode_message(msg_id, frame_bytes)
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
     try:
-        from core.state import get_state
+        from canlab.core.state import get_state
         return decode_frame(get_state().dbc_signals, can_id, frame_bytes)
     except Exception:
         return {}
@@ -189,7 +190,7 @@ def decode_frame_fast(can_id: str, frame_bytes: bytes) -> dict:
 
 def export_opendbc(signal_defs: list[dict], msg_meta: Optional[dict] = None) -> str:
     """Export signals in opendbc / comma.ai format."""
-    from core.openpilot_export import to_opendbc_string
+    from canlab.core.openpilot_export import to_opendbc_string
     return to_opendbc_string(signal_defs, msg_meta)
 
 
