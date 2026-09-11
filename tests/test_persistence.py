@@ -106,6 +106,13 @@ def test_model_lists_are_current():
         assert retired not in AI_MODELS["Groq"], f"{retired} was decommissioned"
 
 
+def test_the_default_model_is_one_the_settings_offer():
+    """The AI tab used to default to a model the settings list did not contain."""
+    from canlab.core.ai_client import ANTHROPIC_DEFAULT_MODEL
+    from canlab.settings_dialog import AI_MODELS
+    assert ANTHROPIC_DEFAULT_MODEL in AI_MODELS["Anthropic"]
+
+
 # ── plugins ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture

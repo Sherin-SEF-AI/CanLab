@@ -103,7 +103,9 @@ class AutoRETab(QWidget):
         for can_id, data in results.items():
             for ctr in data["counters"]:
                 rows.append((can_id, ctr["col"], "COUNTER",
-                             f"wrap={ctr['wrap']} ({ctr['type']})",
+                             (f"wrap={ctr['wrap']} ({ctr['type']})"
+                              if ctr.get("wrap")
+                              else f"no wrap seen ({ctr['type']})"),
                              ctr["confidence"]))
             for chk in data["checksums"]:
                 rows.append((can_id, chk["col"], "CHECKSUM",

@@ -10,7 +10,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QBrush
 from canlab.theme import COLORS, mono_font
 from canlab.core.state import get_state
-from canlab.core.ai_client import AIWorker
+from canlab.core.ai_client import AIWorker, ANTHROPIC_DEFAULT_MODEL
 from canlab.ui.animations import SpinnerWidget, ButtonPulse, TypewriterCursor, flash_widget
 import logging
 
@@ -28,7 +28,7 @@ class AIEngineTab(QWidget):
         self._api_key    = ""
         self._groq_key   = ""
         self._provider   = "Anthropic"
-        self._model      = "claude-sonnet-4-6"
+        self._model      = ANTHROPIC_DEFAULT_MODEL
         self._queue:     list  = []
         self._worker     = None
         self._current_id = ""
@@ -66,6 +66,7 @@ class AIEngineTab(QWidget):
             f"border:1px solid {color}; border-radius:3px; padding:1px 4px;"
         )
         self.btn_analyze.setText(f"Analyze with {provider}")
+        self.btn_nl_ask.setText(f"Ask {provider}")
         self.lbl_response_header.setText(f"{provider.upper()} RESPONSE")
 
     def _build_ui(self):
@@ -82,7 +83,7 @@ class AIEngineTab(QWidget):
         left_lay.setContentsMargins(4, 4, 4, 4)
         left_lay.setSpacing(4)
 
-        self.lbl_provider_badge = QLabel("AI: Anthropic / claude-sonnet-4-6")
+        self.lbl_provider_badge = QLabel(f"AI: Anthropic / {ANTHROPIC_DEFAULT_MODEL}")
         self.lbl_provider_badge.setFont(mono_font(7))
         self.lbl_provider_badge.setStyleSheet(
             f"color:{COLORS['amber']}; background:{COLORS['panel_bg']}; "
@@ -259,7 +260,7 @@ class AIEngineTab(QWidget):
         self.nl_input.returnPressed.connect(self._run_nl_query)
         nl_lay.addWidget(self.nl_input)
 
-        self.btn_nl_ask = QPushButton("Ask Claude")
+        self.btn_nl_ask = QPushButton("Ask")
         self.btn_nl_ask.setObjectName("btn_amber")
         self.btn_nl_ask.clicked.connect(self._run_nl_query)
         nl_lay.addWidget(self.btn_nl_ask)

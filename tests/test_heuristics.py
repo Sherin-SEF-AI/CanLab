@@ -226,3 +226,28 @@ def test_the_sample_capture_yields_one_checksum_per_protected_message():
                for c in found.get(can_id, {}).get("checksums", [])]
         assert got == ([("B7", "SUM8")] if protected else []), (
             f"{can_id}: expected {'B7 SUM8' if protected else 'nothing'}, got {got}")
+
+
+def test_counter_wrap_is_read_from_the_data_not_assumed():
+    """A narrow counter used to be reported as wrapping at 16 or 256."""
+    def counter(modulus, n=200, can_id="300"):
+        return _frame_rows([[i % modulus] + [7] * 7 for i in range(n)], can_id)
+
+    for modulus in (4, 8, 16, 32):
+        found = detect_counters_and_checksums(counter(modulus))["300"]["counters"]
+        assert found, f"counter with modulus {modulus} not detected"
+        assert found[0]["wrap"] == modulus, (
+            f"modulus {modulus} reported as {found[0]['wrap']}")
+
+
+def test_a_counter_that_never_rolls_over_reports_no_wrap():
+    """Over 200 frames a byte counter reaches 199, which is not its modulus."""
+    found = detect_counters_and_checksums(
+        _frame_rows([[i % 256] + [7] * 7 for i in range(200)]))["200"]["counters"]
+    assert found, "counter not detected"
+    assert found[0]["wrap"] is None, "claimed a wrap that was never observed"
+
+    # Long enough to actually roll over, and the real modulus comes back.
+    found = detect_counters_and_checksums(
+        _frame_rows([[i % 256] + [7] * 7 for i in range(600)]))["200"]["counters"]
+    assert found[0]["wrap"] == 256

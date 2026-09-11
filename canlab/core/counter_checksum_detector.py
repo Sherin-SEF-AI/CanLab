@@ -25,40 +25,41 @@ BYTE_COLS = [f"B{i}" for i in range(8)]
 
 # ── Counter detection ─────────────────────────────────────────────────────────
 
+def _counter_score(vals: np.ndarray) -> tuple[float, Optional[int]]:
+    """How well these values increment by one, and the modulus they roll over at.
+
+    The modulus is read off the data rather than assumed, so a two-bit counter
+    is reported as wrapping at 4 and not at 16. It is only reported at all when
+    a roll-over was actually seen: a byte counter observed over 200 frames may
+    simply not have reached its limit yet, and guessing from the highest value
+    would claim it wraps at 200.
+    """
+    top = int(vals.max())
+    if top < 1:
+        return 0.0, None
+    diffs = np.diff(vals)
+    wrapped = (vals[1:] == 0) & (vals[:-1] == top)
+    rate = float(((diffs == 1) | wrapped).mean())
+    return rate, (top + 1 if wrapped.any() else None)
+
+
 def _detect_counter_byte(series: pd.Series) -> Optional[dict]:
     """
     Return counter info if this byte series looks like a rolling counter, else None.
-    Checks full-byte counter (0-255) and nibble counters (0-15 in upper/lower nibble).
+    Checks the whole byte and each nibble; the wrap comes from the values seen.
     """
     vals = series.dropna().astype(int).values
     if len(vals) < 8:
         return None
 
     results = []
-
-    # Full byte counter 0-255
-    diffs = np.diff(vals)
-    wrap_mask = (vals[1:] == 0) & (vals[:-1] > 200)
-    inc_mask  = (diffs == 1) | wrap_mask
-    inc_rate  = inc_mask.mean()
-    if inc_rate > COUNTER_MATCH:
-        results.append({"type": "byte_counter", "wrap": 256, "confidence": round(inc_rate, 3)})
-
-    # Lower nibble counter 0-15
-    lo = vals & 0x0F
-    diffs_lo = np.diff(lo)
-    wrap_lo  = (lo[1:] == 0) & (lo[:-1] == 15)
-    inc_lo   = ((diffs_lo == 1) | wrap_lo).mean()
-    if inc_lo > COUNTER_MATCH:
-        results.append({"type": "nibble_lo_counter", "wrap": 16, "confidence": round(inc_lo, 3)})
-
-    # Upper nibble counter 0-15
-    hi = (vals >> 4) & 0x0F
-    diffs_hi = np.diff(hi)
-    wrap_hi  = (hi[1:] == 0) & (hi[:-1] == 15)
-    inc_hi   = ((diffs_hi == 1) | wrap_hi).mean()
-    if inc_hi > COUNTER_MATCH:
-        results.append({"type": "nibble_hi_counter", "wrap": 16, "confidence": round(inc_hi, 3)})
+    for name, candidate in (("byte_counter", vals),
+                            ("nibble_lo_counter", vals & 0x0F),
+                            ("nibble_hi_counter", (vals >> 4) & 0x0F)):
+        rate, wrap = _counter_score(candidate)
+        if rate > COUNTER_MATCH:
+            results.append({"type": name, "wrap": wrap,
+                            "confidence": round(rate, 3)})
 
     if not results:
         return None
