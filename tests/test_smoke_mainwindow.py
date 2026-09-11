@@ -64,6 +64,10 @@ def test_every_tab_builds_and_renders_the_sample(window, app):
     st.load_frames(parse_log_file(SAMPLE), "sample")
     app.processEvents()
     assert window.tabs.count() == 15
+    # DIAGNOSTICS now surfaces XCP and DoIP, which had no UI entry point at all.
+    diag_tabs = window.diagnostics_tab.findChild(type(window.tabs))
+    labels = [diag_tabs.tabText(i) for i in range(diag_tabs.count())]
+    assert "XCP" in labels and "DoIP" in labels
     for i in range(window.tabs.count()):
         window.tabs.setCurrentIndex(i)
         app.processEvents()

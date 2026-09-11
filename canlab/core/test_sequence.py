@@ -153,7 +153,8 @@ class TestSequenceWorker(QThread):
             deadline = time.monotonic() + 0.5
             while time.monotonic() < deadline:
                 frame = self._bus.recv(timeout=0.05)
-                if frame and f"{frame.arbitration_id:03X}" == msg_id.upper():
+                from canlab.core.canid import normalize_id
+                if frame and normalize_id(frame.arbitration_id) == normalize_id(msg_id):
                     if len(frame.data) > byte_idx:
                         return float(frame.data[byte_idx])
         except Exception:

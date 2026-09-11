@@ -9,21 +9,9 @@ import logging
 
 log = logging.getLogger(__name__)
 
-# OBD-II PID names (Mode 01)
-OBD2_PIDS = {
-    0x00: ("Supported PIDs 01-20", None, None),
-    0x04: ("Engine Load",          1/2.55, "%"),
-    0x05: ("Coolant Temp",         -40,    "°C"),   # offset
-    0x0B: ("MAP Pressure",         1,      "kPa"),
-    0x0C: ("Engine RPM",           0.25,   "rpm"),
-    0x0D: ("Vehicle Speed",        1,      "km/h"),
-    0x0F: ("Intake Air Temp",      -40,    "°C"),
-    0x11: ("Throttle Position",    1/2.55, "%"),
-    0x1C: ("OBD Standard",         1,      ""),
-    0x1F: ("Run Time Since Start", 1,      "s"),
-    0x21: ("MIL Distance",         1,      "km"),
-    0x2F: ("Fuel Level",           1/2.55, "%"),
-}
+# OBD-II PIDs come from the single J1979 table in core.obd2_pids — this module
+# used to carry a second, inconsistent copy with its own decode arithmetic.
+from canlab.core.obd2_pids import PID_TABLE, decode_pid   # noqa: E402
 
 # UDS service names
 UDS_SERVICES = {
@@ -37,9 +25,19 @@ UDS_SERVICES = {
     0x31: "RoutineControl",
     0x34: "RequestDownload",
     0x3E: "TesterPresent",
+    0x85: "ControlDTCSetting",
+    0x87: "LinkControl",
 }
 
 FUNCTIONAL_REQUEST_ID = 0x7DF
+
+# Keep a non-default diagnostic session alive during long sweeps (the ISO 14229
+# S3 timer is nominally 5 s).
+TESTER_PRESENT_INTERVAL = 2.0
+
+# Per-service wait during the service scan (short: most IDs never answer).
+SERVICE_PROBE_TIMEOUT = 0.15
+SERVICE_PROBE_GAP = 0.05
 
 # UDS services that can change ECU/vehicle state. Probing these — even with a
 # reserved subfunction — can reset ECUs, clear diagnostics, start routines,
@@ -60,6 +58,8 @@ DESTRUCTIVE_SERVICES = {
     0x37: "RequestTransferExit",
     0x38: "RequestFileTransfer",
     0x3D: "WriteMemoryByAddress",
+    0x85: "ControlDTCSetting",
+    0x87: "LinkControl",
 }
 
 # UDS Data Identifiers for ECU information
@@ -86,6 +86,27 @@ UDS_SESSIONS = {
     0x02: "Programming",
     0x03: "Extended",
 }
+
+
+def decode_dtc_records(payload: bytes) -> list[str]:
+    """Decode a ReadDTCInformation (0x19 sub-function 0x02) response payload.
+
+    Layout: ``59 02 <statusAvailabilityMask>`` then 4-byte records of
+    ``<DTC high> <DTC mid> <DTC low> <status>``.
+    """
+    if len(payload) < 3 or payload[0] != 0x59:
+        return []
+    codes: list[str] = []
+    i = 3
+    while i + 3 < len(payload):
+        hi, mid, lo, _status = payload[i:i + 4]
+        if hi == 0 and mid == 0 and lo == 0:
+            break
+        prefix = "PCBU"[(hi >> 6) & 0x03]
+        codes.append(f"{prefix}{(hi >> 4) & 0x03}{hi & 0x0F:X}{mid >> 4:X}"
+                     f"{mid & 0x0F:X}-{lo:02X}")
+        i += 4
+    return codes
 
 
 class _FakeMsg:
@@ -142,18 +163,15 @@ class UDSScanner(QThread):
         self.finished.emit()
 
     def _send_to(self, arb_id: int, data: bytes, timeout: float = 0.5):
-        """
-        Send to specific ECU and receive via ISO-TP reassembly.
-        Returns a _FakeMsg with .data = full assembled payload, .arbitration_id = rx_id.
-        Single-frame replies behave identically to the previous version.
-        """
+        """Physically addressed request. ``data`` is the service payload only
+        (no PCI byte); the reply is likewise the service payload."""
         if not self._running:
             return None
         rx_id = arb_id + 0x08
         try:
             from canlab.core.isotp import ISOTPSession
             session = ISOTPSession(self._bus, tx_id=arb_id, rx_id=rx_id)
-            payload = session.send(data, timeout=timeout)
+            payload = session.request(data, timeout=timeout)
             if payload:
                 return _FakeMsg(rx_id, payload)
         except Exception as e:
@@ -161,89 +179,46 @@ class UDSScanner(QThread):
         return None
 
     def _send_and_recv(self, data: bytes, timeout: float = 0.5):
-        """
-        Send to functional address 0x7DF and receive via ISO-TP reassembly.
-        Scans rx IDs 0x7E8–0x7EF; reassembles multi-frame responses.
+        """Functionally addressed request (0x7DF), answered by any of
+        0x7E8-0x7EF. ``data`` is the service payload only.
+
+        This used to hand-roll its own consecutive-frame reassembly with no
+        sequence-number check; ISOTPSession is the one transport now.
         """
         if not self._running:
             return None
         try:
-            import can, time
-            from canlab.core.safety import gated_send
-            msg = can.Message(
-                arbitration_id=FUNCTIONAL_REQUEST_ID,
-                data=data,
-                is_extended_id=False,
-            )
-            gated_send(self._bus, msg)
-            deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                resp = self._bus.recv(timeout=0.05)
-                if resp and 0x7E8 <= resp.arbitration_id <= 0x7EF:
-                    pci = (resp.data[0] >> 4) & 0x0F if resp.data else 0xFF
-                    if pci == 0x1:   # First Frame — reassemble via ISO-TP
-                        from canlab.core.isotp import ISOTPSession
-                        rx_id   = resp.arbitration_id
-                        session = ISOTPSession(self._bus, tx_id=rx_id - 0x08, rx_id=rx_id)
-                        session._send_fc()
-                        length  = ((resp.data[0] & 0x0F) << 8) | resp.data[1]
-                        payload = bytearray(resp.data[2:])
-                        cf_idx  = 1
-                        while time.monotonic() < deadline and len(payload) < length:
-                            cf = self._bus.recv(timeout=0.05)
-                            if cf and cf.arbitration_id == rx_id:
-                                payload += bytearray(cf.data[1:])
-                                cf_idx  += 1
-                        return _FakeMsg(rx_id, bytes(payload[:length]))
-                    return resp  # single-frame — backward compatible
+            from canlab.core.isotp import ISOTPSession
+            session = ISOTPSession(self._bus, tx_id=FUNCTIONAL_REQUEST_ID,
+                                   rx_id=range(0x7E8, 0x7F0))
+            payload = session.request(data, timeout=timeout)
+            if payload:
+                return _FakeMsg(session.last_rx_id or 0x7E8, payload)
         except Exception as e:
             self.error.emit(str(e))
         return None
 
     def _scan_pids(self):
         self.status.emit("Scanning OBD-II PIDs…")
-        for pid, (name, scale, unit) in OBD2_PIDS.items():
+        for pid, entry in PID_TABLE.items():
             if not self._running:
                 break
-            if pid == 0x00:
-                continue
-            data   = bytes([0x02, 0x01, pid, 0x00, 0x00, 0x00, 0x00, 0x00])
-            resp   = self._send_and_recv(data)
+            resp = self._send_and_recv(bytes([0x01, pid]))
             if resp is None:
                 continue
             raw = resp.data
-            if len(raw) < 4 or raw[1] != 0x41 or raw[2] != pid:
+            if len(raw) < 3 or raw[0] != 0x41 or raw[1] != pid:
                 continue
-            try:
-                a = raw[3]
-                b = raw[4] if len(raw) > 4 else 0
-                if pid == 0x05 or pid == 0x0F:
-                    value = float(a) + float(scale)
-                elif pid == 0x0C:
-                    value = ((a * 256 + b) * 0.25)
-                else:
-                    value = float(a) * (scale if isinstance(scale, float) else 1.0)
-                self.pid_result.emit(pid, name, round(value, 2), unit or "")
-            except Exception:
-                log.warning("PID %s decode failed", pid, exc_info=True)
+            value = decode_pid(pid, raw[2:])
+            if value is None:
+                continue
+            self.pid_result.emit(pid, entry["name"], round(value, 2),
+                                 entry.get("unit", "") or "")
 
     def _read_dtc(self):
         self.status.emit("Reading DTCs (service 0x19)…")
-        data = bytes([0x03, 0x19, 0x02, 0xFF, 0x00, 0x00, 0x00, 0x00])
-        resp = self._send_and_recv(data, timeout=0.5)
-        dtcs = []
-        if resp:
-            raw = resp.data
-            i   = 3
-            while i + 1 < len(raw):
-                hi, lo = raw[i], raw[i + 1]
-                if hi == 0 and lo == 0:
-                    break
-                prefix = {0: "P", 1: "C", 2: "B", 3: "U"}[(hi >> 6) & 0x03]
-                code   = f"{prefix}{(hi & 0x3F):02X}{lo:02X}"
-                dtcs.append(code)
-                i += 3
-        self.dtc_result.emit(dtcs)
+        resp = self._send_and_recv(bytes([0x19, 0x02, 0xFF]), timeout=0.5)
+        self.dtc_result.emit(decode_dtc_records(resp.data) if resp else [])
 
     def _deep_scan(self):
         """
@@ -260,7 +235,7 @@ class UDSScanner(QThread):
             if not self._running:
                 return
             # TesterPresent (0x3E 0x00)
-            resp = self._send_to(ecu_id, bytes([0x02, 0x3E, 0x00, 0, 0, 0, 0, 0]))
+            resp = self._send_to(ecu_id, bytes([0x3E, 0x00]))
             if resp:
                 active_ecus.append(ecu_id)
                 self.status.emit(f"  ECU found: 0x{ecu_id:03X} → response 0x{resp.arbitration_id:03X}")
@@ -275,24 +250,26 @@ class UDSScanner(QThread):
                 return
             # Open extended session (0x10 0x03)
             self.status.emit(f"Opening extended session on 0x{ecu_id:03X}…")
-            self._send_to(ecu_id, bytes([0x02, 0x10, 0x03, 0, 0, 0, 0, 0]))
+            self._send_to(ecu_id, bytes([0x10, 0x03]))
             time.sleep(0.1)
+            last_tp = time.monotonic()
 
             # Read each DataIdentifier
             for did, did_name in UDS_DATA_IDS.items():
                 if not self._running:
                     return
+                # A long DID sweep must keep the extended session alive or
+                # later reads come back as negative responses.
+                if time.monotonic() - last_tp > TESTER_PRESENT_INTERVAL:
+                    self._send_to(ecu_id, bytes([0x3E, 0x80]), timeout=0.1)
+                    last_tp = time.monotonic()
                 hi = (did >> 8) & 0xFF
                 lo = did & 0xFF
-                resp = self._send_to(
-                    ecu_id,
-                    bytes([0x03, 0x22, hi, lo, 0, 0, 0, 0]),
-                    timeout=0.3,
-                )
-                if resp and len(resp.data) >= 4:
+                resp = self._send_to(ecu_id, bytes([0x22, hi, lo]), timeout=0.3)
+                if resp and len(resp.data) >= 3:
                     raw = bytes(resp.data)
-                    if raw[1] == 0x62:   # positive response
-                        payload = raw[4:]
+                    if raw[0] == 0x62:   # positive response
+                        payload = raw[3:]
                         hex_str = payload.hex().upper()
                         try:
                             decoded = payload.decode("ascii", errors="replace").strip()
@@ -302,7 +279,7 @@ class UDSScanner(QThread):
                 time.sleep(0.05)
 
             # Return to default session
-            self._send_to(ecu_id, bytes([0x02, 0x10, 0x01, 0, 0, 0, 0, 0]))
+            self._send_to(ecu_id, bytes([0x10, 0x01]))
             time.sleep(0.05)
 
     def _scan_services(self):
@@ -316,24 +293,26 @@ class UDSScanner(QThread):
         else:
             self.status.emit("Scanning read-only UDS services (0x10–0x3E; "
                              "destructive services skipped)…")
+        last_tp = time.monotonic()
         for svc_id in range(0x10, 0x3F):
             if not self._running:
                 break
+            if time.monotonic() - last_tp > TESTER_PRESENT_INTERVAL:
+                self._send_and_recv(bytes([0x3E, 0x80]), timeout=0.1)
+                last_tp = time.monotonic()
             if not self._allow_unsafe and svc_id in DESTRUCTIVE_SERVICES:
                 self.status.emit(f"  ⚠ skipped {DESTRUCTIVE_SERVICES[svc_id]} "
                                  f"(0x{svc_id:02X}) — enable unsafe scan to probe")
                 self.service_result.emit(FUNCTIONAL_REQUEST_ID, svc_id, False, b"")
                 continue
-            resp = self._send_and_recv(
-                bytes([0x02, svc_id, 0x00, 0, 0, 0, 0, 0]),
-                timeout=0.15,
-            )
+            resp = self._send_and_recv(bytes([svc_id, 0x00]),
+                                       timeout=SERVICE_PROBE_TIMEOUT)
             supported = False
             resp_data = b""
             if resp:
                 raw = bytes(resp.data)
-                # Not a "service not supported" negative response (0x7F xx 0x11)
-                if not (len(raw) >= 3 and raw[1] == 0x7F and raw[3] == 0x11):
+                # Not a "service not supported" negative response (7F xx 11)
+                if not (len(raw) >= 3 and raw[0] == 0x7F and raw[2] == 0x11):
                     supported = True
                     resp_data = raw
             self.service_result.emit(
@@ -342,4 +321,4 @@ class UDSScanner(QThread):
             svc_name = UDS_SERVICES.get(svc_id, f"0x{svc_id:02X}")
             status = "✓" if supported else "✗"
             self.status.emit(f"  {status} {svc_name}")
-            time.sleep(0.05)
+            time.sleep(SERVICE_PROBE_GAP)

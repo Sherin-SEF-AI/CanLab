@@ -67,4 +67,7 @@ def test_stmin_decode():
     assert ISOTPSession._stmin_seconds(0x00) == 0.0
     assert ISOTPSession._stmin_seconds(0x0A) == 0.010
     assert abs(ISOTPSession._stmin_seconds(0xF1) - 0.0001) < 1e-9
-    assert ISOTPSession._stmin_seconds(0xFF) == 0.0
+    # Reserved values (0x80-0xF0, 0xFA-0xFF) mean "use the 127 ms maximum"
+    # per ISO 15765-2; treating them as 0 flooded the ECU with no separation.
+    assert ISOTPSession._stmin_seconds(0xFF) == 0.127
+    assert ISOTPSession._stmin_seconds(0x80) == 0.127

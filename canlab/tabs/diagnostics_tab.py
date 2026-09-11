@@ -44,7 +44,13 @@ class DiagnosticsTab(QWidget):
         tabs.addTab(self._build_svc_tab(),    "UDS SERVICES")
         tabs.addTab(self._build_secacc_tab(), "SECURITY ACCESS")
         tabs.addTab(self._build_load_tab(),   "BUS LOAD")
+        from canlab.tabs.widgets.xcp_panel import XCPPanel
+        from canlab.tabs.widgets.doip_panel import DoIPPanel
+        self.xcp_panel = XCPPanel()
+        self.doip_panel = DoIPPanel()
         tabs.addTab(self._build_health_tab(), "BUS HEALTH")
+        tabs.addTab(self.xcp_panel,  "XCP")
+        tabs.addTab(self.doip_panel, "DoIP")
         outer.addWidget(tabs)
 
     # ── OBD-II tab ────────────────────────────────────────────────────────────
@@ -416,6 +422,10 @@ class DiagnosticsTab(QWidget):
         """Stop every worker/timer this tab owns (called on app close)."""
         self._health_timer.stop()
         self._rx_log_timer.stop()
+        for panel in ("xcp_panel", "doip_panel"):
+            p = getattr(self, panel, None)
+            if p is not None:
+                p.cleanup()
         for attr in ("_uds_worker", "_dtc_worker", "_deep_worker", "_svc_worker",
                      "_sa_worker"):
             w = getattr(self, attr, None)
