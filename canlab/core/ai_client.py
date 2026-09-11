@@ -7,11 +7,10 @@ ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-5"
 OLLAMA_DEFAULT_MODEL    = "llama3.1"
 
 
-SYSTEM_PROMPT = """You are an expert automotive CAN bus reverse engineer specializing in Hyundai/Kia vehicles.
-Analyze CAN frame data and identify signals. The vehicle is a Hyundai Kona.
-Known Hyundai CAN characteristics: 500kbps bus speed, little-endian default,
-many signals use rolling counters in the upper nibble of byte 0,
-checksums often in byte 7. Reference hyundai_kia_generic.dbc patterns.
+SYSTEM_PROMPT = """You are an expert automotive CAN bus reverse engineer.
+Analyse the CAN frame data given and identify signals. The vehicle is unknown
+unless the user says otherwise: do not assume a manufacturer, and say so when
+the data is consistent with more than one interpretation.
 Format your response with clear sections:
 
 SIGNAL IDENTIFICATION
@@ -116,6 +115,15 @@ class AIWorker(QThread):
         else:
             self._run_anthropic()
 
+    def _system_prompt(self) -> str:
+        """The base prompt plus the selected profile's framing hint (if any)."""
+        try:
+            from canlab.core.vehicle_profile import active_profile
+            hint = active_profile().ai_hint
+        except Exception:
+            hint = ""
+        return f"{SYSTEM_PROMPT}\n\nVehicle profile: {hint}" if hint else SYSTEM_PROMPT
+
     def _build_context(self):
         return build_prompt(
             self.id_hex, self.frames_df, self.context,
@@ -129,7 +137,7 @@ class AIWorker(QThread):
             with client.messages.stream(
                 model=self.model,
                 max_tokens=1500,
-                system=SYSTEM_PROMPT,
+                system=self._system_prompt(),
                 messages=[{"role": "user", "content": prompt}],
             ) as stream:
                 for text in stream.text_stream:
@@ -154,7 +162,7 @@ class AIWorker(QThread):
                 json={
                     "model": self.model,
                     "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "system", "content": self._system_prompt()},
                         {"role": "user",   "content": prompt},
                     ],
                     "stream": True,
@@ -190,7 +198,7 @@ class AIWorker(QThread):
                 model=self.model,
                 max_tokens=1500,
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": self._system_prompt()},
                     {"role": "user",   "content": prompt},
                 ],
                 stream=True,

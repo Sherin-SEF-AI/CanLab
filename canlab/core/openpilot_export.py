@@ -17,7 +17,8 @@ def to_opendbc_string(signal_defs: list, msg_meta: Optional[dict] = None) -> str
     Produce a DBC string in opendbc / comma.ai convention.
 
     msg_meta: {msg_id_hex -> {"checksum_byte": int, "counter_nibble": int}}
-    Hyundai/Kia convention: counter in upper nibble of byte 0, checksum in byte 7.
+    ``msg_meta`` is normally built by
+    :func:`canlab.core.vehicle_profile.message_meta` from the selected profile.
     """
     if msg_meta is None:
         msg_meta = {}
@@ -116,17 +117,3 @@ def to_opendbc_string(signal_defs: list, msg_meta: Optional[dict] = None) -> str
         lines.append("")
 
     return "\n".join(lines)
-
-
-# Default Hyundai/Kia meta for known message IDs
-HYUNDAI_MSG_META = {
-    "018": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-    "02C": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-    "050": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-    "0A6": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-    "251": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-    "260": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-    "316": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-    "544": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-    "593": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-}

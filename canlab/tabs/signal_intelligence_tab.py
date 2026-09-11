@@ -309,7 +309,7 @@ class SignalIntelligenceTab(QWidget):
 
         note = QLabel(
             "Requires ≥50 frames per ID.  Algorithms: XOR8, SUM8, SUM8_INV, "
-            "XOR_NIBBLES, NIBBLE_SUM, CRC8_SAE, CRC8_AUTOSAR, HYUNDAI_XOR, HYUNDAI_FULL"
+            "nibble sums, CRC-8 (J1850/AUTOSAR) and the OEM variants"
         )
         note.setFont(mono_font(7))
         note.setObjectName("label_dim")

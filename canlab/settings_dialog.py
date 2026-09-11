@@ -189,6 +189,32 @@ class SettingsDialog(QDialog):
         can_lay.addStretch()
         tabs.addTab(can_tab, "CAN INTERFACE")
 
+        # ── Vehicle profile ───────────────────────────────────────────────────
+        veh_tab = QWidget()
+        veh_lay = QVBoxLayout(veh_tab)
+        veh_grp = QGroupBox("Vehicle Profile")
+        veh_g = QGridLayout(veh_grp)
+        veh_g.addWidget(QLabel("Profile:"), 0, 0)
+        self.profile_combo = QComboBox()
+        from canlab.core.vehicle_profile import list_profiles
+        for pid, pname in list_profiles():
+            self.profile_combo.addItem(pname, pid)
+        veh_g.addWidget(self.profile_combo, 0, 1)
+        hint_veh = QLabel(
+            "Sets where injected frames carry their rolling counter and checksum, "
+            "which algorithm computes the checksum, the metadata attached to an "
+            "openpilot export, and the framing hint given to the AI.\n\n"
+            "'Generic' assumes nothing: no counter and no checksum are added. "
+            "A profile describes framing only — it never identifies your vehicle."
+        )
+        hint_veh.setFont(mono_font(8))
+        hint_veh.setObjectName("label_dim")
+        hint_veh.setWordWrap(True)
+        veh_g.addWidget(hint_veh, 1, 0, 1, 2)
+        veh_lay.addWidget(veh_grp)
+        veh_lay.addStretch()
+        tabs.addTab(veh_tab, "VEHICLE")
+
         # ── REST API ──────────────────────────────────────────────────────────
         rest_tab = QWidget()
         rest_lay = QVBoxLayout(rest_tab)
@@ -321,6 +347,9 @@ class SettingsDialog(QDialog):
         from canlab.core.state import get_state
         state = get_state()
         # Backend
+        idx = self.profile_combo.findData(getattr(state, "vehicle_profile", "generic"))
+        if idx >= 0:
+            self.profile_combo.setCurrentIndex(idx)
         backend = getattr(state, "active_backend", "python-can")
         self.radio_panda.setChecked(backend == "panda")
         self.radio_pycan.setChecked(backend != "panda")
@@ -341,6 +370,7 @@ class SettingsDialog(QDialog):
         # Persist new settings to AppState
         from canlab.core.state import get_state
         state = get_state()
+        state.vehicle_profile = self.profile_combo.currentData() or "generic"
         state.active_backend = "panda" if self.radio_panda.isChecked() else "python-can"
         state.panda_safety_model = self.panda_safety_combo.currentText()
         state.canfd_enabled  = self.chk_canfd.isChecked()
@@ -390,6 +420,9 @@ class SettingsDialog(QDialog):
 
     def get_api_key(self) -> str:
         return self.api_key_edit.text().strip()
+
+    def get_vehicle_profile(self) -> str:
+        return self.profile_combo.currentData() or "generic"
 
     def get_can_settings(self) -> dict:
         return {

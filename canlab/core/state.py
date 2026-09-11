@@ -82,6 +82,9 @@ class AppState(QObject):
         self.notes_by_signal:   dict         = {}   # "{msg_id}/{sig_name}" -> str
         self.fuzz_running:      bool         = False
         self.active_backend:    str          = "python-can"
+        # Framing conventions for injection/export/AI hints; "generic" asserts
+        # nothing about the vehicle.
+        self.vehicle_profile:   str          = "generic"
         self.panda_safety_model: str         = "SAFETY_NOOUTPUT"
 
         # ── New fields for 8 production enhancements ──────────────────────────

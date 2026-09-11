@@ -312,7 +312,7 @@ class InjectionTab(QWidget):
         if bus is None:
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return
-        from canlab.core.injection import pack_signal, hyundai_checksum
+        from canlab.core.injection import annotate, pack_signal
         value = self.val_spin.value()
         data  = pack_signal(value, sig)
         mid_str = sig.get("message_id", "0")
@@ -320,8 +320,8 @@ class InjectionTab(QWidget):
             mid = int(mid_str, 16)
         except (ValueError, TypeError):
             mid = 0
-        if self.chk_checksum.isChecked():
-            data[7] = hyundai_checksum(bytes(data), mid)
+        annotate(data, mid, 0, apply_counter=False,
+                 apply_checksum=self.chk_checksum.isChecked())
         import can
         from canlab.core.safety import gated_send, BusNotArmedError, BlockedIdError
         msg = can.Message(arbitration_id=mid, data=bytes(data), is_extended_id=False)

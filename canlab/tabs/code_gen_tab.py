@@ -114,8 +114,8 @@ class CodeGenTab(QWidget):
         self.sig_checks_lay = QVBoxLayout(grp_sig)
         left_lay.addWidget(grp_sig)
 
-        # Hyundai options
-        grp_hyu = QGroupBox("HYUNDAI OPTIONS")
+        # Framing options (from the selected vehicle profile)
+        grp_hyu = QGroupBox("FRAMING (vehicle profile)")
         grp_h_lay = QVBoxLayout(grp_hyu)
         self.chk_checksum = QCheckBox("Include checksum handler")
         self.chk_counter  = QCheckBox("Include rolling counter")
@@ -211,8 +211,10 @@ class CodeGenTab(QWidget):
         keepalive = self.chk_keepalive.isChecked()
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        from canlab.core.vehicle_profile import active_profile
         code = _build_code(mode, iface, channel, bitrate, sigs,
-                            checksum, counter, keepalive, ts)
+                            checksum, counter, keepalive, ts,
+                            profile=active_profile(self._state))
         self.code_edit.setPlainText(code)
 
     def _copy(self):
@@ -239,14 +241,16 @@ class CodeGenTab(QWidget):
 
 
 def _build_code(mode, iface, channel, bitrate, sigs,
-                checksum, counter, keepalive, ts) -> str:
+                checksum, counter, keepalive, ts, profile=None) -> str:
+    from canlab.core.vehicle_profile import get_profile
+    profile = profile or get_profile()
     sig_names = [s.get("signal_name","?") for s in sigs]
 
     lines = [
         '#!/usr/bin/env python3',
         '"""',
         f'CANLAB — Generated CAN {"Reader" if mode == "READ" else "Writer" if mode == "WRITE" else "Reader/Writer"}',
-        'Vehicle: Hyundai Kona',
+        f'Vehicle profile: {profile.name}',
         f'Generated: {ts}',
         f'Signals: {", ".join(sig_names) if sig_names else "all"}',
         '"""',
@@ -257,16 +261,15 @@ def _build_code(mode, iface, channel, bitrate, sigs,
         '',
     ]
 
-    if checksum:
+    if checksum and profile.has_checksum:
         lines += [
-            'def hyundai_checksum(data: bytes, msg_id: int) -> int:',
-            '    """Hyundai/Kia CAN checksum (byte 7)."""',
-            '    checksum = 0',
-            '    for b in data[:7]:',
-            '        checksum += b',
-            '    checksum += (msg_id >> 8) & 0xFF',
-            '    checksum += msg_id & 0xFF',
-            '    return (~checksum) & 0xFF',
+            'from canlab.core.vehicle_profile import get_profile',
+            '',
+            f'PROFILE = get_profile("{profile.id}")',
+            '',
+            'def stamp(data: bytearray, msg_id: int, counter: int = 0):',
+            f'    """Apply the {profile.name} counter and checksum."""',
+            '    return PROFILE.annotate(data, msg_id, counter)',
             '',
         ]
 
@@ -324,10 +327,8 @@ def _build_code(mode, iface, channel, bitrate, sigs,
                 f'    values["{sname}"] = value',
                 '    data = bytearray(msg_def.encode(values, strict=False))',
             ]
-            if counter:
-                lines.append(f'    data[0] = (data[0] & 0x0F) | (next_counter(0x{mid:03X}) << 4)')
-            if checksum:
-                lines.append(f'    data[7] = hyundai_checksum(bytes(data), 0x{mid:03X})')
+            if (counter or checksum) and (profile.has_counter or profile.has_checksum):
+                lines.append(f'    stamp(data, 0x{mid:03X}, next_counter(0x{mid:03X}))')
             lines += [
                 f'    msg = can.Message(arbitration_id=0x{mid:03X}, data=bytes(data), is_extended_id=False)',
                 '    bus.send(msg)',

@@ -113,6 +113,7 @@ class DashboardTab(QWidget):
         self._live_timer.setInterval(250)
         self._live_timer.timeout.connect(self._update_live_overlays)
         self._state.frames_loaded.connect(self._on_frames_loaded)
+        self._state.dbc_updated.connect(self._on_dbc_updated)
         self._state.frames_updated.connect(self._on_frames_updated)
 
     # ── UI ────────────────────────────────────────────────────────────────────
@@ -318,19 +319,29 @@ class DashboardTab(QWidget):
         return w
 
     def _refresh_overlay_combos(self):
-        ids = self._state.get_unique_ids()
-        for combo in [self.overlay_steer_combo, self.overlay_speed_combo]:
+        """Offer the decoded DBC signals — the gauges show whatever the user
+        maps to them, instead of decoding two hard-coded message layouts."""
+        signals = self._state.dbc_signals
+        for combo, keywords in ((self.overlay_steer_combo, ("angle", "steer", "sas")),
+                                (self.overlay_speed_combo, ("speed", "spd", "velocity"))):
+            previous = combo.currentData()
             combo.clear()
-            combo.addItem("(none)", "")
-            for can_id in ids:
-                combo.addItem(f"0x{can_id}", can_id)
-        # Auto-select known IDs
-        steer_idx = self.overlay_steer_combo.findData("260")
-        if steer_idx >= 0:
-            self.overlay_steer_combo.setCurrentIndex(steer_idx)
-        speed_idx = self.overlay_speed_combo.findData("544")
-        if speed_idx >= 0:
-            self.overlay_speed_combo.setCurrentIndex(speed_idx)
+            combo.addItem("(none)", None)
+            for sig in signals:
+                mid = sig.get("message_id", "")
+                name = sig.get("signal_name", "?")
+                combo.addItem(f"0x{mid}  {name}", (mid, name))
+            if previous is not None:
+                idx = combo.findData(previous)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+                    continue
+            # Otherwise pre-select a plausibly named signal, if there is one.
+            for i in range(1, combo.count()):
+                label = combo.itemText(i).lower()
+                if any(k in label for k in keywords):
+                    combo.setCurrentIndex(i)
+                    break
 
     def _toggle_overlay_live(self):
         self._overlay_live = not self._overlay_live
@@ -342,37 +353,37 @@ class DashboardTab(QWidget):
             self._live_timer.stop()
 
     def _update_live_overlays(self):
-        store = self._state.store
+        angle = self._decode_overlay(self.overlay_steer_combo.currentData())
+        if angle is not None:
+            self.steering_widget.set_angle(angle)
+            self.lbl_steer_val.setText(f"{angle:.1f}°")
 
-        # Steering
-        steer_id = self.overlay_steer_combo.currentData()
-        if steer_id:
-            last = store.last_frame(steer_id)
-            if last is not None:
-                # SAS11: B0 + B1 = 11-bit signed angle, scale 0.1 deg
-                b0 = _byte(last, "B0")
-                b1 = _byte(last, "B1")
-                raw = (b0 | ((b1 & 0x07) << 8))
-                if raw > 1023:
-                    raw -= 2048
-                angle = raw * 0.1
-                self.steering_widget.set_angle(angle)
-                self.lbl_steer_val.setText(f"{angle:.1f}°")
+        speed = self._decode_overlay(self.overlay_speed_combo.currentData())
+        if speed is not None:
+            self.speed_gauge.set_value(speed)
+            self.lbl_speed_val.setText(f"{speed:.1f} km/h")
 
-        # Speed
-        speed_id = self.overlay_speed_combo.currentData()
-        if speed_id:
-            last = store.last_frame(speed_id)
-            if last is not None:
-                b2 = _byte(last, "B2")
-                b3 = _byte(last, "B3")
-                speed = ((b2 | (b3 << 8)) & 0x1FFF) * 0.03125
-                self.speed_gauge.set_value(speed)
-                self.lbl_speed_val.setText(f"{speed:.1f} km/h")
+    def _decode_overlay(self, selection):
+        """Decode the chosen DBC signal from the most recent matching frame."""
+        if not selection:
+            return None
+        mid, name = selection
+        last = self._state.store.last_frame(mid)
+        if last is None:
+            return None
+        from canlab.core.dbc_manager import (dbc_identifier, decode_frame,
+                                             frame_bytes_from_row)
+        decoded = decode_frame(self._state.dbc_signals, mid,
+                               frame_bytes_from_row(last, int(last.get("DLC", 8) or 8)))
+        value = decoded.get(dbc_identifier(name))
+        return float(value) if isinstance(value, (int, float)) else None
 
     # ── State handlers ────────────────────────────────────────────────────────
 
     def _on_frames_loaded(self, count: int):
+        self._refresh_overlay_combos()
+
+    def _on_dbc_updated(self):
         self._refresh_overlay_combos()
 
     def _on_frames_updated(self):

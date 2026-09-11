@@ -14,11 +14,21 @@ def pack_signal(value: float, sig: dict) -> bytearray:
     return data
 
 
-def hyundai_checksum(data: bytes, msg_id: int) -> int:
-    checksum = sum(data[:7])
-    checksum += (msg_id >> 8) & 0xFF
-    checksum += msg_id & 0xFF
-    return (~checksum) & 0xFF
+def annotate(data: bytearray, msg_id: int, counter: int = 0,
+             apply_counter: bool = False, apply_checksum: bool = False,
+             profile=None) -> bytearray:
+    """Stamp the selected vehicle profile's counter and checksum onto a frame.
+
+    Which byte holds what, and which algorithm computes it, is a profile
+    setting — it used to be hard-coded to one OEM's convention.
+    """
+    from canlab.core.vehicle_profile import active_profile
+    profile = profile or active_profile()
+    if apply_counter:
+        profile.apply_counter(data, counter)
+    if apply_checksum:
+        profile.apply_checksum(data, msg_id)
+    return data
 
 
 class InjectionWorker(QThread):
@@ -58,11 +68,10 @@ class InjectionWorker(QThread):
         while self._running:
             try:
                 data = pack_signal(self._value, self._sig)
-                if self._apply_counter:
-                    self._counter = (self._counter + 1) & 0x0F
-                    data[0] = (data[0] & 0x0F) | (self._counter << 4)
-                if self._apply_checksum:
-                    data[7] = hyundai_checksum(bytes(data), mid)
+                self._counter = (self._counter + 1) & 0xFF
+                annotate(data, mid, self._counter,
+                         apply_counter=self._apply_counter,
+                         apply_checksum=self._apply_checksum)
                 msg = can.Message(
                     arbitration_id=mid,
                     data=bytes(data),

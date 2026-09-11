@@ -738,8 +738,10 @@ class MainWindow(QMainWindow):
             return
         try:
             from canlab.core.dbc_manager import export_opendbc
-            from canlab.core.openpilot_export import HYUNDAI_MSG_META
-            dbc_str = export_opendbc(self._state.dbc_signals, HYUNDAI_MSG_META)
+            from canlab.core.vehicle_profile import active_profile, message_meta
+            ids = {s.get("message_id", "") for s in self._state.dbc_signals}
+            meta = message_meta(active_profile(self._state), ids)
+            dbc_str = export_opendbc(self._state.dbc_signals, meta)
             with open(path, "w") as f:
                 f.write(dbc_str)
             self.statusBar().showMessage(f"openpilot DBC exported: {path}", 5000)

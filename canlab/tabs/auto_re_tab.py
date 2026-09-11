@@ -381,7 +381,7 @@ class AutoRETab(QWidget):
 
         lay.addWidget(QLabel(
             "Select a message ID and a candidate checksum byte. "
-            "Tries XOR8, SUM8, CRC8-SAE, CRC8-AUTOSAR, Hyundai-XOR, and more.",
+            "Tries XOR, sums, CRC-8 (J1850/AUTOSAR) and the OEM variants.",
             font=mono_font(8),
         ))
 
