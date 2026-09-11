@@ -10,7 +10,10 @@ from PyQt6.QtGui import QColor, QBrush
 from canlab.theme import COLORS, mono_font
 from canlab.core.state import get_state
 from canlab.core.canid import normalize_id
-from canlab.core.dbc_manager import signals_to_dbc_string, load_dbc, decode_frame, validate_signals
+from canlab.core.dbc_manager import (
+    signals_to_dbc_string, load_dbc, decode_frame, validate_signals, get_db,
+    frame_bytes_from_row,
+)
 
 BYTE_COLS = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
 
@@ -329,10 +332,7 @@ class DBCBuilderTab(QWidget):
     def _populate_preview_with_sig(self, sig: dict, frames: pd.DataFrame):
         self.preview_table.setRowCount(len(frames))
         for row_idx, (_, row) in enumerate(frames.iterrows()):
-            byte_data = bytes(
-                int(row[f"B{i}"]) if pd.notna(row.get(f"B{i}")) else 0
-                for i in range(8)
-            )
+            byte_data = frame_bytes_from_row(row, 8)
             decoded = decode_frame([sig], sig["message_id"], byte_data)
             sname = sig.get("signal_name", "")
             val_str = str(round(float(decoded[sname]), 4)) if sname in decoded else "?"
@@ -426,14 +426,11 @@ class DBCBuilderTab(QWidget):
         mid = sig.get("message_id", "")
         frames = self._state.get_frames_for_id(mid)
         if not frames.empty:
-            last = frames.iloc[-1]
-            data = bytes(
-                int(last.get(f"B{i}", 0) or 0) for i in range(8)
-            )
-            self.bit_editor.set_data(data)
+            self.bit_editor.set_data(frame_bytes_from_row(frames.iloc[-1], 8))
         start = int(sig.get("start_bit", 0))
         length = int(sig.get("length", 8))
-        self.bit_editor.set_selection(start, length)
+        little = str(sig.get("byte_order", "little")).lower() != "big"
+        self.bit_editor.set_selection(start, length, little)
 
     def _on_bit_selection(self, start_bit: int, length: int, little_endian: bool):
         self.f_start_bit.setText(str(start_bit))
@@ -507,9 +504,7 @@ class DBCBuilderTab(QWidget):
                 return
             for sig in signals:
                 self._state.add_dbc_signal(sig)
-            # Rebuild cantools cache
-            from canlab.core.dbc_manager import build_db_from_signals
-            build_db_from_signals(self._state.dbc_signals)
+            get_db(self._state)   # validate the merged set now, not on first decode
             self.status_label.setText(
                 f"Imported {len(signals)} signal(s) from CAN matrix."
             )
@@ -532,8 +527,7 @@ class DBCBuilderTab(QWidget):
                 return
             for sig in signals:
                 self._state.add_dbc_signal(sig)
-            from canlab.core.dbc_manager import build_db_from_signals
-            build_db_from_signals(self._state.dbc_signals)
+            get_db(self._state)
             self.status_label.setText(f"Imported {len(signals)} signal(s) from ARXML.")
             self.status_label.setStyleSheet(f"color:{COLORS['green']}")
         except Exception as e:

@@ -43,6 +43,9 @@ class AppState(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # The cantools Database cached by core.dbc_manager.get_db is rebuilt
+        # lazily after any signal change.
+        self.dbc_updated.connect(self._invalidate_dbc_db)
 
         self.frames_df:        pd.DataFrame = pd.DataFrame()
         self.selected_id:      str          = ""
@@ -110,6 +113,9 @@ class AppState(QObject):
         else:
             self.frames_df = pd.concat([self.frames_df, new_df], ignore_index=True)
         self.frames_updated.emit()
+
+    def _invalidate_dbc_db(self):
+        self.dbc_db = None
 
     def add_dbc_signal(self, signal_def: dict):
         self.dbc_signals.append(signal_def)

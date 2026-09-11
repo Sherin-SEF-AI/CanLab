@@ -1,5 +1,3 @@
-import numpy as np
-import pandas as pd
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QTreeWidget, QTreeWidgetItem,
@@ -190,7 +188,10 @@ class PlotTab(QWidget):
         if not data:
             return
         kind, can_id, detail = data
-        key = f"{can_id}:{detail}"
+        if kind == "dbc":
+            key = f"{can_id}:dbc:{detail.get('signal_name', '?')}"
+        else:
+            key = f"{can_id}:{detail}"
         if item.checkState(0) == Qt.CheckState.Checked:
             self._add_signal(key, kind, can_id, detail)
         else:
@@ -226,22 +227,16 @@ class PlotTab(QWidget):
             y = s.values.astype(float)
             label = f"{can_id} {detail}"
         elif kind == "dbc" and detail:
-            from canlab.core.dbc_manager import decode_frame
-            vals, times = [], []
-            for _, row in df.iterrows():
-                byte_data = bytes(
-                    int(row[f"B{i}"]) if pd.notna(row.get(f"B{i}")) else 0
-                    for i in range(8)
-                )
-                decoded = decode_frame([detail], can_id, byte_data)
-                sname = detail.get("signal_name", "")
-                if sname in decoded:
-                    vals.append(float(decoded[sname]))
-                    times.append(row["Timestamp"])
-            if not vals:
+            from canlab.core.dbc_manager import decode_series, dbc_identifier
+            series = decode_series([detail], can_id, df)
+            sname = dbc_identifier(detail.get("signal_name", ""))
+            if series.empty or sname not in series.columns:
                 return
-            t = np.array(times, dtype=float)
-            y = np.array(vals, dtype=float)
+            s = series[sname].dropna()
+            if s.empty:
+                return
+            t = series.loc[s.index, "Timestamp"].to_numpy(dtype=float)
+            y = s.to_numpy(dtype=float)
             label = f"{can_id} {detail.get('signal_name', '?')}"
         else:
             return
@@ -306,7 +301,11 @@ class PlotTab(QWidget):
     def _live_update(self):
         if not self._live_enabled or not self._plot_items:
             return
-        db = self._state.dbc_db
+        from canlab.core.dbc_manager import get_db, dbc_identifier
+        try:
+            db = get_db(self._state)
+        except ValueError:
+            db = None
         for key, (pi, curve, color, label) in list(self._plot_items.items()):
             parts = key.split(":", 1)
             if len(parts) != 2:
@@ -324,21 +323,18 @@ class PlotTab(QWidget):
                 y = s.values.astype(float)
                 curve.setData(t, y)
                 pi.autoRange()
-            elif db is not None:
-                t_vals, y_vals = [], []
-                msg_id_int = int(can_id, 16)
-                for _, row in df.iterrows():
-                    try:
-                        raw = bytes(int(row.get(f"B{i}", 0) or 0) for i in range(8))
-                        decoded = db.decode_message(msg_id_int, raw)
-                        if detail in decoded:
-                            t_vals.append(float(row["Timestamp"]))
-                            y_vals.append(float(decoded[detail]))
-                    except Exception:
-                        log.debug("suppressed exception", exc_info=True)
-                if t_vals:
-                    curve.setData(np.array(t_vals), np.array(y_vals))
-                    pi.autoRange()
+            elif db is not None and detail.startswith("dbc:"):
+                from canlab.core.dbc_manager import decode_series
+                series = decode_series(self._state.dbc_signals, can_id, df)
+                col = dbc_identifier(detail[4:])
+                if series.empty or col not in series.columns:
+                    continue
+                s = series[col].dropna()
+                if s.empty:
+                    continue
+                curve.setData(series.loc[s.index, "Timestamp"].to_numpy(dtype=float),
+                              s.to_numpy(dtype=float))
+                pi.autoRange()
 
     # ── Mouse / export ────────────────────────────────────────────────────────
 

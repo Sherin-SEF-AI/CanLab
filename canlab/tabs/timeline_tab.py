@@ -8,7 +8,6 @@ Sub-tabs:
                  signal spike seeks the video to that moment.
                  An offset slider aligns video t=0 with log t=0.
 """
-import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
@@ -292,22 +291,19 @@ class TimelineTab(QWidget):
                     f"0x{mid} {name}")
 
         if kind == "dbc":
-            from canlab.core.dbc_manager import decode_frame
-            sigs   = [s for s in self._state.dbc_signals
-                      if s.get("message_id", "").upper() == mid.upper()]
+            from canlab.core.dbc_manager import decode_series, dbc_identifier
             frames = df[df["ID"] == mid].sort_values("Timestamp")
-            if frames.empty or not sigs:
+            if frames.empty:
                 return None, None, name
-            t_vals, y_vals = [], []
-            for _, row in frames.iterrows():
-                data    = bytes(int(row.get(f"B{i}", 0) or 0) for i in range(8))
-                decoded = decode_frame(sigs, mid, data)
-                if name in decoded:
-                    t_vals.append(float(row["Timestamp"]))
-                    y_vals.append(float(decoded[name]))
-            if not t_vals:
+            series = decode_series(self._state.dbc_signals, mid, frames)
+            col = dbc_identifier(name)
+            if series.empty or col not in series.columns:
                 return None, None, name
-            return np.array(t_vals), np.array(y_vals), f"0x{mid} {name}"
+            s = series[col].dropna()
+            if s.empty:
+                return None, None, name
+            return (series.loc[s.index, "Timestamp"].to_numpy(dtype=float),
+                    s.to_numpy(dtype=float), f"0x{mid} {name}")
 
         return None, None, name
 

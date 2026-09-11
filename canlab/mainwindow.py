@@ -868,11 +868,11 @@ class MainWindow(QMainWindow):
             return
         try:
             from canlab.core.can_matrix_parser import parse_can_matrix
-            from canlab.core.dbc_manager import build_db_from_signals
+            from canlab.core.dbc_manager import get_db
             sigs = parse_can_matrix(path)
             for sig in sigs:
                 self._state.add_dbc_signal(sig)
-            build_db_from_signals(self._state.dbc_signals)
+            get_db(self._state)
             self.statusBar().showMessage(
                 f"CAN Matrix: imported {len(sigs)} signals from {os.path.basename(path)}", 5000
             )

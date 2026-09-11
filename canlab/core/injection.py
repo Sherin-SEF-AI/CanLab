@@ -3,28 +3,14 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 
 def pack_signal(value: float, sig: dict) -> bytearray:
-    """
-    Bit-pack a physical value into an 8-byte CAN payload according to signal def.
-    Applies Hyundai rolling-counter in upper nibble of byte 0 if requested.
-    """
-    scale  = float(sig.get("scale",  1.0))
-    offset = float(sig.get("offset", 0.0))
-    raw    = int((value - offset) / scale)
-
-    start_bit = int(sig.get("start_bit", 0))
-    length    = int(sig.get("length",    8))
-
-    data = bytearray(8)
-    # Write raw value into the correct byte(s) — simple little-endian
-    raw_masked = raw & ((1 << length) - 1)
-    for bit in range(length):
-        byte_pos = (start_bit + bit) // 8
-        bit_pos  = (start_bit + bit) % 8
-        if byte_pos < 8:
-            if raw_masked & (1 << bit):
-                data[byte_pos] |= (1 << bit_pos)
-            else:
-                data[byte_pos] &= ~(1 << bit_pos)
+    """Encode a physical value into a payload honouring the signal's byte order,
+    sign and width (via cantools); other bits are zero."""
+    from canlab.core.dbc_manager import encode_frame
+    payload = encode_frame([sig], sig.get("message_id", "0"),
+                           {sig.get("signal_name", "SIG"): value})
+    data = bytearray(payload)
+    if len(data) < 8:
+        data.extend(bytes(8 - len(data)))
     return data
 
 

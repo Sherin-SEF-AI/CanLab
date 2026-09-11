@@ -283,7 +283,7 @@ def _build_code(mode, iface, channel, bitrate, sigs,
 
     lines += [
         'db = cantools.database.load_file("decoded.dbc")',
-        f'bus = can.interface.Bus(channel="{channel}", bustype="{iface}", bitrate={bitrate})',
+        f'bus = can.interface.Bus(channel="{channel}", interface="{iface}", bitrate={bitrate})',
         '',
         f'print("CANLAB — {mode} mode on {channel} @ {bitrate}bps...")',
         '',
@@ -319,13 +319,11 @@ def _build_code(mode, iface, channel, bitrate, sigs,
             lines += [
                 f'def send_{sname.lower()}(value: float):',
                 f'    """Send {sname} ({unit}) — scale={scale}, offset={offset}."""',
-                f'    raw = int((value - {offset}) / {scale})',
-                '    data = bytearray(8)',
+                f'    msg_def = db.get_message_by_frame_id(0x{mid:03X})',
+                '    values = {s.name: s.offset for s in msg_def.signals}',
+                f'    values["{sname}"] = value',
+                '    data = bytearray(msg_def.encode(values, strict=False))',
             ]
-            sb = int(sig.get("start_bit", 0))
-            byte_idx = sb // 8
-            bit_off  = sb % 8
-            lines.append(f'    data[{byte_idx}] = (raw >> {bit_off}) & 0xFF')
             if counter:
                 lines.append(f'    data[0] = (data[0] & 0x0F) | (next_counter(0x{mid:03X}) << 4)')
             if checksum:
