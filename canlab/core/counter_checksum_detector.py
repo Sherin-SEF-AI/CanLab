@@ -12,6 +12,11 @@ Each entry is a dict with byte index, confidence, and detected algorithm/wrap.
 """
 
 import numpy as np
+
+# A counter is allowed to miss some increments (dropped frames, resets); 2-bit
+# counters only advance a quarter of the time, so the old 0.85 bar excluded
+# every counter narrower than a nibble.
+COUNTER_MATCH = 0.70
 import pandas as pd
 from typing import Optional
 
@@ -36,7 +41,7 @@ def _detect_counter_byte(series: pd.Series) -> Optional[dict]:
     wrap_mask = (vals[1:] == 0) & (vals[:-1] > 200)
     inc_mask  = (diffs == 1) | wrap_mask
     inc_rate  = inc_mask.mean()
-    if inc_rate > 0.85:
+    if inc_rate > COUNTER_MATCH:
         results.append({"type": "byte_counter", "wrap": 256, "confidence": round(inc_rate, 3)})
 
     # Lower nibble counter 0-15
@@ -44,7 +49,7 @@ def _detect_counter_byte(series: pd.Series) -> Optional[dict]:
     diffs_lo = np.diff(lo)
     wrap_lo  = (lo[1:] == 0) & (lo[:-1] == 15)
     inc_lo   = ((diffs_lo == 1) | wrap_lo).mean()
-    if inc_lo > 0.85:
+    if inc_lo > COUNTER_MATCH:
         results.append({"type": "nibble_lo_counter", "wrap": 16, "confidence": round(inc_lo, 3)})
 
     # Upper nibble counter 0-15
@@ -52,7 +57,7 @@ def _detect_counter_byte(series: pd.Series) -> Optional[dict]:
     diffs_hi = np.diff(hi)
     wrap_hi  = (hi[1:] == 0) & (hi[:-1] == 15)
     inc_hi   = ((diffs_hi == 1) | wrap_hi).mean()
-    if inc_hi > 0.85:
+    if inc_hi > COUNTER_MATCH:
         results.append({"type": "nibble_hi_counter", "wrap": 16, "confidence": round(inc_hi, 3)})
 
     if not results:
@@ -233,9 +238,14 @@ def detect_counters_and_checksums(df: pd.DataFrame) -> dict:
     """
     results = {}
     for can_id in df["ID"].unique():
-        frames = df[df["ID"] == can_id].copy()
+        frames = df[df["ID"] == can_id]
         if len(frames) < 5:
             continue
+        # Increment detection compares consecutive rows, so the frames have to
+        # be in time order — concatenated captures are not.
+        if not frames["Timestamp"].is_monotonic_increasing:
+            frames = frames.sort_values("Timestamp", kind="stable")
+        frames = frames.copy()
 
         counters  = []
         checksums = []

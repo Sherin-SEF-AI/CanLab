@@ -18,17 +18,21 @@ LAG_OFFSETS_MS = [-50, -25, -12, 0, 12, 25, 50]
 def _align(s1: np.ndarray, t1: np.ndarray,
            s2: np.ndarray, t2: np.ndarray,
            max_dt: float = 0.1) -> tuple[np.ndarray, np.ndarray]:
-    """Nearest-neighbour align s2 onto t1 timestamps."""
-    v1, v2 = [], []
-    j = 0
-    for i in range(len(t1)):
-        ts = t1[i]
-        while j < len(t2) - 1 and abs(t2[j + 1] - ts) < abs(t2[j] - ts):
-            j += 1
-        if abs(t2[j] - ts) <= max_dt:
-            v1.append(s1[i])
-            v2.append(s2[j])
-    return np.array(v1, dtype=float), np.array(v2, dtype=float)
+    """Nearest-neighbour align s2 onto t1 timestamps.
+
+    Vectorised: the per-sample Python loop this replaces ran once per byte pair
+    per lag offset, which is where a cross-ID sweep spent nearly all its time.
+    """
+    if len(t1) == 0 or len(t2) == 0:
+        return np.empty(0), np.empty(0)
+    idx = np.searchsorted(t2, t1)
+    left = np.clip(idx - 1, 0, len(t2) - 1)
+    right = np.clip(idx, 0, len(t2) - 1)
+    take_left = np.abs(t2[left] - t1) <= np.abs(t2[right] - t1)
+    nearest = np.where(take_left, left, right)
+    close = np.abs(t2[nearest] - t1) <= max_dt
+    return (np.asarray(s1, dtype=float)[close],
+            np.asarray(s2, dtype=float)[nearest[close]])
 
 
 def _best_r_with_lag(s1: np.ndarray, t1: np.ndarray,

@@ -7,8 +7,8 @@ compute_correlation_matrix improvements:
   - Combined dependency score = max(|pearson|, |spearman|, MI_normalized)
   - Returns combined score matrix, not just Pearson
 
-_classify improvements:
-  - Checksum detection: low entropy relative to other bytes
+_classify:
+  - Checksum detection: verified against the real algorithms, not entropy
   - Status flag vs packed bitfield distinction
   - PERIODIC classification based on inter-frame timing variance
 """
@@ -94,24 +94,25 @@ def _classify(stats: dict, frames: pd.DataFrame) -> str:
     if not entropies:
         return "UNKNOWN"
 
-    # Counter: one byte has near-linear increment pattern
-    for col, bstats in byte_stats.items():
-        series = frames[col].dropna().astype(float)
-        if len(series) < 3:
-            continue
-        diffs = series.diff().dropna()
-        if (diffs == 1).mean() > 0.70:
-            return "COUNTER"
-        lo = series.astype(int) & 0x0F
-        if (lo.diff().dropna() == 1).mean() > 0.70:
-            return "COUNTER"
+    # Counter and checksum bytes say nothing about what the message carries,
+    # so identify them first and then classify the *remaining* bytes. (The old
+    # rule returned COUNTER for the whole message as soon as any byte
+    # incremented, which nearly every OEM message does, and called the
+    # LOWEST-entropy byte the checksum — a checksum is high-entropy.)
+    counter_cols = {col for col in byte_stats if _is_counter_byte(frames, col)}
+    checksum_cols = _checksum_byte_candidates(frames, byte_stats, counter_cols)
 
-    # Checksum: one byte has low entropy while others are high
-    if len(entropies) >= 2:
-        for col, bstats in byte_stats.items():
-            others = [e for c, e in zip(byte_stats.keys(), entropies) if c != col]
-            if bstats["entropy"] < 1.5 and np.mean(others) > 3.0:
-                return "CHECKSUM"
+    constant_cols = {col for col, b in byte_stats.items() if b.get("range", 0) == 0}
+    payload = {col: b for col, b in byte_stats.items()
+               if col not in counter_cols
+               and col not in checksum_cols
+               and col not in constant_cols}
+    if payload:
+        byte_stats = payload
+    elif counter_cols:
+        # A counter, a checksum and padding: an alive/keepalive message.
+        return "COUNTER"
+    # else: nothing varies at all — fall through to the flag/bitfield rules.
 
     # Sensor: at least one byte has high entropy + large range
     for col, bstats in byte_stats.items():
@@ -250,3 +251,42 @@ def _dependency_score(a: np.ndarray, b: np.ndarray) -> float:
             log.debug("suppressed exception", exc_info=True)
 
     return round(max(scores) if scores else 0.0, 3)
+
+
+def _is_counter_byte(frames: pd.DataFrame, col: str, threshold: float = 0.75) -> bool:
+    """True when this byte increments by one (whole byte, or a low nibble)."""
+    series = frames[col].dropna().astype(float)
+    if len(series) < 8:
+        return False
+    values = series.to_numpy().astype(int)
+    for shift in (0, 4):
+        for width in (8, 4, 3, 2):
+            if shift and width > 4:
+                continue
+            masked = (values >> shift) & ((1 << width) - 1)
+            diffs = np.diff(masked)
+            wrapped = (diffs == 1) | (diffs == -((1 << width) - 1))
+            if wrapped.mean() > threshold:
+                return True
+    return False
+
+
+def _checksum_byte_candidates(frames: pd.DataFrame, byte_stats: dict,
+                              counter_cols: set) -> set:
+    """Bytes whose value is reproduced by a known checksum algorithm.
+
+    Entropy alone cannot identify a checksum — it looks like any other
+    high-entropy byte — so this asks the algorithms directly.
+    """
+    from canlab.core.checksum_guesser import guess_checksum
+    found = set()
+    for col in byte_stats:
+        if col in counter_cols:
+            continue
+        idx = int(col[1:])
+        try:
+            if guess_checksum(frames, idx):
+                found.add(col)
+        except Exception:
+            log.debug("checksum probe failed for %s", col, exc_info=True)
+    return found

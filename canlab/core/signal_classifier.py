@@ -181,8 +181,10 @@ def classify_message_type(frames_df: pd.DataFrame) -> dict:
         return {"type": "EVENT", "period_ms": None, "class": "?", "jitter_pct": 0.0}
 
     median_ifi = float(np.median(ifis))
-    std_ifi    = float(np.std(ifis))
-    cv         = std_ifi / (median_ifi + 1e-6)   # coefficient of variation
+    # Robust spread: one bus dropout or a logger hiccup inflates the standard
+    # deviation enough to relabel a strictly cyclic message as event-driven.
+    mad = float(np.median(np.abs(ifis - median_ifi))) * 1.4826
+    cv = mad / (median_ifi + 1e-6)
 
     if cv < 0.15:
         msg_type = "CYCLIC"
