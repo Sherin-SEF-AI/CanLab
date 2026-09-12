@@ -99,14 +99,45 @@ def _compute_delta(df: pd.DataFrame) -> pd.Series:
     return df.groupby("ID")["Timestamp"].diff().fillna(0.0)
 
 
-def _hex_or_nan(v) -> float:
+def _int_or_nan(v, base: int = 16) -> float:
     s = str(v).strip() if v is not None else ""
     if not s or s.lower() == "nan":
         return np.nan
     try:
-        return float(int(s, 16))
+        return float(int(s, base))
     except ValueError:
         return np.nan
+
+
+def _hex_or_nan(v) -> float:
+    return _int_or_nan(v, 16)
+
+
+def _bytes_are_hex(columns) -> bool:
+    """Whether SavvyCAN data-byte tokens are hex or decimal.
+
+    Real SavvyCAN pads each data byte to exactly two hex digits (00 to FF), but
+    decimal exports exist and use variable width (0, 150). Reading a decimal
+    export as hex turns 150 into 336 and fails the whole parse, so decide from
+    the tokens: a hex letter anywhere means hex; a token wider than two
+    characters or a bare single digit means decimal; all two-digit and no
+    letters defaults to hex, which is what SavvyCAN itself writes.
+    """
+    letter = re.compile(r"[A-Fa-f]")
+    seen_two_digit = False
+    for column in columns:
+        if column is None:
+            continue
+        for token in column.astype(str).head(2000):
+            token = token.strip()
+            if not token or token.lower() == "nan":
+                continue
+            if letter.search(token):
+                return True
+            if len(token) > 2 or len(token) == 1:
+                return False
+            seen_two_digit = True
+    return seen_two_digit
 
 
 # ── SavvyCAN / GVRET CSV ─────────────────────────────────────────────────────
@@ -118,8 +149,13 @@ def parse_savvycan_csv(filepath: str) -> pd.DataFrame:
     column is microseconds when it is an integer column; a column with decimal
     points is treated as seconds.
     """
+    # index_col=False matters: SavvyCAN writes a trailing comma after the last
+    # data byte, so each data row has one more field than the 14-column header.
+    # Without it pandas promotes Time Stamp to the index and shifts every column
+    # left, putting IDs in the timestamp column and the Extended flag in ID.
     df = pd.read_csv(filepath, dtype=str, skipinitialspace=True,
-                     encoding="utf-8-sig", keep_default_na=False)
+                     encoding="utf-8-sig", keep_default_na=False,
+                     index_col=False)
     df.columns = [str(c).strip().lstrip("﻿") for c in df.columns]
     col_map = {
         "Time Stamp": "Timestamp", "Timestamp": "Timestamp",
@@ -144,12 +180,13 @@ def parse_savvycan_csv(filepath: str) -> pd.DataFrame:
     bus_col = df["Bus"] if "Bus" in df.columns else None
     dlc_col = df["DLC"] if "DLC" in df.columns else None
     byte_vals = [df[c] if c in df.columns else None for c in BYTE_COLS8]
+    byte_base = 16 if _bytes_are_hex(byte_vals) else 10
     for i in range(len(df)):
         if math.isnan(id_int.iloc[i]) or math.isnan(ts.iloc[i]):
             continue
         data = []
         for col in byte_vals:
-            v = _hex_or_nan(col.iloc[i]) if col is not None else np.nan
+            v = _int_or_nan(col.iloc[i], byte_base) if col is not None else np.nan
             if math.isnan(v):
                 break
             data.append(int(v))

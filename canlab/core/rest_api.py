@@ -77,6 +77,30 @@ setInterval(tick,1000); tick();
 </script></body></html>"""
 
 
+def _json_safe(records: list) -> list:
+    """Make DataFrame records serialisable.
+
+    Padding bytes are NaN, which is not JSON, and pandas hands back NumPy
+    scalars the encoder also refuses. Either one used to return a 500 for any
+    frame shorter than eight bytes.
+    """
+    import math
+
+    import numpy as np
+
+    out = []
+    for row in records:
+        clean = {}
+        for key, value in row.items():
+            if isinstance(value, (np.integer, np.floating, np.bool_)):
+                value = value.item()
+            if isinstance(value, float) and math.isnan(value):
+                value = None
+            clean[key] = value
+        out.append(clean)
+    return out
+
+
 def _build_app(state_getter, token: str):
     try:
         from fastapi import FastAPI, HTTPException, Header, Depends
@@ -106,22 +130,14 @@ def _build_app(state_getter, token: str):
 
     @app.get("/frames", dependencies=auth)
     def get_frames(n: int = 200):
-        import numpy as np
         import pandas as pd
         state = state_getter()
         frames = state.frames_df
         if frames.empty:
             return JSONResponse(content=[])
         tail = frames.tail(max(0, min(int(n), len(frames))))
-        # Padding bytes are NaN, which is not JSON — encode them as null
-        # instead of returning a 500 for any frame shorter than 8 bytes.
         clean = tail.astype(object).where(pd.notna(tail), None)
-        records = clean.to_dict(orient="records")
-        for row in records:
-            for key, value in row.items():
-                if isinstance(value, (np.integer, np.floating, np.bool_)):
-                    row[key] = value.item()
-        return JSONResponse(content=records)
+        return JSONResponse(content=_json_safe(clean.to_dict(orient="records")))
 
     @app.get("/signals", dependencies=auth)
     def get_signals():

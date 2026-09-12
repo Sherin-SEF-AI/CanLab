@@ -44,11 +44,15 @@ class FuzzWorker(QThread):
     def run(self):
         import can
         from canlab.core import safety
-        from canlab.core.safety import BusNotArmedError, BlockedIdError
+        from canlab.core.safety import (BusNotArmedError, BlockedIdError,
+                                         require_armed)
         interval = 1.0 / self._rate_hz
         safety.register_tx_worker(self)
         try:
             while not self._abort:
+                # Re-check every iteration so disarming ARM TX halts the fuzz
+                # immediately rather than only preventing the next run.
+                require_armed()
                 data = self._next_payload()
                 msg  = can.Message(
                     arbitration_id=self._target_id,

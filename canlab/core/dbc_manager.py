@@ -109,7 +109,10 @@ def _group_messages(signal_defs: Iterable[dict]) -> dict[int, dict]:
             messages[fid] = {
                 "name": dbc_identifier(sig.get("message_name"), f"MSG_{sig['message_id']}"),
                 "signals": [],
-                "length": 8,
+                # Grown from the signals and any declared msg_length. Starting
+                # at 8 forced every message to 8 bytes on export, so a 3-byte
+                # message re-imported as 8.
+                "length": 0,
                 "used_names": set(),
             }
         m = messages[fid]
@@ -121,7 +124,10 @@ def _group_messages(signal_defs: Iterable[dict]) -> dict[int, dict]:
         m["used_names"].add(sname)
         sig["_dbc_name"] = sname
         m["signals"].append(sig)
-        m["length"] = max(m["length"], int(sig.get("msg_length", 8) or 8), _needed_bytes(sig))
+        declared = int(sig.get("msg_length") or 0)
+        m["length"] = max(m["length"], declared, _needed_bytes(sig))
+    for m in messages.values():
+        m["length"] = max(1, m["length"])       # a DBC message cannot be 0 bytes
     return messages
 
 

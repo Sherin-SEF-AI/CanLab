@@ -95,9 +95,16 @@ class ReplayWorker(QThread):
                 try:
                     raw_id = row.get("ID", "0")
                     arb_id = int(str(raw_id), 16) if isinstance(raw_id, str) else int(raw_id)
-                    data   = bytes(
-                        int(row[f"B{i}"]) if pd.notna(row.get(f"B{i}")) else 0
-                        for i in range(8)
+                    # Honour the recorded DLC. Always sending 8 bytes with 0
+                    # for the absent ones puts a different frame on the bus
+                    # than was captured: a 3-byte message came back as 8 with
+                    # five spurious zeros.
+                    dlc_val = row.get("DLC")
+                    count = int(dlc_val) if pd.notna(dlc_val) else 8
+                    count = max(0, min(count, 64))
+                    data = bytes(
+                        int(row[f"B{i}"]) & 0xFF if pd.notna(row.get(f"B{i}")) else 0
+                        for i in range(count)
                     )
                     extended = (
                         bool(row.get("Extended", False))

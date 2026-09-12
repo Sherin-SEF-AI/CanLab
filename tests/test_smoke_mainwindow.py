@@ -330,6 +330,34 @@ def test_long_help_text_wraps(window, app):
     assert not unwrapped, f"long labels without word wrap: {unwrapped}"
 
 
+def test_signals_table_populates_with_a_dbc_defined(window, app):
+    """Populating this table imports canid inline, per row.
+
+    The merge from main brought that import back in its old-layout form
+    (`from core.canid import ...`), which raises the moment a row is built. No
+    other test reached it, because it only runs once classification returns.
+    """
+    import time
+
+    state = get_state()
+    sample = (Path(__file__).resolve().parent.parent
+              / "canlab" / "sample_data" / "sample_kona_drive.csv")
+    state.load_frames(parse_log_file(str(sample)), "sample.csv")
+    state.add_dbc_signal({
+        "message_id": "0A6", "message_name": "W", "signal_name": "S",
+        "start_bit": 7, "length": 16, "byte_order": "big",
+        "value_type": "unsigned", "scale": 1.0, "offset": 0.0,
+        "min_val": 0, "max_val": 100, "unit": "", "description": ""})
+    app.processEvents()
+
+    window.signals_tab._run_classify()
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and window.signals_tab.table.rowCount() == 0:
+        app.processEvents()
+        time.sleep(0.02)
+    assert window.signals_tab.table.rowCount() > 0, "classification produced no rows"
+
+
 def test_close_disarms_and_stops_workers(window, app):
     """Runs last: closing the window must disarm TX and stop every worker."""
     safety.set_armed(True)

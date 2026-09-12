@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QBrush
 from canlab.theme import COLORS, mono_font
 from canlab.core.state import get_state
+from canlab.core.canid import normalize_id
 from canlab.core.signal_analyzer import analyze_all
 
 BYTE_COLS = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
@@ -138,7 +139,8 @@ class SignalsTab(QWidget):
 
             dbc_status = ""
             can_id = str(row.get("ID", ""))
-            if any(s.get("message_id","").upper() == can_id.upper()
+            nid = normalize_id(can_id)
+            if any(normalize_id(s.get("message_id", "")) == nid
                    for s in self._state.dbc_signals):
                 dbc_status = "OK"
 

@@ -88,6 +88,17 @@ UDS_SESSIONS = {
 }
 
 
+def decode_dtc(high: int, mid: int, low: int = 0) -> str:
+    """The printable ISO 15031-6 code for one DTC.
+
+    Bits 7-6 of the high byte pick the system letter, bits 5-4 the first digit,
+    and the remaining nibble plus the middle byte the last three. ``low`` is the
+    failure-type byte, not part of the code itself.
+    """
+    prefix = "PCBU"[(high >> 6) & 0x03]
+    return f"{prefix}{(high >> 4) & 0x03}{high & 0x0F:X}{mid:02X}"
+
+
 def decode_dtc_records(payload: bytes) -> list[str]:
     """Decode a ReadDTCInformation (0x19 sub-function 0x02) response payload.
 
@@ -102,9 +113,8 @@ def decode_dtc_records(payload: bytes) -> list[str]:
         hi, mid, lo, _status = payload[i:i + 4]
         if hi == 0 and mid == 0 and lo == 0:
             break
-        prefix = "PCBU"[(hi >> 6) & 0x03]
-        codes.append(f"{prefix}{(hi >> 4) & 0x03}{hi & 0x0F:X}{mid >> 4:X}"
-                     f"{mid & 0x0F:X}-{lo:02X}")
+        # ISO 14229 shows the failure type alongside the ISO 15031-6 code.
+        codes.append(f"{decode_dtc(hi, mid)}-{lo:02X}")
         i += 4
     return codes
 

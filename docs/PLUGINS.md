@@ -8,8 +8,13 @@ actions, custom exporters or new detectors without touching CanLab's source.
 Plugin **metadata** (name/version) is read statically with `ast`, so listing
 plugins never runs anything. A plugin's code executes only once you **enable it**
 in Settings → PLUGINS; dropping a file into the directory does nothing on its
-own, and the choice is remembered between sessions. An enabled plugin runs with
-full application privileges — only enable plugins you trust.
+own, and the choice is remembered between sessions.
+
+Enabling approves the file's **exact contents**: the approval is pinned to its
+SHA-256. Edit an approved plugin and the fingerprint no longer matches, so it
+goes back to disabled and has to be re-approved. Approved code cannot be swapped
+for something else behind your back. An enabled plugin runs with full
+application privileges, so only enable plugins you trust.
 
 ## Writing a plugin
 
