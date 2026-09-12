@@ -23,7 +23,7 @@ jobs:
       - name: Install package with extras
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,ai,rest,mcp,mdf]"
+          pip install -e ".[dev,ai,rest,mcp,mdf,adapters]"
 
       - name: Lint
         run: ruff check canlab tests
@@ -53,7 +53,7 @@ jobs:
       - name: Install package
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,ai,rest,mcp]"
+          pip install -e ".[dev,ai,rest,mcp,adapters]"
 
       # Catches bundling gaps such as a missing Qt submodule in canlab.spec
       # (e.g. QtMultimedia) that only surface in the packaged binary.

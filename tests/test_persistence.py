@@ -49,11 +49,11 @@ def make_dialog(qcore):
 
 
 def test_settings_round_trip(isolated_settings, make_dialog):
+    from canlab.core.adapters import Adapter
     dlg = make_dialog()
-    dlg.iface_combo.setCurrentText("pcan")
-    dlg.channel_edit.setText("can3")
-    dlg.bitrate_combo.setCurrentText("250000")
-    dlg.chk_canfd.setChecked(True)
+    dlg._adapters = [Adapter("bench", "pcan", "PCAN_USBBUS3", 250_000, fd=True)]
+    dlg._adapter_default = "bench"
+    dlg._adapter_refresh_table()
     dlg.rest_port_spin.setValue(9100)
     idx = dlg.profile_combo.findData("toyota")
     dlg.profile_combo.setCurrentIndex(idx)
@@ -61,10 +61,10 @@ def test_settings_round_trip(isolated_settings, make_dialog):
 
     fresh = make_dialog()
     fresh._load_persisted()
-    assert fresh.iface_combo.currentText() == "pcan"
-    assert fresh.channel_edit.text() == "can3"
-    assert fresh.bitrate_combo.currentText() == "250000"
-    assert fresh.chk_canfd.isChecked() is True
+    d = fresh.default_adapter()
+    assert (d.name, d.interface, d.channel, d.bitrate, d.fd) == \
+        ("bench", "pcan", "PCAN_USBBUS3", 250_000, True)
+    assert fresh.get_can_settings()["interface"] == "pcan"
     assert fresh.rest_port_spin.value() == 9100
     assert fresh.profile_combo.currentData() == "toyota"
 

@@ -32,7 +32,7 @@ from canlab.tabs.gateway_tab import GatewayTab
 from canlab.ui.animations import PulsingDot, CountUpLabel
 from canlab.settings_dialog import (
     SettingsDialog, load_api_key,
-    load_groq_key, load_ai_provider, load_ai_model,
+    load_groq_key, load_openai_key, load_ai_provider, load_ai_model,
 )
 import logging
 
@@ -56,6 +56,7 @@ class MainWindow(QMainWindow):
         self._drain_timer      = QTimer()
         self._live_frame_count = 0
         self._rest_api_server  = None
+        self._mcp_service      = None
         self._plugins          = []
         self._multibus_config  = _saved_multibus()
 
@@ -91,8 +92,11 @@ class MainWindow(QMainWindow):
             model=load_ai_model(),
             groq_key=load_groq_key(),
             api_key=self._api_key,
+            openai_key=load_openai_key(),
         )
         self._load_plugins()
+        if _st.value(SettingsDialog.S_MCP_AUTOSTART, False, bool):
+            self._start_mcp(quiet=True)
 
     # ── Toolbar ───────────────────────────────────────────────────────────────
 
@@ -118,7 +122,20 @@ class MainWindow(QMainWindow):
         act("Export Lua",       self._export_lua,          "Export Wireshark Lua dissector")
         tb.addSeparator()
 
-        # CAN
+        # CAN: which adapter, then connect
+        from PyQt6.QtWidgets import QComboBox
+        lbl = QLabel(" Adapter: ")
+        lbl.setFont(mono_font(8))
+        tb.addWidget(lbl)
+        self.adapter_combo = QComboBox()
+        self.adapter_combo.setFont(mono_font(8))
+        self.adapter_combo.setFixedHeight(22)
+        self.adapter_combo.setMinimumWidth(160)
+        self.adapter_combo.setToolTip("The hardware adapter Connect CAN opens. "
+                                      "Manage them in Settings > CAN ADAPTERS.")
+        self._refresh_adapter_combo()
+        self.adapter_combo.activated.connect(self._on_adapter_picked)
+        tb.addWidget(self.adapter_combo)
         self._act_connect    = act("Connect CAN",  self._connect_can,    "Connect live CAN bus")
         self._act_disconnect = act("Disconnect",   self._disconnect_can, "Disconnect live CAN")
         self._act_disconnect.setEnabled(False)
@@ -141,6 +158,8 @@ class MainWindow(QMainWindow):
 
         # REST API toggle
         self._act_rest = act("REST API: OFF", self._toggle_rest_api, "Toggle REST API server")
+        self._act_mcp = act("MCP: OFF", self._toggle_mcp,
+                            "Let an assistant (Claude, ChatGPT, Codex) work on this capture over MCP")
         tb.addSeparator()
 
         # Plugins
@@ -211,6 +230,8 @@ class MainWindow(QMainWindow):
             ("Export decoded time-series…", self._export_timeseries),
             ("Detect multiplexed signals…", self._detect_mux),
             ("Calibrate signal from reference CSV…", self._calibrate_ref),
+            ("MCP server: start / stop",  self._toggle_mcp),
+            ("Connect an assistant over MCP…", self._open_mcp_settings),
         ]:
             a = QAction(text, self)
             a.triggered.connect(slot)
@@ -620,10 +641,18 @@ class MainWindow(QMainWindow):
 
         try:
             bus = injected_bus or self._open_bus(iface, channel, bitrate,
-                                                 fd, data_bitrate)
+                                                 fd, data_bitrate,
+                                                 self._can_settings.get("extra"))
         except Exception as e:
-            QMessageBox.critical(self, "CAN Error",
-                                 f"Could not open {channel}: {e}")
+            from canlab.core.adapters import Adapter, _HINTS
+            text = f"{type(e).__name__}: {e}"
+            hint = next((h for needle, h in _HINTS if needle.lower() in text.lower()), "")
+            QMessageBox.critical(
+                self, "CAN Error",
+                f"Could not open {self._can_settings.get('name') or channel} "
+                f"({Adapter.from_dict(self._can_settings).describe()}):\n{text}"
+                + (f"\n\nHint: {hint}" if hint else "")
+                + "\n\nSettings > CAN ADAPTERS can detect and test adapters.")
             return
 
         hubs = [self._make_hub(bus, channel, bitrate, 0)]
@@ -652,14 +681,62 @@ class MainWindow(QMainWindow):
         self._act_disconnect.setEnabled(True)
         self._state.can_connected.emit(True)
 
+    # ── Adapters ──────────────────────────────────────────────────────────────
+
+    def _refresh_adapter_combo(self):
+        """Saved adapters from Settings; the current one selected."""
+        from canlab.core.adapters import adapters_from_json
+        from canlab.settings_dialog import SettingsDialog, settings
+        st = settings()
+        self._adapters = adapters_from_json(st.value(SettingsDialog.S_ADAPTERS, "[]", str))
+        combo = self.adapter_combo
+        combo.blockSignals(True)
+        combo.clear()
+        for a in self._adapters:
+            combo.addItem(f"{a.name}  ({a.describe()})", a.name)
+        if not self._adapters:
+            combo.addItem(f"{self._can_settings.get('interface')} "
+                          f"{self._can_settings.get('channel')}", "")
+        combo.addItem("Manage adapters…", "__manage__")
+        idx = combo.findData(self._can_settings.get("name", ""))
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        combo.blockSignals(False)
+
+    def _on_adapter_picked(self, index: int):
+        key = self.adapter_combo.itemData(index)
+        if key == "__manage__":
+            self._refresh_adapter_combo()          # back to the current one
+            self._open_settings(tab="CAN ADAPTERS")
+            return
+        for a in self._adapters:
+            if a.name == key:
+                self._can_settings = {"interface": a.interface, "channel": a.channel,
+                                      "bitrate": a.bitrate, "fd": a.fd,
+                                      "data_bitrate": a.data_bitrate,
+                                      "extra": dict(a.extra), "name": a.name}
+                from canlab.settings_dialog import SettingsDialog, settings
+                st = settings()
+                st.setValue(SettingsDialog.S_ADAPTER_DEFAULT, a.name)
+                st.setValue(SettingsDialog.S_INTERFACE, a.interface)
+                st.setValue(SettingsDialog.S_CHANNEL, a.channel)
+                st.setValue(SettingsDialog.S_BITRATE, str(a.bitrate))
+                st.setValue(SettingsDialog.S_FD, a.fd)
+                st.setValue(SettingsDialog.S_FD_BITRATE, str(a.data_bitrate))
+                import json
+                st.setValue(SettingsDialog.S_EXTRA, json.dumps(a.extra))
+                self.statusBar().showMessage(f"Adapter: {a.name} ({a.describe()})", 4000)
+                if self._hubs:
+                    self.statusBar().showMessage(
+                        f"Adapter {a.name} selected; disconnect and reconnect to use it.", 6000)
+                return
+
     def _open_bus(self, interface: str, channel: str, bitrate: int,
-                  fd: bool = False, data_bitrate=None):
-        kwargs = dict(channel=channel, interface=interface, bitrate=bitrate)
-        if fd:
-            kwargs["fd"] = True
-            if data_bitrate:
-                kwargs["data_bitrate"] = data_bitrate
-        return can.interface.Bus(**kwargs)
+                  fd: bool = False, data_bitrate=None, extra: dict | None = None):
+        from canlab.core.adapters import Adapter
+        adapter = Adapter(name=channel, interface=interface, channel=str(channel),
+                          bitrate=int(bitrate), fd=bool(fd),
+                          data_bitrate=int(data_bitrate or 2_000_000), extra=dict(extra or {}))
+        return can.interface.Bus(**adapter.bus_kwargs())
 
     def _make_hub(self, bus, name: str, bitrate: int, index: int):
         from canlab.core.bus_hub import BusHub
@@ -893,6 +970,58 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "REST API", f"Could not start: {e}")
 
+    # ── MCP server ────────────────────────────────────────────────────────────
+
+    def _toggle_mcp(self):
+        if self._mcp_service is None:
+            self._start_mcp()
+        else:
+            self._stop_mcp()
+
+    def _start_mcp(self, quiet: bool = False):
+        from canlab.settings_dialog import SettingsDialog, settings
+        st = settings()
+        cfg = {"port": int(st.value(SettingsDialog.S_MCP_PORT, 8766, int)),
+               "allow_remote": st.value(SettingsDialog.S_MCP_REMOTE, False, bool),
+               "token": st.value(SettingsDialog.S_MCP_TOKEN, "", str)}
+        try:
+            from canlab.core.mcp_service import AppBackend, McpService
+            from canlab.core.mcp_tools import CanLabTools
+            from canlab.ui.gui_invoke import GuiInvoker
+        except ImportError as e:
+            QMessageBox.warning(self, "MCP", f"The MCP SDK is not installed ({e}).\n\n"
+                                "Install it with: pip install -e \".[mcp]\"")
+            return
+        if not hasattr(self, "_gui_invoker"):
+            self._gui_invoker = GuiInvoker(self)
+        tools = CanLabTools(AppBackend(self._state, self._gui_invoker))
+        svc = McpService(tools, host="0.0.0.0" if cfg["allow_remote"] else "127.0.0.1",
+                         port=cfg["port"], token=cfg["token"],
+                         allow_remote=cfg["allow_remote"])
+        try:
+            svc.start()
+        except Exception as e:
+            if quiet:
+                self.statusBar().showMessage(f"MCP server did not start: {e}", 8000)
+            else:
+                QMessageBox.critical(self, "MCP", f"Could not start the MCP server on port "
+                                     f"{cfg['port']}:\n{e}")
+            return
+        self._mcp_service = svc
+        self._act_mcp.setText(f"MCP: ON :{cfg['port']}")
+        self.statusBar().showMessage(
+            f"MCP server at {svc.url}. Settings > MCP shows what to paste into "
+            "Claude Code, Claude Desktop, Codex or ChatGPT.", 8000)
+
+    def _stop_mcp(self):
+        if self._mcp_service is not None:
+            self._mcp_service.stop()
+            self._mcp_service = None
+        self._act_mcp.setText("MCP: OFF")
+
+    def _open_mcp_settings(self):
+        self._open_settings(tab="MCP")
+
     def _stop_rest_api(self):
         if self._rest_api_server:
             self._rest_api_server.stop()
@@ -954,8 +1083,10 @@ class MainWindow(QMainWindow):
     def _open_gateway(self):
         self.tabs.setCurrentIndex(14)   # GATEWAY tab
 
-    def _open_settings(self):
+    def _open_settings(self, tab: str = ""):
         dlg = SettingsDialog(self)
+        if tab:
+            dlg.show_tab(tab)
         if dlg.exec():
             self._api_key      = dlg.get_api_key()
             self._can_settings = dlg.get_can_settings()
@@ -966,8 +1097,14 @@ class MainWindow(QMainWindow):
                 model=dlg.get_ai_model(),
                 groq_key=dlg.get_groq_key(),
                 api_key=self._api_key,
+                openai_key=dlg.get_openai_key(),
             )
             self._multibus_config = dlg.get_multibus_config()
+            self._refresh_adapter_combo()
+            if self._mcp_service is not None:
+                # The port or token may have changed; the assistant reconnects.
+                self._stop_mcp()
+                self._start_mcp(quiet=True)
 
     def _open_rlog(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -1078,6 +1215,7 @@ class MainWindow(QMainWindow):
         from canlab.core.safety import set_armed
         set_armed(False)                       # stops every registered TX worker
         self._stop_rest_api()
+        self._stop_mcp()
         if self._hubs:
             self._disconnect_can()
         for i in range(self.tabs.count()):
@@ -1100,7 +1238,18 @@ def _saved_can_settings() -> dict:
         "bitrate": int(st.value(SettingsDialog.S_BITRATE, 500000, int)),
         "fd": st.value(SettingsDialog.S_FD, False, bool),
         "data_bitrate": int(st.value(SettingsDialog.S_FD_BITRATE, 2000000, int)),
+        "extra": _json_dict(st.value(SettingsDialog.S_EXTRA, "{}", str)),
+        "name": st.value(SettingsDialog.S_ADAPTER_DEFAULT, "", str),
     }
+
+
+def _json_dict(text) -> dict:
+    import json
+    try:
+        d = json.loads(text or "{}")
+    except (ValueError, TypeError):
+        return {}
+    return d if isinstance(d, dict) else {}
 
 
 def _saved_multibus() -> list:

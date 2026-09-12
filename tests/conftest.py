@@ -13,6 +13,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 
 
+@pytest.fixture(scope="session", autouse=True)
+def isolated_qsettings(tmp_path_factory):
+    """Every QSettings("CanLab", "CanLab") in the test process lands in a
+    temporary directory, never in the user's real configuration."""
+    from PyQt6.QtCore import QSettings
+    d = str(tmp_path_factory.mktemp("qsettings"))
+    for fmt in (QSettings.Format.NativeFormat, QSettings.Format.IniFormat):
+        QSettings.setPath(fmt, QSettings.Scope.UserScope, d)
+    yield d
+
+
 # Held for the life of the process: if the application object is collected
 # before the widgets that reference it, Qt crashes during interpreter teardown.
 _QT_APP = None
@@ -27,6 +38,15 @@ def qcore():
     """
     global _QT_APP
     if _QT_APP is None:
+        # The application imports matplotlib (through the dashboard tab)
+        # before the QApplication exists. Keep that order here: if Qt loads
+        # its font plugins first, matplotlib's FreeType raises "raster
+        # overflow" the first time it renders text.
+        try:
+            from matplotlib.figure import Figure  # noqa: F401
+            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg  # noqa: F401
+        except ImportError:
+            pass
         try:
             from PyQt6.QtWidgets import QApplication
             _QT_APP = QApplication.instance() or QApplication([])

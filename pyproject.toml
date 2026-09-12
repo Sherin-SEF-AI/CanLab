@@ -27,10 +27,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ai = ["anthropic==0.116.0", "groq==1.5.0"]
+ai = ["anthropic==0.116.0", "groq==1.5.0", "openai==3.13.0"]
 mdf = ["asammdf>=7.0.0"]
 rest = ["fastapi==0.139.0", "uvicorn==0.51.0", "pydantic==2.13.4"]
 mcp = ["mcp==1.28.1"]
+# Serial (slcan) and candleLight (gs_usb) adapters; the other backends need vendor drivers.
+adapters = ["pyserial==3.5", "gs_usb==0.3.1"]
 dev = ["pytest==9.1.1", "ruff==0.16.7", "httpx==0.28.1", "pyinstaller", "lupa"]
 # Regenerating docs/canlab-demo.mp4; also needs ffmpeg on PATH.
 demo = ["edge-tts>=7.0.0"]

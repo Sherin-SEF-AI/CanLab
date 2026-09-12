@@ -258,12 +258,20 @@ check("REST serves real frames and rejects no token", rest)
 
 
 def mcp():
-    import canlab.mcp_server as m
-    m.load_log(f"{DATA}/GVRET_Log.csv")
-    ids = m.list_ids()
-    stats = m.byte_stats(busiest)
-    return len(ids) == 180 and bool(stats), \
-        f"load_log + list_ids returned {len(ids)} IDs; byte_stats works"
+    from canlab.core.mcp_tools import CanLabTools
+    t = CanLabTools()
+    t.load_log(f"{DATA}/GVRET_Log.csv")
+    ids = t.list_ids(limit=500)
+    stats = t.byte_stats(busiest)
+    report = t.run_all_detectors()
+    draft = t.draft_dbc()
+    hit = t.search(busiest)["results"]
+    doc = t.fetch(f"id:{busiest}")
+    return (len(ids) == 180 and bool(stats["bytes"]) and report["totals"]["counters"] > 0
+            and draft["signals"] > 0 and hit and "Byte statistics" in doc["text"]), \
+        (f"load_log + list_ids returned {len(ids)} IDs; run_all_detectors found "
+         f"{report['totals']}; draft_dbc wrote {draft['signals']} signals; "
+         f"search/fetch answer for {busiest}")
 
 
 check("MCP tools drive the real capture", mcp)

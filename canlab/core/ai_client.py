@@ -3,7 +3,15 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 GROQ_DEFAULT_MODEL      = "llama-3.3-70b-versatile"
 ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-5"
+OPENAI_DEFAULT_MODEL    = "gpt-5"
 OLLAMA_DEFAULT_MODEL    = "llama3.1"
+
+DEFAULT_MODELS = {
+    "Anthropic": ANTHROPIC_DEFAULT_MODEL,
+    "OpenAI":    OPENAI_DEFAULT_MODEL,
+    "Groq":      GROQ_DEFAULT_MODEL,
+    "Ollama":    OLLAMA_DEFAULT_MODEL,
+}
 
 
 SYSTEM_PROMPT = """You are an expert automotive CAN bus reverse engineer.
@@ -90,6 +98,7 @@ class AIWorker(QThread):
         model:      str = "",
         groq_key:   str = "",
         ml_insights: str = "",
+        openai_key: str = "",
         parent=None,
     ):
         super().__init__(parent)
@@ -98,11 +107,9 @@ class AIWorker(QThread):
         self.frames_df          = frames_df
         self.context            = context
         self.provider           = provider
-        self.model              = model or {
-            "Groq":   GROQ_DEFAULT_MODEL,
-            "Ollama": OLLAMA_DEFAULT_MODEL,
-        }.get(provider, ANTHROPIC_DEFAULT_MODEL)
+        self.model              = model or DEFAULT_MODELS.get(provider, ANTHROPIC_DEFAULT_MODEL)
         self.groq_key           = groq_key
+        self.openai_key         = openai_key
         self.ml_insights        = ml_insights
         self._full_response     = ""
         self._stopped           = False
@@ -118,6 +125,8 @@ class AIWorker(QThread):
             self._run_groq()
         elif self.provider == "Ollama":
             self._run_ollama()
+        elif self.provider == "OpenAI":
+            self._run_openai()
         else:
             self._run_anthropic()
 
@@ -161,6 +170,43 @@ class AIWorker(QThread):
             self.error.emit("Anthropic rate limit exceeded. Wait a moment and retry.")
         except Exception as e:
             self.error.emit(str(e))
+
+    def _run_openai(self):
+        """Stream from the OpenAI API (the ChatGPT models)."""
+        import openai
+        try:
+            client = openai.OpenAI(api_key=self.openai_key)
+            prompt = self._build_context()
+            # max_completion_tokens is the parameter every current model
+            # accepts; the reasoning models reject max_tokens.
+            stream = client.chat.completions.create(
+                model=self.model,
+                max_completion_tokens=4000,
+                messages=[
+                    {"role": "system", "content": self._system_prompt()},
+                    {"role": "user",   "content": prompt},
+                ],
+                stream=True,
+            )
+            for chunk in stream:
+                if self._stopped:
+                    break
+                if not chunk.choices:
+                    continue
+                text = chunk.choices[0].delta.content or ""
+                if text:
+                    self._full_response += text
+                    self.chunk_received.emit(text)
+            self.finished.emit(self._full_response)
+        except openai.AuthenticationError:
+            self.error.emit("Invalid OpenAI API key. Check Settings > API Keys.")
+        except openai.RateLimitError:
+            self.error.emit("OpenAI rate limit exceeded. Wait a moment and retry.")
+        except openai.NotFoundError:
+            self.error.emit(f"OpenAI does not know the model '{self.model}'. "
+                            "Pick another in Settings > API Keys.")
+        except Exception as e:
+            self.error.emit(f"OpenAI error: {e}")
 
     def _run_ollama(self):
         """Stream from a local Ollama server (fully offline, no API key)."""

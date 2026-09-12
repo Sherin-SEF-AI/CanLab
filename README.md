@@ -62,7 +62,7 @@ DoIP), and, for isolated bench use only, can inject, replay, fuzz and bridge.
 git clone https://github.com/Sherin-SEF-AI/CanLab.git
 cd CanLab
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[ai,rest,mcp]"      # extras: ai, rest, mcp, mdf, dev, demo
+pip install -e ".[ai,rest,mcp,adapters]"   # extras: ai, rest, mcp, adapters, mdf, dev, demo
 
 canlab                                # or: python -m canlab
 ```
@@ -181,7 +181,7 @@ that fits it and report the scale and offset.
 | 1 | **FRAMES** | Raw frame table with per-byte change highlighting, hex and bus filters, freeze and follow. |
 | 2 | **SIGNALS** | Per-message classification: frame count, rate, payload entropy, suspected message type. |
 | 3 | **PLOT** | Multi-signal time series. Raw bytes and decoded signals share a time axis, each with its own scale. |
-| 4 | **AI ENGINE** | Send one ID's statistics to Anthropic, Groq or a local Ollama model. The offline findings go with the question. Memory persists across sessions. |
+| 4 | **AI ENGINE** | Send one ID's statistics to Anthropic, OpenAI, Groq or a local Ollama model. The offline findings go with the question. Memory persists across sessions. |
 | 5 | **DBC BUILDER** | Visual signal editor with a bit grid and a live decode preview. Imports DBC, ARXML and CAN matrix; exports DBC, openpilot DBC, CANdb++, ARXML and Wireshark Lua. |
 | 6 | **CODE GEN** | Generates Python or C that opens the bus and decodes or encodes your signals. |
 | 7 | **INTELLIGENCE** | Annotated capture: mark when you did something and every byte and bit is ranked by how well it followed. Also periodicity, cross-ID correlation with a lag sweep, capture diffing, J1939 PGN decode, value lookup. |
@@ -356,10 +356,69 @@ it works from the cache.
 | Capability | Module | Notes |
 |---|---|---|
 | REST API and live web dashboard | `core/rest_api.py` | Loopback only, token-authenticated. `GET /` serves a live-frames page; `/inject` also requires ARM TX. |
-| MCP server | `mcp_server.py` | Exposes load_log, list_ids, byte_stats, detect_counters_checksums, correlate, match_opendbc, detect_multiplexers and calibrate as MCP tools. Run `canlab-mcp`. |
+| MCP server | `core/mcp_tools.py`, `core/mcp_service.py`, `mcp_server.py` | 25 tools over the capture, the detectors, the DBC and annotations, served from inside the window (live state) or headless. See below. |
+| Hardware adapters | `core/adapters.py` | Named adapter profiles for every python-can backend, detection of connected adapters, and a listen-only test. See below. |
 | Decoded time-series export | `core/timeseries_export.py` | A Timestamp-by-signal matrix to CSV or Parquet. |
 | Plugin SDK | [`docs/PLUGINS.md`](docs/PLUGINS.md) | Documented `register(app)` API, an event bus and two example plugins. Plugin code does not run until you enable it in Settings. |
 | Panda backend | `core/panda_backend.py` | comma.ai Panda as a python-can-compatible bus, with the safety model selectable. |
+
+### Assistants over MCP (Claude, ChatGPT, Codex)
+
+CanLab is an MCP server. An assistant connected to it can load a capture, list
+IDs, read byte statistics and raw frames, run every detector, draft a DBC,
+define and remove signals, decode frames, annotate the timeline and rank bytes
+against the annotations. It cannot transmit: no MCP tool touches the bus.
+
+There are two servers with the same 25 tools:
+
+- **Inside the window.** The **MCP** toolbar toggle (or Settings > MCP) starts
+  a Streamable HTTP server on `127.0.0.1:8766/mcp` over the capture you have
+  loaded or are recording. A signal the assistant adds appears in the DBC
+  Builder as one undoable step. Optional bearer token; loopback only unless you
+  tick "allow other machines".
+- **Headless.** `canlab-mcp` serves stdio and loads captures on request;
+  `canlab-mcp --http` serves HTTP without the window.
+
+Settings > MCP writes the exact configuration for each client. In short:
+
+```bash
+# Claude Code, against the running window (or a headless --http server)
+claude mcp add --transport http canlab http://127.0.0.1:8766/mcp
+
+# Claude Desktop and Codex CLI launch stdio servers; this one bridges to the window
+canlab-mcp --attach http://127.0.0.1:8766/mcp        # put this in their config
+
+# Claude Desktop, headless (no window needed): {"command": "/path/.venv/bin/canlab-mcp"}
+```
+
+ChatGPT connects from OpenAI's servers, so it cannot reach your loopback
+address. Publish the server over HTTPS (`cloudflared tunnel --url
+http://127.0.0.1:8766`, or ngrok), tick "allow connections from other machines",
+and add `https://<tunnel-host>/mcp` as a connector with no authentication;
+`search` and `fetch` are provided for ChatGPT's connector contract and Developer
+mode exposes the rest. ChatGPT cannot send a bearer token, so while the tunnel
+is up anyone who has the URL can read the capture and edit the signal list.
+
+The tools, the HTTP transport, the bridge and the in-window server are tested
+with the official MCP client (`tests/test_mcp_server.py`,
+`tests/test_mcp_in_app.py`).
+
+### Hardware CAN adapters
+
+Settings > CAN ADAPTERS keeps a list of named adapters and the toolbar switches
+between them. **Detect connected** asks every python-can backend what it sees,
+reads CAN network devices from sysfs, and recognises common USB sticks by
+vendor and product id (candleLight, CANable, USBtin, PEAK, Kvaser). **Test**
+opens the adapter and listens for one second; it never transmits, and a failure
+comes with the fix (the `ip link` command, the pip package, the dialout group).
+
+Every backend python-can ships is selectable: SocketCAN, slcan, gs_usb, PCAN,
+Kvaser, Vector, IXXAT, USB2CAN, Seeed, Robotell, serial, CANalyst-II, neoVI,
+socketcand, UDP multicast and virtual. The dialog shows what each one expects
+as a channel and which driver or package it needs. `pip install canlab[adapters]`
+adds pyserial (slcan) and gs_usb; vendor drivers (PCAN-Basic, CANlib, XL) come
+from the vendor. Detection and the adapter model are tested against stand-ins
+for the probes; opening is tested for real on python-can's virtual bus.
 
 ### REST API
 
@@ -407,7 +466,7 @@ incrementally maintained statistics rather than the frames themselves.
 
 ```bash
 pip install -e ".[dev]"
-QT_QPA_PLATFORM=offscreen python -m pytest -q     # 382 passed
+QT_QPA_PLATFORM=offscreen python -m pytest -q     # 412 passed
 ruff check canlab tests
 ```
 
@@ -418,9 +477,11 @@ loaded back by cantools and by a real Lua runtime; the checksum algorithms
 against published check values; the ARM TX gate on every transmit path,
 including that disarming stops a running worker; the receive dispatcher; the
 frame store including its growth cost; ISO-TP and UDS wire format and NRC 0x78
-handling; settings, plugin opt-in and project round trips; and an offscreen
-smoke test that builds the real window, cycles every tab, runs a live capture
-and asserts no thread is left running.
+handling; settings, plugin opt-in and project round trips; the MCP tools over
+Streamable HTTP, through the stdio bridge in a subprocess, and inside the
+window with the official MCP client; adapter detection and a listen-only open
+on the virtual bus; and an offscreen smoke test that builds the real window,
+cycles every tab, runs a live capture and asserts no thread is left running.
 
 The single skip is the MDF4 parser, which needs the optional `asammdf` extra.
 
@@ -458,9 +519,16 @@ batch stays flat as the capture grows. Memory is bounded by the ring buffer cap.
   not on FD hardware.
 - The Gateway needs **two** hardware CAN channels.
 - The AI features send the selected ID's frame statistics to whichever provider
-  you configure. Nothing is sent until you enter a key and click Analyze, and a
-  suggested signal is refused unless the response actually states a bit
-  position.
+  you configure (Anthropic, OpenAI, Groq or Ollama). Nothing is sent until you
+  enter a key and click Analyze, and a suggested signal is refused unless the
+  response actually states a bit position. The OpenAI provider is tested
+  against a stand-in for the SDK, not against the live service.
+- The MCP server in the window has no authentication unless you set a token,
+  and ChatGPT's connectors cannot send one. Keep it on loopback unless you
+  accept that.
+- Adapter detection was verified with the virtual backend and with stand-ins
+  for the USB, serial and sysfs probes; no physical adapter was attached during
+  development.
 - Plugins run with full application privileges once enabled. Only enable plugins
   you trust.
 - The prebuilt Linux binary on the releases page is x86_64 and unsigned.
@@ -473,8 +541,9 @@ batch stays flat as the capture grows. Memory is bounded by the ring buffer cap.
 - Linux, macOS or Windows with Python 3.11 or newer
 - 4 GB RAM, 8 GB recommended for the machine-learning features
 - Optional: SocketCAN for live hardware, a comma.ai Panda, or any
-  [python-can](https://python-can.readthedocs.io) adapter (`socketcan`, `pcan`,
-  `kvaser`, `virtual`, `serial`, `slcan` and others)
+  [python-can](https://python-can.readthedocs.io) adapter, added under
+  Settings > CAN ADAPTERS (`socketcan`, `slcan`, `gs_usb`, `pcan`, `kvaser`,
+  `vector` and the rest)
 
 ---
 

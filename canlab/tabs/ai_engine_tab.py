@@ -28,6 +28,7 @@ class AIEngineTab(QWidget):
         self._state      = get_state()
         self._api_key    = ""
         self._groq_key   = ""
+        self._openai_key = ""
         self._provider   = "Anthropic"
         self._model      = ANTHROPIC_DEFAULT_MODEL
         self._queue:     list  = []
@@ -49,13 +50,18 @@ class AIEngineTab(QWidget):
         self._api_key = key
 
     def set_ai_config(self, provider: str, model: str,
-                      groq_key: str = "", api_key: str = ""):
+                      groq_key: str = "", api_key: str = "", openai_key: str = ""):
         self._provider = provider
         self._model    = model
         self._groq_key = groq_key
+        self._openai_key = openai_key
         if api_key:
             self._api_key = api_key
         self._update_provider_ui()
+
+    def _active_key(self) -> str:
+        return {"Groq": self._groq_key, "OpenAI": self._openai_key,
+                "Ollama": ""}.get(self._provider, self._api_key)
 
     def _update_provider_ui(self):
         provider = self._provider
@@ -486,7 +492,7 @@ class AIEngineTab(QWidget):
             if from_queue:
                 self._advance_queue(self._current_id)
             return
-        active_key = self._groq_key if self._provider == "Groq" else self._api_key
+        active_key = self._active_key()
         # Ollama is a local server — no API key required.
         if self._provider != "Ollama" and not active_key:
             self.response_text.setPlainText(
@@ -524,6 +530,7 @@ class AIEngineTab(QWidget):
             provider=self._provider,
             model=self._model,
             groq_key=self._groq_key,
+            openai_key=self._openai_key,
             ml_insights=ml_insights,
         )
         self._worker.chunk_received.connect(self._on_chunk)
@@ -626,7 +633,7 @@ class AIEngineTab(QWidget):
         question = self.nl_input.text().strip()
         if not question:
             return
-        active_key = self._groq_key if self._provider == "Groq" else self._api_key
+        active_key = self._active_key()
         if self._provider != "Ollama" and not active_key:
             self.nl_response.setPlainText(
                 f"ERROR: No {self._provider} API key configured."
@@ -665,6 +672,7 @@ class AIEngineTab(QWidget):
             provider=self._provider,
             model=self._model,
             groq_key=self._groq_key,
+            openai_key=self._openai_key,
         )
         self._nl_worker.chunk_received.connect(
             lambda t: self.nl_response.insertPlainText(t)
