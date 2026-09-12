@@ -79,16 +79,22 @@ seconds, from 1 Hz to 100 Hz) so every feature can be tried without hardware.
 
 ## Demo
 
-A narrated walkthrough of every tab, recorded from the running application, in
-four parts. 1080p, subtitles burned in, and each part ships its own subtitle
-file.
+![CanLab in use](docs/demo-preview.gif)
+
+Twenty seconds of the real application, above. The full narrated walkthrough of
+every tab is below, in four parts, 1080p with subtitles burned in.
+
+**GitHub will not play these in the page.** It serves `.mp4` from a repository
+as a download, so the links below save the file rather than opening a player.
+They are also attached to the
+[latest release](https://github.com/Sherin-SEF-AI/CanLab/releases/latest).
 
 | Part | Covers | Length |
 |---|---|---|
-| [1. Loading a capture and finding structure](docs/canlab-demo-part1-analysis.mp4) | FRAMES, the ID panel and inspector, SIGNALS, counter and checksum detection, the checksum guesser, entropy boundaries | 3.0 min |
-| [2. Defining signals and checking them](docs/canlab-demo-part2-signals.mp4) | DBC BUILDER and its bit grid, the live decode preview, PLOT, INTELLIGENCE, ML INTEL, DASHBOARD | 2.6 min |
-| [3. Timeline, code generation and exports](docs/canlab-demo-part3-outputs.mp4) | TIMELINE, CODE GEN, the five export formats, DIAGNOSTICS including XCP and DoIP, security access | 2.4 min |
-| [4. The transmit gate, injection and live capture](docs/canlab-demo-part4-transmitting.mp4) | ARM TX, INJECTION, replay, fuzzing, GATEWAY, OBD-II, the AI engine, live capture | 3.3 min |
+| [1. Loading a capture and finding structure](docs/canlab-demo-part1-analysis.mp4?raw=1) | FRAMES, the ID panel and inspector, SIGNALS, counter and checksum detection, the checksum guesser, entropy boundaries | 3.0 min |
+| [2. Defining signals and checking them](docs/canlab-demo-part2-signals.mp4?raw=1) | DBC BUILDER and its bit grid, the live decode preview, PLOT, INTELLIGENCE, ML INTEL, DASHBOARD | 2.6 min |
+| [3. Timeline, code generation and exports](docs/canlab-demo-part3-outputs.mp4?raw=1) | TIMELINE, CODE GEN, the five export formats, DIAGNOSTICS including XCP and DoIP, security access | 2.4 min |
+| [4. The transmit gate, injection and live capture](docs/canlab-demo-part4-transmitting.mp4?raw=1) | ARM TX, INJECTION, replay, fuzzing, GATEWAY, OBD-II, the AI engine, live capture | 3.3 min |
 
 Subtitles: [part 1](docs/canlab-demo-part1-analysis.srt),
 [part 2](docs/canlab-demo-part2-signals.srt),
