@@ -38,6 +38,7 @@ demo = ["edge-tts>=7.0.0"]
 [project.scripts]
 canlab = "canlab.main:main"
 canlab-mcp = "canlab.mcp_server:main"
+canlab-cli = "canlab.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["canlab*"]
