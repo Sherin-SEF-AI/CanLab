@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python)](https://www.python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green?style=flat-square)](https://pypi.org/project/PyQt6/)
-[![Tests](https://img.shields.io/badge/tests-333%20passing-brightgreen?style=flat-square)](#testing)
+[![Tests](https://img.shields.io/badge/tests-382%20passing-brightgreen?style=flat-square)](#testing)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
 Load a capture, work out which bytes carry what, write the signal definitions
@@ -13,7 +13,7 @@ read. It also speaks the diagnostic protocols (UDS, ISO-TP, J1939, OBD-II, XCP,
 DoIP), and, for isolated bench use only, can inject, replay, fuzz and bridge.
 
 > **Status:** beta. Single-author project, actively developed. It runs, and the
-> behaviour described here is covered by an automated suite of 333 tests (see
+> behaviour described here is covered by an automated suite of 382 tests (see
 > [Testing](#testing)). But the analysis methods are heuristics that suggest
 > candidates rather than identify signals, some features need optional
 > dependencies, and it has not been validated across a wide range of real
@@ -133,6 +133,21 @@ re-voices that scene alone.
 
 ---
 
+## Finding a signal by doing something
+
+The analysis narrows the search; this finishes it. Connect to the bus, go to
+INTELLIGENCE, type a label such as `brake`, press **Start** as you press the
+pedal and **Stop** as you release it, and repeat a few times. **Rank
+candidates** then scores every byte and every bit on the bus by how well it
+followed your marks: a flag that is set exactly while you pressed scores near
+1, a pedal-position byte that rises while you pressed scores by correlation.
+Double-click the winner to define it.
+
+It works from a file too: type a start and end time against a loaded log.
+Marks are saved with the project.
+
+---
+
 ## A typical session
 
 1. **Open a log.** FRAMES shows every frame in time order. A byte lights up when
@@ -169,11 +184,11 @@ that fits it and report the scale and offset.
 | 4 | **AI ENGINE** | Send one ID's statistics to Anthropic, Groq or a local Ollama model. The offline findings go with the question. Memory persists across sessions. |
 | 5 | **DBC BUILDER** | Visual signal editor with a bit grid and a live decode preview. Imports DBC, ARXML and CAN matrix; exports DBC, openpilot DBC, CANdb++, ARXML and Wireshark Lua. |
 | 6 | **CODE GEN** | Generates Python or C that opens the bus and decodes or encodes your signals. |
-| 7 | **INTELLIGENCE** | Message periodicity, cross-ID byte correlation with a lag sweep, capture diffing, J1939 PGN decode, value lookup. |
-| 8 | **INJECTION** | Six sub-tabs: inject, replay with a scrubber, trigger rules, actuator sweep with a watchdog, fuzzer, scripted test sequences. Gated by ARM TX. |
+| 7 | **INTELLIGENCE** | Annotated capture: mark when you did something and every byte and bit is ranked by how well it followed. Also periodicity, cross-ID correlation with a lag sweep, capture diffing, J1939 PGN decode, value lookup. |
+| 8 | **INJECTION** | Six sub-tabs: inject, replay with a scrubber and a signal override, trigger rules, actuator sweep with a watchdog, fuzzer, scripted test sequences. Gated by ARM TX. |
 | 9 | **DIAGNOSTICS** | Eight sub-tabs: OBD-II/UDS, UDS deep scan, UDS services, security access, bus load, bus health, XCP, DoIP. |
 | 10 | **DASHBOARD** | Byte-activity heatmap across all messages, message timeline, gauges pointed at signals you have defined. |
-| 11 | **AUTO-RE** | Counter and checksum detection, entropy boundaries, correlation, and a per-byte checksum algorithm guesser. Runs in worker threads. |
+| 11 | **AUTO-RE** | Counter and checksum detection, entropy boundaries, correlation, a per-byte checksum algorithm guesser, and bit-level flag and value-table detection. Runs in worker threads. |
 | 12 | **TIMELINE** | Several signals stacked on one scrubbable axis with a shared playhead, plus video sync with an adjustable offset. |
 | 13 | **OBD-II** | Live PID gauges. Discovers supported PIDs by walking the continuation windows rather than assuming the first 32. |
 | 14 | **ML INTEL** | Per-byte role classification with confidence, anomaly scoring against a fitted baseline, change-point detection, embedding similarity. |
@@ -216,6 +231,15 @@ None of this sends anything anywhere.
 | Multiplexer detection | `core/mux_detector.py` | Finds a mode-selector byte and the bytes active in each mode. |
 | Reference calibration | `core/reference_calibrate.py` | See [below](#reference-driven-calibration). |
 
+**Flags and enumerations.** Per-byte analysis cannot see a turn indicator,
+which is one bit, or a gear selector, which is four sparse values held for a
+while each. `core/bit_flags.py` finds switches and small packed fields by
+their signature (rare changes, long holds), and is careful about the top bit
+of a slowly moving measurement, which looks the same until you notice the bits
+below it churning. `core/value_tables.py` finds bytes that only ever take a
+few values and hold them, and drafts the value table for the DBC. AUTO-RE has
+a panel for both.
+
 **On checksum detection.** A byte counts as a checksum only if the relation
 beats simply guessing that byte's most common value, so constant padding does
 not qualify. A relation that holds across most of the payload is discarded
@@ -229,6 +253,25 @@ reports nothing for the three messages that have none.
 
 These remain **heuristics that suggest candidates**. A confidence figure is a
 match fraction over the frames you loaded, not a proof. Verify before you trust.
+
+---
+
+## From the command line
+
+The analysis runs without the window, for CI over a folder of drives, from a
+notebook, or piped into something else. A test asserts the process never
+imports Qt.
+
+```bash
+canlab-cli ids      capture.csv                          # IDs, rates, moving bytes
+canlab-cli detect   capture.csv --json out.json --dbc draft.dbc
+canlab-cli decode   capture.csv --dbc signals.dbc --out decoded.csv
+canlab-cli convert  capture.blf capture.csv              # csv, blf, asc, log
+```
+
+`detect` runs every detector and can draft a DBC from what it found, with
+overlapping claims resolved so the file loads in cantools. `convert` writes
+SavvyCAN's own CSV layout, so the result opens there as well as here.
 
 ---
 
@@ -286,7 +329,9 @@ live frame table never take responses from each other.
 | Wireshark Lua dissector | No | Yes |
 | Excel/CSV CAN matrix | Yes | No |
 
-Extended 29-bit IDs, multiplexed signals and value tables round-trip. All
+Extended 29-bit IDs, multiplexed signals and value tables round-trip. The
+builder has undo and redo (Ctrl+Z, Ctrl+Shift+Z); an import counts as one
+step. All
 decoding and encoding goes through one cantools-backed path, so the value the
 preview shows is the value the exported file produces.
 
@@ -298,8 +343,11 @@ executed under a real Lua runtime.
 
 **opendbc matching** (Tools → *Match against opendbc*) fetches the
 `commaai/opendbc` index, caches it under `~/.canlab/opendbc_cache`, and ranks
-how well your capture's IDs match each OEM DBC. The first run needs network
-access; afterwards it works from the cache.
+how well your capture's IDs match each OEM DBC. **Apply** loads the chosen
+database's signals straight into the builder, by default only for messages
+seen on this bus, as one undo step. If your vehicle is one openpilot supports,
+that is most of the work done. The first run needs network access; afterwards
+it works from the cache.
 
 ---
 
@@ -359,7 +407,7 @@ incrementally maintained statistics rather than the frames themselves.
 
 ```bash
 pip install -e ".[dev]"
-QT_QPA_PLATFORM=offscreen python -m pytest -q     # 333 passed, 1 skipped
+QT_QPA_PLATFORM=offscreen python -m pytest -q     # 382 passed
 ruff check canlab tests
 ```
 
@@ -405,8 +453,9 @@ batch stays flat as the capture grows. Memory is bounded by the ring buffer cap.
 - **openpilot rlog import** needs pycapnp plus the cereal schema. Without them
   it raises rather than producing data.
 - **MDF4** import needs `asammdf` (`pip install canlab[mdf]`).
-- CAN FD is parsed and stored end to end, but FD transmit is exercised only on
-  ISO-TP; there is no dedicated FD injection UI.
+- CAN FD is parsed, stored, decoded, injected and replayed end to end, and the
+  bit grid follows the message length. It has been tested on a virtual bus,
+  not on FD hardware.
 - The Gateway needs **two** hardware CAN channels.
 - The AI features send the selected ID's frame statistics to whichever provider
   you configure. Nothing is sent until you enter a key and click Analyze, and a
