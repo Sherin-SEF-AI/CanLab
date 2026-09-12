@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Integrations · CanLab</title>
+<meta name="description" content="REST API, MCP server, plugin SDK, AI providers and hardware backends.">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="brand" href="index.html">CanLab<span>/docs</span></a>
+    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html" aria-current="page">Integrations</a><a href="reference.html">Reference</a></nav>
+  </div>
+</header>
+<div class="wrap">
+  <div class="layout">
+    <aside class="toc"><h2>On this page</h2><nav><a href="#rest-api">REST API</a><a href="#mcp-server">MCP server</a><a href="#plugins">Plugins</a><a href="#ai-engine">AI engine</a><a href="#hardware-backends">Hardware backends</a></nav></aside>
+    <main id="main">
+
+<h1>Integrations</h1>
+<p class="lede">Ways to drive CanLab from something else, and ways to extend
+   it.</p>
+
+<h2 id="rest-api">REST API</h2>
+<p>Start it from the <strong>REST API</strong> toolbar toggle. It binds to
+   <code>127.0.0.1:8765</code> and prints a per-session token on start. Every
+   request needs an <code>X-API-Token</code> header.</p>
+<pre><code>GET  /            # live web dashboard (HTML, open)
+GET  /frames      # last N frames  (?n=N)
+GET  /signals     # decoded DBC signals
+GET  /status      # connection state and frame count
+GET  /memory      # AI memory entries
+POST /inject      # inject a frame: needs the token AND ARM TX
+                  # {"id":"0x200","data":"01 02 03 04 05 06 07 08"}</code></pre>
+<p>Loopback only. It is meant for scripting the tool from the same machine, not
+   for exposing a bus to a network.</p>
+<div class="note">
+  <span class="callout-title">Injection is doubly gated</span>
+  <p><code>/inject</code> needs both a valid token and ARM TX on. The token
+     alone will not transmit.</p>
+</div>
+
+<h2 id="mcp-server">MCP server</h2>
+<p><code>mcp_server.py</code> exposes the analysis as Model Context Protocol
+   tools, so an MCP client can drive the loop. Run it with
+   <code>python mcp_server.py</code> from the source root; it needs
+   <code>pip install mcp</code>.</p>
+<div class="table-scroll"><table><thead><tr><th>Tool</th><th>Does</th></tr></thead><tbody><tr><td><code>load_log</code></td><td>Load a capture from a path.</td></tr><tr><td><code>list_ids</code></td><td>Every arbitration ID with counts and rates.</td></tr><tr><td><code>byte_stats</code></td><td>Per-byte statistics for one ID.</td></tr><tr><td><code>detect_counters_checksums</code></td><td>Run the counter and checksum sweep.</td></tr><tr><td><code>correlate</code></td><td>Byte correlation between two IDs.</td></tr><tr><td><code>detect_multiplexers</code></td><td>Find multiplexed messages.</td></tr><tr><td><code>match_opendbc</code></td><td>Rank the capture against opendbc.</td></tr><tr><td><code>calibrate</code></td><td>Fit fields against a reference CSV.</td></tr></tbody></table></div>
+
+<h2 id="plugins">Plugins</h2>
+<p>Drop a <code>.py</code> file into <code>~/.canlab/plugins/</code>. It needs
+   three things:</p>
+<pre><code>PLUGIN_NAME    = "My Plugin"
+PLUGIN_VERSION = "1.0"
+
+def register(app):
+    # called with the MainWindow instance when the plugin is activated
+    ...</code></pre>
+<p>From <code>app</code> you reach the shared application state, the loaded
+   frames as a pandas DataFrame, the signal definitions, the menu bar, and
+   anything in <code>canlab.core</code>. Full API, the event list and two
+   worked examples are in
+   <a href="PLUGINS.md">docs/PLUGINS.md</a>.</p>
+<div class="warn">
+  <span class="callout-title">Plugins run with full application privileges</span>
+  <p>Metadata is read statically, so listing plugins never executes anything.
+     Code runs only after you approve it, and approval is trust-on-first-use
+     keyed by the file's SHA-256: editing an approved plugin changes its hash
+     and asks again, so approved code cannot be silently swapped. Only approve
+     plugins you trust.</p>
+</div>
+
+<h2 id="ai-engine">AI engine</h2>
+<p>Three providers: <strong>Anthropic</strong>, <strong>Groq</strong> and
+   <strong>Ollama</strong>, the last running locally with no key and nothing
+   leaving the machine. Configure in <strong>Settings &rarr; API KEYS</strong>.</p>
+<p>What is sent, when you click Analyze on an ID, is that message's statistics:
+   byte roles, message type and period, the checksum guess, similar IDs, and a
+   sample of frames. Not your whole capture, and nothing at all until you
+   supply a key and ask.</p>
+<p>The offline findings are included in the prompt deliberately, so the model
+   reasons about measured facts rather than raw hex. Its answers are still
+   suggestions; treat them the way you would treat the heuristics.</p>
+
+<h2 id="hardware-backends">Hardware backends</h2>
+<p>Anything <a href="https://python-can.readthedocs.io">python-can</a> supports
+   works. A comma.ai Panda is also supported directly through
+   <code>core/panda_backend.py</code>, presented as a python-can compatible bus
+   with the safety model selectable.</p>
+<p>The multi-bus configuration in <strong>Settings &rarr; MULTI-BUS</strong>
+   lets you capture from more than one interface at once, which is what you
+   want when a vehicle has separate powertrain and body buses.</p>
+
+    </main>
+  </div>
+</div>
+<footer>
+  <div class="wrap">
+    <p>CanLab is MIT licensed. Author: Sherin Joseph Roy.
+       <a href="https://github.com/Sherin-SEF-AI/CanLab">Source on GitHub</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/releases">Releases</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/issues">Issues</a></p>
+    <p>These pages describe the code on <code>main</code>. Where a statement is
+       about a specific module the module is named, so it can be checked
+       against the source.</p>
+  </div>
+</footer>
+</body>
+</html>

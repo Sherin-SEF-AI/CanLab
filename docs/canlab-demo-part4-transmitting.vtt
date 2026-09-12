@@ -1,0 +1,227 @@
+WEBVTT
+
+1
+00:00:00.000 --> 00:00:02.193
+Everything so far only listened.
+
+2
+00:00:02.193 --> 00:00:05.413
+Before anything can be sent, there is one gate.
+
+3
+00:00:05.413 --> 00:00:10.140
+ARM TX is off by default and nothing leaves the tool while it
+is off:
+
+4
+00:00:10.140 --> 00:00:14.457
+not injection, not replay, not fuzzing, not gateway
+forwarding,
+
+5
+00:00:14.457 --> 00:00:16.855
+and not diagnostic requests either.
+
+6
+00:00:16.855 --> 00:00:18.431
+The status bar says so.
+
+7
+00:00:18.431 --> 00:00:22.816
+Turning it on requires confirming a warning that names the
+risk,
+
+8
+00:00:22.816 --> 00:00:27.064
+and turning it off again does not merely block the next frame,
+
+9
+00:00:27.064 --> 00:00:29.736
+it stops anything already transmitting.
+
+10
+00:00:29.736 --> 00:00:35.167
+With transmit armed, and only on an isolated bench, the
+INJECTION tab can send.
+
+11
+00:00:35.167 --> 00:00:38.605
+Set a signal to a physical value and send it once,
+
+12
+00:00:38.605 --> 00:00:43.624
+or loop it at a chosen period with the counter and checksum
+kept correct.
+
+13
+00:00:43.624 --> 00:00:48.848
+Replay a capture back onto the bus at real speed or faster,
+with a scrubber.
+
+14
+00:00:48.848 --> 00:00:52.355
+Define trigger rules that fire on a byte condition.
+
+15
+00:00:52.355 --> 00:00:58.267
+Sweep an actuator between limits with a watchdog that aborts
+if a message goes silent.
+
+16
+00:00:58.267 --> 00:01:02.736
+And run scripted test sequences of inject, wait and assert
+steps.
+
+17
+00:01:02.736 --> 00:01:07.032
+The GATEWAY tab bridges two CAN channels and puts you in
+between.
+
+18
+00:01:07.032 --> 00:01:08.816
+Rules are applied in order:
+
+19
+00:01:08.816 --> 00:01:14.566
+pass a message through, block it, or modify a byte or the
+arbitration ID as it crosses.
+
+20
+00:01:14.566 --> 00:01:19.721
+That is how you test what an ECU does when a message it
+depends on disappears,
+
+21
+00:01:19.721 --> 00:01:21.968
+or arrives with a different value.
+
+22
+00:01:21.968 --> 00:01:27.982
+It needs two hardware channels, and like everything else it
+will not forward a single frame
+
+23
+00:01:27.982 --> 00:01:29.568
+until transmit is armed.
+
+24
+00:01:29.568 --> 00:01:33.638
+The OBD-II tab is the standardised subset any car will answer.
+
+25
+00:01:33.638 --> 00:01:36.593
+It discovers which PIDs the vehicle supports,
+
+26
+00:01:36.593 --> 00:01:41.517
+walking the continuation windows rather than assuming the
+first thirty-two,
+
+27
+00:01:41.517 --> 00:01:45.653
+and then polls the ones you pick and shows them as live
+gauges:
+
+28
+00:01:45.653 --> 00:01:49.920
+engine speed, coolant temperature, road speed, throttle
+position.
+
+29
+00:01:49.920 --> 00:01:53.749
+The AI ENGINE is optional and off unless you configure it.
+
+30
+00:01:53.749 --> 00:01:57.645
+It sends one message ID's statistics to Anthropic, to Groq,
+
+31
+00:01:57.645 --> 00:02:03.587
+or to a local Ollama model that never leaves your machine, and
+asks for an interpretation.
+
+32
+00:02:03.587 --> 00:02:08.407
+What makes it useful is that the offline analysis goes with
+the question:
+
+33
+00:02:08.407 --> 00:02:12.236
+the byte roles, the detected checksum, the message period.
+
+34
+00:02:12.236 --> 00:02:16.131
+The model reasons about measured facts rather than raw hex.
+
+35
+00:02:16.131 --> 00:02:22.403
+Its answers are still suggestions, and accepting one into the
+DBC is refused unless it actually
+
+36
+00:02:22.403 --> 00:02:23.856
+states a bit position.
+
+37
+00:02:23.856 --> 00:02:26.765
+Connected to a real bus, frames stream in live.
+
+38
+00:02:26.765 --> 00:02:31.779
+One receive thread reads the adapter and hands frames to
+everyone who needs them,
+
+39
+00:02:31.779 --> 00:02:36.608
+so a diagnostic scan and the live table never steal responses
+from each other.
+
+40
+00:02:36.608 --> 00:02:40.384
+Frames go into a capped buffer that appends in constant time,
+
+41
+00:02:40.384 --> 00:02:44.036
+so a busy bus does not slow the tool down as the log grows:
+
+42
+00:02:44.036 --> 00:02:48.864
+the frame counter and the rate keep climbing while the table
+stays responsive.
+
+43
+00:02:48.864 --> 00:02:49.962
+That is the loop:
+
+44
+00:02:49.962 --> 00:02:54.870
+load a capture, let the offline analysis narrow it down,
+define the signals,
+
+45
+00:02:54.870 --> 00:02:59.456
+verify them by decoding real frames, and export to whatever
+comes next.
+
+46
+00:02:59.456 --> 00:03:04.623
+A project file saves the frames, the signal definitions and
+your notes together.
+
+47
+00:03:04.623 --> 00:03:09.725
+A REST API and an MCP server expose the same analysis to
+scripts and to agents.
+
+48
+00:03:09.725 --> 00:03:13.536
+And the one rule that does not change is the transmit gate:
+
+49
+00:03:13.536 --> 00:03:19.542
+it is off until you turn it on, and you should only turn it on
+when the bus you are connected
+
+50
+00:03:19.542 --> 00:03:20.640
+to is on a bench.

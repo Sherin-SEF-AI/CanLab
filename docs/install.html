@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install · CanLab</title>
+<meta name="description" content="Run CanLab from source on Linux, macOS or Windows, or take the prebuilt Linux binary.">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="brand" href="index.html">CanLab<span>/docs</span></a>
+    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html" aria-current="page">Install</a><a href="safety.html">Safety</a><a href="guide.html">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html">Integrations</a><a href="reference.html">Reference</a></nav>
+  </div>
+</header>
+<div class="wrap">
+  <div class="layout">
+    <aside class="toc"><h2>On this page</h2><nav><a href="#from-source">From source</a><a href="#prebuilt-linux-binary">Prebuilt Linux binary</a><a href="#optional-pieces">Optional pieces</a><a href="#api-keys">API keys</a><a href="#hardware-interfaces">Hardware interfaces</a><a href="#system-requirements">System requirements</a><a href="#if-it-will-not-start">If it will not start</a></nav></aside>
+    <main id="main">
+
+<h1>Install</h1>
+<p class="lede">Two ways in: run from source, which works everywhere and is
+   what the project is developed against, or take the prebuilt Linux binary if
+   you just want to look at it.</p>
+
+<h2 id="from-source">From source</h2>
+<p>This is the supported path.</p>
+<pre><code>git clone https://github.com/Sherin-SEF-AI/CanLab.git
+cd CanLab
+python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install -r requirements.txt
+
+cd canlab            # the source root: imports are relative to here
+python3 main.py</code></pre>
+<p>Python 3.11 or newer. The project is developed and tested on 3.12.</p>
+<div class="note">
+  <span class="callout-title">Note the <code>cd canlab</code></span>
+  <p>On <code>main</code> the application is run as a script from inside the
+     package directory, not installed as a module. Running
+     <code>python3 canlab/main.py</code> from the repository root will not find
+     its imports.</p>
+</div>
+
+<h2 id="prebuilt-linux-binary">Prebuilt Linux binary</h2>
+<p>Each release carries a self-contained x86_64 tarball that needs no Python
+   installation:</p>
+<pre><code>tar -xzf CanLab-1.3.0-linux-x86_64.tar.gz
+cd CanLab/
+./CanLab</code></pre>
+<p>Grab it from the <a href="https://github.com/Sherin-SEF-AI/CanLab/releases/latest">latest release</a>. It is
+   unsigned, and it is built from <code>main</code> on x86_64. There is no
+   macOS or Windows binary; run from source on those.</p>
+
+<h2 id="optional-pieces">Optional pieces</h2>
+<p>The application works fully offline with none of these. Each unlocks one
+   feature and is inert until you use it.</p>
+<div class="table-scroll"><table><thead><tr><th>What</th><th>Install</th><th>Needed for</th></tr></thead><tbody><tr><td>AI providers</td><td><code>pip install anthropic groq</code></td><td>The AI ENGINE tab. Or run a local Ollama server, which needs no package and no key.</td></tr><tr><td>MDF4 logs</td><td><code>pip install asammdf</code></td><td>Opening <code>.mf4</code> and <code>.mdf</code> captures from CANedge and similar loggers.</td></tr><tr><td>openpilot logs</td><td><code>pip install pycapnp</code> plus the cereal <code>log.capnp</code> schema</td><td>Opening <code>.rlog</code> and <code>.qlog</code>. Without both it raises a clear error rather than guessing.</td></tr><tr><td>Vision OCR</td><td><code>pip install opencv-python rapidocr onnxruntime</code></td><td>Reading a reference value off a dashboard video for calibration. These are large; skip unless you need it.</td></tr><tr><td>MCP server</td><td><code>pip install mcp</code></td><td>Exposing the analysis as tools to an MCP client.</td></tr><tr><td>Panda</td><td><code>pip install pandacan</code></td><td>Using a comma.ai Panda as the interface.</td></tr></tbody></table></div>
+
+<h2 id="api-keys">API keys</h2>
+<p>Keys for the AI providers go in <strong>Settings &rarr; API KEYS</strong>
+   and are stored in the operating system keyring, not in the repository. They
+   can also come from the environment:</p>
+<pre><code>export ANTHROPIC_API_KEY="sk-ant-..."
+export GROQ_API_KEY="gsk_..."</code></pre>
+<p>A local Ollama server needs no key. Nothing is sent anywhere until you enter
+   a key and ask for an analysis; see
+   <a href="integrations.html#ai-engine">the AI engine</a> for exactly what
+   leaves the machine.</p>
+
+<h2 id="hardware-interfaces">Hardware interfaces</h2>
+<p>Live capture goes through
+   <a href="https://python-can.readthedocs.io">python-can</a>, so anything it
+   supports works: <code>socketcan</code>, <code>pcan</code>,
+   <code>kvaser</code>, <code>serial</code>, <code>slcan</code>,
+   <code>virtual</code> and others. Pick the interface and channel in
+   <strong>Settings &rarr; CAN INTERFACE</strong>.</p>
+<p>On Linux you can practise with no hardware at all using a virtual bus:</p>
+<pre><code>sudo modprobe vcan
+sudo ip link add dev vcan0 type vcan
+sudo ip link set up vcan0
+cangen vcan0 -g 5          # optional: generate traffic</code></pre>
+<p>Then connect to interface <code>socketcan</code>, channel <code>vcan0</code>.
+   The <a href="tabs.html#gateway">gateway</a> is the one feature that needs
+   two hardware channels.</p>
+
+<h2 id="system-requirements">System requirements</h2>
+<ul>
+  <li>Linux, macOS or Windows with Python 3.11 or newer</li>
+  <li>4 GB RAM; 8 GB is more comfortable for the machine-learning features</li>
+  <li>A desktop session. The application is a Qt GUI, though its analysis
+      modules are importable headless and the test suite runs offscreen.</li>
+</ul>
+
+<h2 id="if-it-will-not-start">If it will not start</h2>
+<div class="table-scroll"><table><thead><tr><th>Symptom</th><th>Cause and fix</th></tr></thead><tbody><tr><td><code>ImportError: libEGL.so.1</code> or similar on Linux</td><td>Qt needs system graphics libraries that a minimal install lacks. On Debian or Ubuntu: <code>sudo apt install libegl1 libgl1 libxkbcommon0 libdbus-1-3</code>.</td></tr><tr><td><code>ImportError: libpulse.so.0</code></td><td>Qt Multimedia, used by the timeline's video sync, needs the audio stack. <code>sudo apt install libpulse0</code>.</td></tr><tr><td><code>ModuleNotFoundError: core</code></td><td>You are running from the wrong directory. <code>cd canlab</code> first, then <code>python3 main.py</code>.</td></tr><tr><td>Nothing decodes, and the signal table stays empty</td><td>Check the cantools version. The project pins a version it is tested against in <code>requirements.txt</code>; a mismatched one used to fail silently.</td></tr></tbody></table></div>
+
+    </main>
+  </div>
+</div>
+<footer>
+  <div class="wrap">
+    <p>CanLab is MIT licensed. Author: Sherin Joseph Roy.
+       <a href="https://github.com/Sherin-SEF-AI/CanLab">Source on GitHub</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/releases">Releases</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/issues">Issues</a></p>
+    <p>These pages describe the code on <code>main</code>. Where a statement is
+       about a specific module the module is named, so it can be checked
+       against the source.</p>
+  </div>
+</footer>
+</body>
+</html>
