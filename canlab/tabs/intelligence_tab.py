@@ -1,14 +1,15 @@
-"""INTELLIGENCE tab — auto-DBC, diff, fingerprint, periodicity, opendbc cross-ref."""
+"""INTELLIGENCE tab — auto-DBC, diff, periodicity, opendbc cross-ref, J1939, value lookup."""
 from PyQt6.QtWidgets import (
+    QScrollArea, QFrame,
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QFileDialog,
-    QTextEdit, QMessageBox, QProgressBar, QTabWidget, QLineEdit,
+    QTextEdit, QMessageBox, QLineEdit, QListWidget, QDoubleSpinBox,
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QBrush, QFont
+from PyQt6.QtGui import QColor, QBrush
 
-from theme import COLORS, mono_font
-from core.state import get_state
+from canlab.theme import COLORS, mono_font, desc_label
+from canlab.core.state import get_state
 
 
 STATUS_COLORS = {
@@ -38,22 +39,10 @@ class IntelligenceTab(QWidget):
 
         # ── Left panel ────────────────────────────────────────────────────────
         left = QWidget()
-        left.setFixedWidth(240)
+        left.setMinimumWidth(240)
         ll = QVBoxLayout(left)
         ll.setContentsMargins(6, 6, 6, 6)
         ll.setSpacing(6)
-
-        # Fingerprint
-        fp_grp = QGroupBox("VEHICLE FINGERPRINT")
-        fp_lay = QVBoxLayout(fp_grp)
-        self.btn_fingerprint = QPushButton("Run Fingerprint")
-        self.btn_fingerprint.clicked.connect(self._run_fingerprint)
-        fp_lay.addWidget(self.btn_fingerprint)
-        self.lbl_fingerprint = QLabel("—")
-        self.lbl_fingerprint.setFont(mono_font(8))
-        self.lbl_fingerprint.setWordWrap(True)
-        fp_lay.addWidget(self.lbl_fingerprint)
-        ll.addWidget(fp_grp)
 
         # Periodicity
         per_grp = QGroupBox("SIGNAL PERIODICITY")
@@ -120,20 +109,58 @@ class IntelligenceTab(QWidget):
         coa_lay.addWidget(self.lbl_coa_status)
         ll.addWidget(coa_grp)
 
-        # Community Profiles
-        comm_grp = QGroupBox("COMMUNITY PROFILES")
-        comm_lay = QVBoxLayout(comm_grp)
-        self.btn_comm_fetch   = QPushButton("Fetch Profiles…")
-        self.btn_comm_fetch.clicked.connect(self._comm_fetch)
-        self.btn_comm_apply   = QPushButton("Apply Selected")
-        self.btn_comm_apply.clicked.connect(self._comm_apply)
-        self.lbl_comm_status  = QLabel("—")
-        self.lbl_comm_status.setFont(mono_font(8))
-        self.lbl_comm_status.setObjectName("label_dim")
-        comm_lay.addWidget(self.btn_comm_fetch)
-        comm_lay.addWidget(self.btn_comm_apply)
-        comm_lay.addWidget(self.lbl_comm_status)
-        ll.addWidget(comm_grp)
+        # Annotated capture: mark when something happened, rank what tracked it.
+        ann_grp = QGroupBox("ANNOTATED CAPTURE")
+        ann_lay = QVBoxLayout(ann_grp)
+        ann_lay.addWidget(desc_label(
+            "Mark when you did something (press the brake, flick the "
+            "indicator) and every byte and bit on the bus is ranked by how "
+            "well it followed your marks."))
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Label:", font=mono_font(8)))
+        self.ann_label = QLineEdit("brake")
+        self.ann_label.setFont(mono_font(8))
+        row.addWidget(self.ann_label, 1)
+        ann_lay.addLayout(row)
+        self.btn_ann_toggle = QPushButton("Start")
+        self.btn_ann_toggle.setObjectName("btn_green")
+        self.btn_ann_toggle.setCheckable(True)
+        self.btn_ann_toggle.toggled.connect(self._ann_toggle)
+        ann_lay.addWidget(self.btn_ann_toggle)
+        manual = QHBoxLayout()
+        self.ann_start = QDoubleSpinBox()
+        self.ann_end = QDoubleSpinBox()
+        for sp in (self.ann_start, self.ann_end):
+            sp.setRange(0, 1e9)
+            sp.setDecimals(2)
+            sp.setSuffix(" s")
+            sp.setFont(mono_font(8))
+        self.btn_ann_add = QPushButton("Add range")
+        self.btn_ann_add.clicked.connect(self._ann_add_manual)
+        manual.addWidget(self.ann_start)
+        manual.addWidget(self.ann_end)
+        manual.addWidget(self.btn_ann_add)
+        ann_lay.addLayout(manual)
+        self.ann_list = QListWidget()
+        self.ann_list.setFont(mono_font(8))
+        self.ann_list.setMaximumHeight(110)
+        ann_lay.addWidget(self.ann_list)
+        btns = QHBoxLayout()
+        self.btn_ann_rank = QPushButton("Rank candidates")
+        self.btn_ann_rank.setObjectName("btn_green")
+        self.btn_ann_rank.clicked.connect(self._ann_rank)
+        self.btn_ann_remove = QPushButton("Remove")
+        self.btn_ann_remove.clicked.connect(self._ann_remove)
+        self.btn_ann_clear = QPushButton("Clear")
+        self.btn_ann_clear.clicked.connect(self._ann_clear)
+        for b in (self.btn_ann_rank, self.btn_ann_remove, self.btn_ann_clear):
+            btns.addWidget(b)
+        ann_lay.addLayout(btns)
+        self.lbl_ann_status = QLabel("No marks yet.")
+        self.lbl_ann_status.setFont(mono_font(8))
+        self.lbl_ann_status.setObjectName("label_dim")
+        ann_lay.addWidget(self.lbl_ann_status)
+        ll.addWidget(ann_grp)
 
         # J1939 Decoder
         j1939_grp = QGroupBox("J1939 PGN DECODER")
@@ -149,7 +176,6 @@ class IntelligenceTab(QWidget):
         # Value Reverse Lookup
         vr_grp = QGroupBox("VALUE REVERSE LOOKUP")
         vr_lay = QVBoxLayout(vr_grp)
-        from PyQt6.QtWidgets import QDoubleSpinBox
         vr_row = QHBoxLayout()
         vr_row.addWidget(QLabel("Target:", font=mono_font(8)))
         self.vr_target = QDoubleSpinBox()
@@ -174,7 +200,19 @@ class IntelligenceTab(QWidget):
         ll.addWidget(vr_grp)
 
         ll.addStretch()
-        splitter.addWidget(left)
+
+        # The control column is a tall stack of group boxes. Left as a plain
+        # widget its full height became the minimum height of the whole
+        # application window; in a scroll area it can shrink and scroll.
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_scroll.setMinimumWidth(240)
+        left_scroll.setMaximumWidth(420)
+        splitter.addWidget(left_scroll)
 
         # ── Right panel ───────────────────────────────────────────────────────
         right = QWidget()
@@ -228,18 +266,6 @@ class IntelligenceTab(QWidget):
         rl.addWidget(QLabel("CHANGE DELTA", font=mono_font(8)))
         rl.addWidget(self.delta_table)
 
-        # Community profiles list
-        self.comm_list = QTableWidget(0, 3)
-        self.comm_list.setHorizontalHeaderLabels(["ID", "Vehicle", "Notes"])
-        self.comm_list.setFont(mono_font())
-        self.comm_list.verticalHeader().setVisible(False)
-        self.comm_list.verticalHeader().setDefaultSectionSize(20)
-        self.comm_list.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.comm_list.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.comm_list.setMaximumHeight(140)
-        rl.addWidget(QLabel("COMMUNITY PROFILES", font=mono_font(8)))
-        rl.addWidget(self.comm_list)
-
         # J1939 table
         self.j1939_table = QTableWidget(0, 6)
         self.j1939_table.setHorizontalHeaderLabels(
@@ -268,51 +294,28 @@ class IntelligenceTab(QWidget):
         rl.addWidget(QLabel("VALUE REVERSE LOOKUP RESULTS", font=mono_font(8)))
         rl.addWidget(self.vr_table)
 
+        self.ann_table = QTableWidget(0, 6)
+        self.ann_table.setHorizontalHeaderLabels(
+            ["Label", "Location", "r", "On", "Off", "What it did"])
+        self.ann_table.setFont(mono_font())
+        self.ann_table.verticalHeader().setVisible(False)
+        self.ann_table.verticalHeader().setDefaultSectionSize(20)
+        self.ann_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.ann_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.ann_table.setToolTip("Double-click a row to add it to the DBC as a signal.")
+        self.ann_table.doubleClicked.connect(self._ann_add_signal)
+        rl.addWidget(QLabel("ANNOTATION CANDIDATES  (double-click to add to DBC)",
+                            font=mono_font(8)))
+        rl.addWidget(self.ann_table)
+
         splitter.setSizes([240, 760])
         outer.addWidget(splitter)
         self._change_recorder = None
 
-    # ── Fingerprint ───────────────────────────────────────────────────────────
-
-    def _run_fingerprint(self):
-        from core.fingerprint import fingerprint_vehicle
-        ids = set(self._state.get_unique_ids())
-        if not ids:
-            self.lbl_fingerprint.setText("No frames loaded.")
-            return
-        # Build DLC map from frames
-        df = self._state.frames_df
-        dlc_map = {}
-        if not df.empty and "DLC" in df.columns:
-            dlc_map = df.groupby("ID")["DLC"].median().astype(int).to_dict()
-
-        result = fingerprint_vehicle(ids, self._state.periodicities, dlc_map)
-        self._state.fingerprint = result
-        conf_pct = int(result["confidence"] * 100)
-        quality  = result.get("quality", "")
-        detail   = result.get("score_detail", {})
-        color = COLORS["green"] if result["confidence"] >= 0.75 else COLORS["amber"]
-        top3_txt = "\n".join(
-            f"  {i+1}. {c['model']}  {int(c['confidence']*100)}%"
-            for i, c in enumerate(result.get("top3", [result])[:3])
-        )
-        self.lbl_fingerprint.setText(
-            f"{result['model']}\n"
-            f"Confidence: {conf_pct}%  [{quality}]\n"
-            f"ID: {detail.get('id_coverage',0):.0%}  "
-            f"Period: {detail.get('period',0):.0%}  "
-            f"DLC: {detail.get('dlc',0):.0%}\n"
-            f"Matched: {', '.join(result['matched_ids'])}\n"
-            f"Missing: {', '.join(result['missing_ids']) or 'none'}\n"
-            f"Top 3:\n{top3_txt}"
-        )
-        self.lbl_fingerprint.setStyleSheet(f"color:{color}")
-        self._state.fingerprint_matched.emit(result)
-
     # ── Periodicity ───────────────────────────────────────────────────────────
 
     def _compute_periodicity(self):
-        from core.periodicity import compute_periodicity, classify_period
+        from canlab.core.periodicity import compute_periodicity, classify_period
         periods = compute_periodicity(self._state.frames_df)
         self._state.periodicities = periods
         self.period_table.setRowCount(len(periods))
@@ -331,7 +334,7 @@ class IntelligenceTab(QWidget):
     # ── Auto DBC ──────────────────────────────────────────────────────────────
 
     def _auto_build_dbc(self):
-        from core.auto_dbc import build_from_analyzer
+        from canlab.core.auto_dbc import build_from_analyzer
         if self._state.frames_df.empty:
             QMessageBox.information(self, "No Data", "Load a CAN log first.")
             return
@@ -357,8 +360,8 @@ class IntelligenceTab(QWidget):
         self.lbl_baseline.setStyleSheet(f"color:{COLORS['amber']}")
 
     def _run_diff(self):
-        from core.diff_engine import diff_logs
-        from core.log_parser import parse_log_file
+        from canlab.core.diff_engine import diff_logs
+        from canlab.core.log_parser import parse_log_file
         if self._state.diff_baseline_df.empty:
             QMessageBox.information(self, "No Baseline", "Set a baseline first.")
             return
@@ -397,14 +400,11 @@ class IntelligenceTab(QWidget):
     # ── opendbc cross-ref ─────────────────────────────────────────────────────
 
     def _run_xref(self):
-        from core.opendbc_matcher import scan
+        from canlab.core.opendbc_matcher import scan
         if not self._state.dbc_signals:
             self.xref_text.setPlainText("No signals in DBC Builder yet.")
             return
-        repo_ctx = None
-        if self._state.repo_info:
-            repo_ctx = {**self._state.repo_info, "readme": self._state.repo_readme}
-        matches = scan(self._state, repo_ctx)
+        matches = scan(self._state)
         self._state.opendbc_matches = matches
         if not matches:
             self.xref_text.setPlainText("No matches found against opendbc index.")
@@ -417,13 +417,12 @@ class IntelligenceTab(QWidget):
                 f"msg:{info['msg']}  id:{info['id']}"
             )
         self.xref_text.setPlainText("\n".join(lines))
-        self._state.opendbc_matched.emit(matches)
 
     # ── Change-on-Action ──────────────────────────────────────────────────────
 
     def _get_recorder(self):
         if self._change_recorder is None:
-            from core.change_detector import ChangeRecorder
+            from canlab.core.change_detector import ChangeRecorder
             self._change_recorder = ChangeRecorder()
         return self._change_recorder
 
@@ -488,50 +487,92 @@ class IntelligenceTab(QWidget):
         self.lbl_coa_status.setText("—")
         self.lbl_coa_status.setStyleSheet("")
 
-    # ── Community Profiles ────────────────────────────────────────────────────
+    # ── Annotated capture ─────────────────────────────────────────────────
 
-    def _comm_fetch(self):
-        from core.community_sync import CommunitySyncWorker
-        url = getattr(self._state, "community_profiles_url", "")
-        if not url:
-            QMessageBox.information(self, "No URL",
-                "Set a Community Profiles URL in Settings → GITHUB.")
+    def _ann_now(self) -> float:
+        """The clock the frames use: wall time while live, capture time when
+        working from a file (the newest frame, so a mark lands at the end)."""
+        import time
+        if self._state.is_connected:
+            return time.time()
+        df = self._state.frames_df
+        return float(df["Timestamp"].max()) if len(df) else 0.0
+
+    def _ann_toggle(self, on: bool):
+        label = self.ann_label.text().strip() or "action"
+        ann = self._state.annotations
+        if on:
+            ann.begin(label, self._ann_now())
+            self.btn_ann_toggle.setText(f"Stop '{label}'")
+            self.lbl_ann_status.setText(f"Marking '{label}'…")
+        else:
+            ann.end(label, self._ann_now())
+            self.btn_ann_toggle.setText("Start")
+            self._ann_refresh_list()
+
+    def _ann_add_manual(self):
+        label = self.ann_label.text().strip() or "action"
+        a, b = self.ann_start.value(), self.ann_end.value()
+        if b <= a:
+            self.lbl_ann_status.setText("End must be after start.")
             return
-        self._comm_worker = CommunitySyncWorker(url)
-        self._comm_worker.profiles_ready.connect(self._on_profiles_ready)
-        self._comm_worker.error.connect(
-            lambda e: self.lbl_comm_status.setText(f"Error: {e}")
-        )
-        self._comm_worker.progress.connect(self.lbl_comm_status.setText)
-        self._comm_worker.start()
+        self._state.annotations.add(label, a, b)
+        self._ann_refresh_list()
 
-    def _on_profiles_ready(self, profiles: list):
-        self._state.community_profiles = profiles
-        self.comm_list.setRowCount(len(profiles))
-        for row, p in enumerate(profiles):
-            cells = [
-                p.get("id", "?"),
-                p.get("vehicle", "?"),
-                p.get("notes", ""),
-            ]
-            for ci, txt in enumerate(cells):
+    def _ann_refresh_list(self):
+        self.ann_list.clear()
+        for a in self._state.annotations.items:
+            end = f"{a.end:.2f}" if a.closed else "open"
+            self.ann_list.addItem(f"{a.label:<12} {a.start:.2f} → {end}")
+        n = len(self._state.annotations.items)
+        self.lbl_ann_status.setText(f"{n} mark(s).")
+
+    def _ann_remove(self):
+        row = self.ann_list.currentRow()
+        if row >= 0:
+            self._state.annotations.remove(row)
+            self._ann_refresh_list()
+
+    def _ann_clear(self):
+        self._state.annotations.clear()
+        self.ann_table.setRowCount(0)
+        self._ann_refresh_list()
+
+    def _ann_rank(self):
+        from canlab.core.annotations import rank_candidates
+        df = self._state.frames_df
+        if df.empty:
+            QMessageBox.information(self, "No Data", "Load or capture frames first.")
+            return
+        ann = self._state.annotations
+        if not any(a.closed for a in ann.items):
+            QMessageBox.information(self, "No marks",
+                                    "Add at least one closed mark first.")
+            return
+        cands = rank_candidates(df, ann)
+        self._ann_candidates = cands
+        self.ann_table.setRowCount(len(cands))
+        for r, c in enumerate(cands):
+            cells = [c.label, c.location, f"{c.r:+.2f}", str(c.frames_on),
+                     str(c.frames_off), c.describe().split(": ", 1)[-1]]
+            for col, txt in enumerate(cells):
                 item = QTableWidgetItem(txt)
                 item.setFont(mono_font())
-                self.comm_list.setItem(row, ci, item)
-        self.lbl_comm_status.setText(f"{len(profiles)} profile(s) loaded")
-        self.lbl_comm_status.setStyleSheet(f"color:{COLORS['green']}")
+                if col == 2:
+                    strong = c.strength >= 0.8
+                    item.setForeground(QBrush(QColor(
+                        COLORS["green"] if strong else COLORS["amber"])))
+                self.ann_table.setItem(r, col, item)
+        self.lbl_ann_status.setText(
+            f"{len(cands)} candidate(s) for {len(ann.labels())} label(s).")
 
-    def _comm_apply(self):
-        row = self.comm_list.currentRow()
-        if row < 0 or row >= len(self._state.community_profiles):
-            QMessageBox.information(self, "No Selection",
-                                    "Select a profile row first.")
-            return
-        profile = self._state.community_profiles[row]
-        from core.community_sync import CommunitySyncWorker
-        added = CommunitySyncWorker.apply_profile(self._state, profile)
-        QMessageBox.information(self, "Applied",
-            f"Profile '{profile.get('vehicle','?')}' applied — {added} signals added.")
+    def _ann_add_signal(self, index):
+        from canlab.core.annotations import candidate_to_signal
+        cands = getattr(self, "_ann_candidates", [])
+        row = index.row()
+        if 0 <= row < len(cands):
+            self._state.add_dbc_signal(candidate_to_signal(cands[row]))
+            self.lbl_ann_status.setText(f"Added {cands[row].location} to the DBC.")
 
     # ── J1939 ─────────────────────────────────────────────────────────────────
 
@@ -540,7 +581,7 @@ class IntelligenceTab(QWidget):
         if df.empty:
             QMessageBox.information(self, "No Data", "Load frames first.")
             return
-        from core.j1939 import scan_for_j1939, decode_pgn
+        from canlab.core.j1939 import scan_for_j1939, decode_pgn
         hits = scan_for_j1939(df)
         if not hits:
             self.lbl_j1939.setText("No J1939 IDs detected (all IDs are ≤ 0x7FF).")
@@ -587,7 +628,7 @@ class IntelligenceTab(QWidget):
             return
         target = self.vr_target.value()
         tol    = self.vr_tol.value()
-        from core.value_reverse import find_signal_for_value
+        from canlab.core.value_reverse import find_signal_for_value
         candidates = find_signal_for_value(df, target, tol)
         self.vr_table.setRowCount(0)
         if not candidates:

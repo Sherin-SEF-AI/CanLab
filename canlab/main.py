@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """CanLab — CAN Bus Reverse Engineering Workstation."""
-import sys
 import os
+import sys
 
-# Ensure canlab/ is on sys.path when running as `python main.py`
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+if __package__ in (None, ""):
+    # Run as a plain file (python canlab/main.py): make the package importable.
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    __package__ = "canlab"
 
 from PyQt6.QtWidgets import QApplication, QMessageBox, QCheckBox
 from PyQt6.QtCore import QSettings
-from PyQt6.QtGui import QFont
-from theme import QSS, mono_font
-from mainwindow import MainWindow
+
+from canlab.logging_config import configure_logging, install_excepthook
 
 _DISCLAIMER = """\
 SAFETY WARNING — READ BEFORE USE
@@ -58,12 +59,19 @@ def _app_icon():
 
 
 def main():
+    configure_logging()
+    install_excepthook()
+    from canlab.theme import QSS, mono_font
+    from canlab.mainwindow import MainWindow
+    from canlab.ui.error_dialog import install_error_dialog
+
     app = QApplication(sys.argv)
     app.setApplicationName("CanLab")
     app.setOrganizationName("CanLab")
     app.setWindowIcon(_app_icon())
     app.setStyleSheet(QSS)
     app.setFont(mono_font())
+    install_error_dialog(app)
 
     _show_safety_disclaimer(app)
 

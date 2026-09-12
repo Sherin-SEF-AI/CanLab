@@ -2,159 +2,90 @@ import os
 import can
 import pandas as pd
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
-    QTabWidget, QToolBar, QStatusBar, QLabel, QFileDialog,
-    QMessageBox, QLineEdit, QPushButton, QProgressBar, QMenu,
+    QMainWindow, QWidget, QHBoxLayout, QTabWidget, QToolBar, QStatusBar, QLabel, QFileDialog,
+    QMessageBox, QProgressBar, QMenu, QComboBox, QToolButton, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSettings
-from PyQt6.QtGui import QFont, QColor, QAction
+from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal
+from PyQt6.QtGui import QAction, QKeySequence, QColor
 
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.log_parser import parse_log_file
-from core.event_correlator import parse_annotations, correlate_events
-from core.dbc_manager import load_dbc
-from core.bus_load import BusLoadMeter
-from panels.id_panel import IDPanel
-from panels.inspector_panel import InspectorPanel
-from tabs.frames_tab import FramesTab
-from tabs.signals_tab import SignalsTab
-from tabs.plot_tab import PlotTab
-from tabs.ai_engine_tab import AIEngineTab
-from tabs.dbc_builder_tab import DBCBuilderTab
-from tabs.code_gen_tab import CodeGenTab
-from tabs.intelligence_tab import IntelligenceTab
-from tabs.injection_tab import InjectionTab
-from tabs.diagnostics_tab import DiagnosticsTab
-from tabs.dashboard_tab import DashboardTab
-from tabs.auto_re_tab import AutoRETab
-from tabs.timeline_tab import TimelineTab
-from tabs.obd_dashboard_tab import OBDDashboardTab
-from tabs.signal_intelligence_tab import SignalIntelligenceTab
-from tabs.gateway_tab import GatewayTab
-from ui.animations import PulsingDot, CountUpLabel
-from settings_dialog import (
-    SettingsDialog, load_api_key, load_gh_token,
-    load_groq_key, load_ai_provider, load_ai_model,
+from canlab.theme import COLORS, dot_icon, mono_font
+from canlab.core.state import get_state
+from canlab.core.log_parser import parse_log_file
+from canlab.core.dbc_manager import load_dbc
+from canlab.panels.id_panel import IDPanel
+from canlab.panels.inspector_panel import InspectorPanel
+from canlab.tabs.frames_tab import FramesTab
+from canlab.tabs.sniffer_tab import SnifferTab
+from canlab.tabs.signals_tab import SignalsTab
+from canlab.tabs.plot_tab import PlotTab
+from canlab.tabs.ai_engine_tab import AIEngineTab
+from canlab.tabs.dbc_builder_tab import DBCBuilderTab
+from canlab.tabs.code_gen_tab import CodeGenTab
+from canlab.tabs.intelligence_tab import IntelligenceTab
+from canlab.tabs.injection_tab import InjectionTab
+from canlab.tabs.diagnostics_tab import DiagnosticsTab
+from canlab.tabs.dashboard_tab import DashboardTab
+from canlab.tabs.auto_re_tab import AutoRETab
+from canlab.tabs.timeline_tab import TimelineTab
+from canlab.tabs.obd_dashboard_tab import OBDDashboardTab
+from canlab.tabs.signal_intelligence_tab import SignalIntelligenceTab
+from canlab.tabs.gateway_tab import GatewayTab
+from canlab.ui.animations import PulsingDot, CountUpLabel
+from canlab.settings_dialog import (
+    SettingsDialog, load_api_key,
+    load_groq_key, load_openai_key, load_ai_provider, load_ai_model,
 )
+import logging
 
-
-class LiveCANWorker(QThread):
-    frame_received = pyqtSignal(object)
-    error          = pyqtSignal(str)
-
-    def __init__(self, interface, channel, bitrate, bus=None, parent=None,
-                 fd=False, data_bitrate=None):
-        """
-        If `bus` is provided (e.g. PandaBus), it is used directly instead of
-        creating a new python-can Bus. This is the pluggable-backend entry point.
-        """
-        super().__init__(parent)
-        self._interface   = interface
-        self._channel     = channel
-        self._bitrate     = bitrate
-        self._fd          = fd
-        self._data_bitrate = data_bitrate
-        self._injected_bus = bus   # pre-created Bus (Panda, virtual, etc.)
-        self._running     = True
-        self._bus         = None
-
-    def get_bus(self):
-        return self._bus
-
-    def run(self):
-        try:
-            if self._injected_bus is not None:
-                self._bus = self._injected_bus
-            else:
-                kwargs = dict(
-                    channel=self._channel,
-                    bustype=self._interface,
-                    bitrate=self._bitrate,
-                )
-                if self._fd:
-                    kwargs["fd"] = True
-                    if self._data_bitrate:
-                        kwargs["data_bitrate"] = self._data_bitrate
-                self._bus = can.interface.Bus(**kwargs)
-            while self._running:
-                msg = self._bus.recv(timeout=0.1)
-                if msg:
-                    self.frame_received.emit(msg)
-        except Exception as e:
-            self.error.emit(str(e))
-
-    def stop(self):
-        self._running = False
-        self.wait(2000)   # let run() exit its recv loop before shutting the bus
-        # Don't shut down a caller-injected bus (Panda/virtual) we didn't open.
-        if self._bus and self._injected_bus is None:
-            try:
-                self._bus.shutdown()
-            except Exception:
-                pass
-
-
-class MultiBusWorker(QThread):
-    """Spawn one LiveCANWorker per configured bus; tag frames with bus name."""
-    frame_received = pyqtSignal(str, object)   # bus_name, frame
-    error          = pyqtSignal(str, str)       # bus_name, error
-
-    def __init__(self, bus_configs: list, parent=None):
-        super().__init__(parent)
-        self._configs  = bus_configs
-        self._workers  = []
-
-    def start_all(self):
-        for cfg in self._configs:
-            w = LiveCANWorker(
-                interface=cfg.get("interface", "socketcan"),
-                channel=cfg.get("channel", "can0"),
-                bitrate=cfg.get("bitrate", 500000),
-            )
-            name = cfg.get("name", cfg.get("channel", "?"))
-            w.frame_received.connect(lambda msg, n=name: self.frame_received.emit(n, msg))
-            w.error.connect(lambda e, n=name: self.error.emit(n, e))
-            w.start()
-            self._workers.append(w)
-
-    def stop_all(self):
-        for w in self._workers:
-            w.stop()
-            w.wait(2000)
-        self._workers.clear()
+log = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
+    # Emitted from a bus receive thread; queued to the GUI thread by Qt.
+    live_error = pyqtSignal(str)
+
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("CANLAB — CAN Reverse Engineering Suite")
-        self.showMaximized()
+        self._loaded_name = ""
+        self._update_title()
 
         self._state        = get_state()
-        self._live_worker  = None
-        self._can_settings = {"interface": "socketcan", "channel": "can0", "bitrate": 500000}
+        self._hubs: list   = []        # one BusHub per connected bus
+        self._can_settings = _saved_can_settings()
         self._api_key      = load_api_key()
-        self._gh_token     = load_gh_token()
         self._frame_rate_timer = QTimer()
+        self._drain_timer      = QTimer()
         self._live_frame_count = 0
-        self._live_rows: list  = []
-        self._live_last_ts: dict = {}   # ID -> last timestamp, for live Delta
-        self._bus_load_meter   = BusLoadMeter()
         self._rest_api_server  = None
+        self._mcp_service      = None
         self._plugins          = []
-        self._multibus_config  = []
-        self._multibus_worker  = None
+        self._multibus_config  = _saved_multibus()
 
         self._build_central()
         self._build_toolbar()
         self._build_menubar()
         self._build_statusbar()
         self._connect_signals()
+        self._restore_geometry()
 
         self._frame_rate_timer.setInterval(1000)
         self._frame_rate_timer.timeout.connect(self._update_frame_rate)
         self._frame_rate_timer.start()
+
+        # Captured frames are handed from the receive threads to the GUI in
+        # batches on a timer, so a busy bus cannot drive the UI update rate.
+        self._drain_timer.setInterval(250)
+        self._drain_timer.timeout.connect(self._drain_live_frames)
+        self.live_error.connect(self._on_live_error)
+
+        from canlab.settings_dialog import SettingsDialog, settings
+        _st = settings()
+        self._state.rest_api_port = int(_st.value(SettingsDialog.S_REST_PORT, 8765, int))
+        self._state.vehicle_profile = _st.value(SettingsDialog.S_PROFILE, "generic", str)
+        self._state.active_backend = _st.value(SettingsDialog.S_BACKEND, "python-can", str)
+        self._state.panda_safety_model = _st.value(
+            SettingsDialog.S_PANDA_SAFETY, "SAFETY_NOOUTPUT", str)
+        self._state.store.set_cap(int(_st.value(SettingsDialog.S_FRAME_CAP, 500_000, int)))
 
         self.ai_tab.set_api_key(self._api_key)
         self.ai_tab.set_ai_config(
@@ -162,16 +93,28 @@ class MainWindow(QMainWindow):
             model=load_ai_model(),
             groq_key=load_groq_key(),
             api_key=self._api_key,
+            openai_key=load_openai_key(),
         )
         self._load_plugins()
+        if _st.value(SettingsDialog.S_MCP_AUTOSTART, False, bool):
+            self._start_mcp(quiet=True)
 
     # ── Toolbar ───────────────────────────────────────────────────────────────
 
     def _build_toolbar(self):
+        """Three groups: what you open, the bus you are on, what is running.
+
+        Everything here is also in the menus. The toolbar carries only what a
+        session actually reaches for, so the row fits without items falling off
+        the end, and the three running-state buttons sit together on the right
+        where state belongs rather than mixed in among the verbs.
+        """
         tb = QToolBar("Main")
         tb.setMovable(False)
-        tb.setFixedHeight(32)
+        tb.setIconSize(QSize(9, 9))
+        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(tb)
+        self._toolbar = tb
 
         def act(text, slot, tip=""):
             a = QAction(text, self)
@@ -180,99 +123,150 @@ class MainWindow(QMainWindow):
             tb.addAction(a)
             return a
 
-        # File
-        act("Open Log",         self._open_log,            "Open CSV/candump log file")
-        act("Open .rlog",       self._open_rlog,           "Import openpilot .rlog/.qlog")
-        act("Save Project",     self._save_project,        "Save .canlab project")
-        act("Open Project",     self._open_project,        "Open .canlab project")
-        act("Export openpilot", self._export_openpilot_dbc,"Export openpilot DBC")
-        act("Export Lua",       self._export_lua,          "Export Wireshark Lua dissector")
-        act("Community Sync",   self._sync_community,      "Sync community vehicle profiles")
+        def menu_button(text, tip, entries):
+            """One button that drops a menu, so a family of related actions
+            costs one slot in the row instead of four."""
+            a = QAction(text, self)
+            a.setToolTip(tip)
+            menu = QMenu(self)
+            for label, slot in entries:
+                if slot is None:
+                    menu.addSeparator()
+                else:
+                    menu.addAction(label).triggered.connect(slot)
+            a.setMenu(menu)
+            tb.addAction(a)
+            btn = tb.widgetForAction(a)
+            if btn is not None:
+                btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            return a, menu
+
+        # ── files in, files out ───────────────────────────────────────────────
+        menu_button("Open", "Open a capture or a saved project", [
+            ("Open Log…", self._open_log),
+            ("Open openpilot .rlog…", self._open_rlog),
+            (None, None),
+            ("Open Project…", self._open_project),
+        ])
+        act("Save", self._save_project, "Save the .canlab project")
+        menu_button("Export", "Write the signal definitions out", [
+            ("Export DBC…", self._export_dbc),
+            ("Export openpilot DBC…", self._export_openpilot_dbc),
+            ("Export Wireshark Lua…", self._export_lua),
+            (None, None),
+            ("Export decoded time-series…", self._export_timeseries),
+        ])
         tb.addSeparator()
 
-        # GitHub
-        lbl_gh = QLabel("  GitHub:")
-        lbl_gh.setFont(mono_font(8))
-        lbl_gh.setStyleSheet(f"color:{COLORS['dim']}")
-        tb.addWidget(lbl_gh)
-
-        self.gh_url_edit = QLineEdit()
-        self.gh_url_edit.setPlaceholderText("https://github.com/owner/repo")
-        self.gh_url_edit.setFixedWidth(300)
-        self.gh_url_edit.setFont(mono_font(8))
-        self.gh_url_edit.setStyleSheet(
-            f"QLineEdit {{ background:{COLORS['panel_bg']}; color:{COLORS['text']}; "
-            f"border:1px solid {COLORS['border']}; border-radius:2px; padding:1px 4px; }}"
-            f"QLineEdit:focus {{ border-color:{COLORS['green']}; }}"
-        )
-        self.gh_url_edit.returnPressed.connect(self._fetch_github)
-        tb.addWidget(self.gh_url_edit)
-
-        btn_fetch = QPushButton("Fetch")
-        btn_fetch.setFixedWidth(48)
-        btn_fetch.setFixedHeight(22)
-        btn_fetch.setFont(mono_font(8))
-        btn_fetch.setStyleSheet(
-            f"QPushButton {{ background:{COLORS['panel_bg']}; color:{COLORS['green']}; "
-            f"border:1px solid {COLORS['green']}; border-radius:2px; padding:1px 4px; }}"
-            f"QPushButton:hover {{ background:#003a1f; }}"
-        )
-        btn_fetch.clicked.connect(self._fetch_github)
-        tb.addWidget(btn_fetch)
-
-        self.lbl_repo_status = QLabel("  no repo")
-        self.lbl_repo_status.setFont(mono_font(8))
-        self.lbl_repo_status.setStyleSheet(f"color:{COLORS['dim']}")
-        tb.addWidget(self.lbl_repo_status)
+        # ── the bus ───────────────────────────────────────────────────────────
+        lbl = QLabel(" Bus ")
+        lbl.setFont(mono_font(8))
+        lbl.setStyleSheet(f"color:{COLORS['dim']}; background:transparent")
+        tb.addWidget(lbl)
+        self.adapter_combo = QComboBox()
+        self.adapter_combo.setFont(mono_font(8))
+        self.adapter_combo.setFixedHeight(22)
+        self.adapter_combo.setFixedWidth(150)
+        self._refresh_adapter_combo()
+        self.adapter_combo.activated.connect(self._on_adapter_picked)
+        tb.addWidget(self.adapter_combo)
+        self._act_connect = act("Connect", self._toggle_connection, "")
+        self._update_connect_action()
         tb.addSeparator()
 
-        # CAN
-        self._act_connect    = act("Connect CAN",  self._connect_can,    "Connect live CAN bus")
-        self._act_disconnect = act("Disconnect",   self._disconnect_can, "Disconnect live CAN")
-        self._act_disconnect.setEnabled(False)
+        # ── what is running ───────────────────────────────────────────────────
+        # Pushed to the right: these report state and are toggled occasionally,
+        # unlike the verbs on the left.
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        spacer.setStyleSheet("background:transparent")
+        tb.addWidget(spacer)
         tb.addSeparator()
 
-        # Global transmit safety gate — disarmed by default. Nothing (injection,
-        # replay, fuzz, gateway) can write to the bus until the user arms it.
-        self._act_arm = QAction("ARM TX: OFF", self)
+        # The transmit gate is the one control that can put frames on a wire,
+        # so armed is red and unmissable rather than another word in a row.
+        self._act_arm = QAction("ARM TX", self)
         self._act_arm.setCheckable(True)
-        self._act_arm.setToolTip("Arm/disarm bus transmit. Off = no frames can be sent.")
         self._act_arm.toggled.connect(self._toggle_arm)
         tb.addAction(self._act_arm)
-        tb.addSeparator()
+        self._act_rest = act("REST", self._toggle_rest_api, "")
+        self._act_mcp = act("MCP", self._toggle_mcp, "")
+        _, self._plugins_menu = menu_button("Plugins", "Plugins found in ~/.canlab/plugins", [])
+        self._plugins_menu.aboutToShow.connect(self._fill_plugins_menu)
 
-        # AI + DBC
-        act("Run AI RE",  self._run_ai_re,     "AI-analyze all unknown IDs")
-        act("Export DBC", self._export_dbc,    "Export DBC file")
-        act("Code Gen",   self._generate_code, "Switch to Code Gen tab")
-        tb.addSeparator()
+        self._set_pill(self._act_arm, False, "ARM TX", COLORS["error"],
+                       "Bus transmit is disarmed: nothing can be sent. Click to arm (Ctrl+E).")
+        self._set_pill(self._act_rest, False, "REST", COLORS["green"],
+                       "REST API server is stopped. Click to start it.")
+        self._set_pill(self._act_mcp, False, "MCP", COLORS["green"],
+                       "MCP server is stopped. Click to let an assistant "
+                       "(Claude, ChatGPT, Codex) work on this capture.")
 
-        # REST API toggle
-        self._act_rest = act("REST API: OFF", self._toggle_rest_api, "Toggle REST API server")
-        tb.addSeparator()
+    def _set_pill(self, action, on: bool, text: str, color: str, tip: str) -> None:
+        """Show a running/stopped state as a coloured dot and a tinted button."""
+        action.setText(text)
+        action.setToolTip(tip)
+        action.setIcon(dot_icon(color if on else COLORS["dim"]))
+        btn = self._toolbar.widgetForAction(action)
+        if btn is None:
+            return
+        if not on:
+            btn.setStyleSheet("")
+            return
+        c = QColor(color)
+        rgb = f"{c.red()},{c.green()},{c.blue()}"
+        btn.setStyleSheet(
+            f"QToolButton {{ color:{color}; background:rgba({rgb},30);"
+            f" border:1px solid rgba({rgb},120); border-radius:3px; padding:2px 6px; }}"
+            f"QToolButton:hover {{ background:rgba({rgb},55); color:{color}; }}")
 
-        # Plugins
-        btn_plugins = QPushButton("Plugins…")
-        btn_plugins.setFixedHeight(22)
-        btn_plugins.setFont(mono_font(8))
-        btn_plugins.clicked.connect(self._show_plugins_menu)
-        tb.addWidget(btn_plugins)
+    def _update_connect_action(self) -> None:
+        on = bool(self._state.is_connected)
+        self._act_connect.setText("Disconnect" if on else "Connect")
+        self._act_connect.setIcon(dot_icon(COLORS["green"] if on else COLORS["dim"]))
+        self._act_connect.setToolTip(
+            "Recording from the bus. Click to disconnect (Ctrl+D)." if on
+            else "Open the selected adapter and start recording (Ctrl+D).")
+        # Switching adapters mid-capture would not take effect until the next
+        # connect, so the picker is closed rather than silently ignored.
+        self.adapter_combo.setEnabled(not on)
+        self.adapter_combo.setToolTip(
+            "Disconnect first to switch adapter." if on
+            else "The adapter Connect opens. Manage them in Settings > CAN ADAPTERS.")
+
+    def _fill_plugins_menu(self) -> None:
+        from canlab.core.plugin_loader import discover_plugins
+        menu = self._plugins_menu
+        menu.clear()
+        self._plugins = discover_plugins()
+        if not self._plugins:
+            menu.addAction("No plugins in ~/.canlab/plugins").setEnabled(False)
+        for p in self._plugins:
+            mark = "on " if p.get("enabled") else "off"
+            err = f"   [{p.get('error')}]" if p.get("error") else ""
+            menu.addAction(f"{mark}  {p['name']} v{p['version']}{err}").setEnabled(False)
+        menu.addSeparator()
+        menu.addAction("Manage plugins…").triggered.connect(
+            lambda: self._open_settings(tab="PLUGINS"))
 
     # ── Menu bar ──────────────────────────────────────────────────────────────
 
     def _build_menubar(self):
         mb = self.menuBar()
 
-        # File menu
+        # File menu. Shortcuts use QKeySequence.StandardKey where one exists so
+        # they follow the platform (Cmd on macOS, Ctrl elsewhere).
         file_menu = mb.addMenu("File")
-        for text, slot in [
-            ("Open Log…",           self._open_log),
-            ("Open .rlog…",         self._open_rlog),
-            ("Save Project…",       self._save_project),
-            ("Open Project…",       self._open_project),
+        for text, slot, key in [
+            ("Open Log…",           self._open_log,      QKeySequence.StandardKey.Open),
+            ("Open .rlog…",         self._open_rlog,     None),
+            ("Save Project…",       self._save_project,  QKeySequence.StandardKey.Save),
+            ("Open Project…",       self._open_project,  "Ctrl+Shift+O"),
         ]:
             a = QAction(text, self)
             a.triggered.connect(slot)
+            if key is not None:
+                a.setShortcut(key)
             file_menu.addAction(a)
         file_menu.addSeparator()
         for text, slot in [
@@ -290,10 +284,19 @@ class MainWindow(QMainWindow):
         a = QAction("Import ARXML…", self)
         a.triggered.connect(lambda: self.dbc_tab._import_arxml())
         file_menu.addAction(a)
-        file_menu.addSeparator()
-        a = QAction("Community Sync…", self)
-        a.triggered.connect(self._sync_community)
+        a = QAction("Import DBC…", self)
+        a.triggered.connect(self._import_dbc)
         file_menu.addAction(a)
+        file_menu.addSeparator()
+        self._recent_menu = file_menu.addMenu("Recent Logs")
+        self._rebuild_recent_menu()
+        file_menu.addSeparator()
+        a = QAction("Quit", self)
+        a.setShortcut(QKeySequence.StandardKey.Quit)
+        a.triggered.connect(self.close)
+        file_menu.addAction(a)
+
+        self._build_view_menu(mb)
 
         # Tools menu
         tools_menu = mb.addMenu("Tools")
@@ -307,6 +310,9 @@ class MainWindow(QMainWindow):
             ("Export decoded time-series…", self._export_timeseries),
             ("Detect multiplexed signals…", self._detect_mux),
             ("Calibrate signal from reference CSV…", self._calibrate_ref),
+            ("Trim capture…",            self._trim_capture),
+            ("MCP server: start / stop",  self._toggle_mcp),
+            ("Connect an assistant over MCP…", self._open_mcp_settings),
         ]:
             a = QAction(text, self)
             a.triggered.connect(slot)
@@ -316,8 +322,179 @@ class MainWindow(QMainWindow):
         settings_menu = mb.addMenu("Settings")
         a = QAction("Preferences…", self)
         a.triggered.connect(self._open_settings)
-        a.setShortcut("Ctrl+,")
+        a.setShortcut(QKeySequence.StandardKey.Preferences)
         settings_menu.addAction(a)
+
+    # ── Recent logs ───────────────────────────────────────────────────────────
+
+    RECENT_KEY = "files/recent"
+    RECENT_MAX = 8
+
+    def _recent_paths(self) -> list:
+        from PyQt6.QtCore import QSettings
+        stored = QSettings("CanLab", "CanLab").value(self.RECENT_KEY, [])
+        if isinstance(stored, str):          # a one-item list comes back bare
+            stored = [stored]
+        return [p for p in (stored or []) if isinstance(p, str)]
+
+    def _remember_recent(self, path: str) -> None:
+        """Most recent first, no duplicates, capped."""
+        import os
+        from PyQt6.QtCore import QSettings
+
+        path = os.path.abspath(path)
+        paths = [p for p in self._recent_paths() if os.path.abspath(p) != path]
+        paths.insert(0, path)
+        QSettings("CanLab", "CanLab").setValue(
+            self.RECENT_KEY, paths[:self.RECENT_MAX])
+        self._rebuild_recent_menu()
+
+    def _rebuild_recent_menu(self) -> None:
+        import os
+
+        menu = getattr(self, "_recent_menu", None)
+        if menu is None:
+            return
+        menu.clear()
+        paths = self._recent_paths()
+        if not paths:
+            empty = menu.addAction("Nothing opened yet")
+            empty.setEnabled(False)
+            return
+        for i, path in enumerate(paths, 1):
+            # The file name is what identifies it; the directory is the tooltip.
+            action = menu.addAction(f"&{i}  {os.path.basename(path)}")
+            action.setToolTip(path)
+            action.setEnabled(os.path.exists(path))
+            action.triggered.connect(
+                lambda _=False, p=path: self._load_log_file(p))
+        menu.addSeparator()
+        clear = menu.addAction("Clear List")
+        clear.triggered.connect(self._clear_recent)
+
+    def _clear_recent(self) -> None:
+        from PyQt6.QtCore import QSettings
+        QSettings("CanLab", "CanLab").remove(self.RECENT_KEY)
+        self._rebuild_recent_menu()
+
+    # ── Window geometry ───────────────────────────────────────────────────────
+
+    GEOMETRY_KEY = "window/geometry"
+
+    def _restore_geometry(self) -> None:
+        """Reopen at the size and place the user left it, maximised first time."""
+        from PyQt6.QtCore import QSettings
+        saved = QSettings("CanLab", "CanLab").value(self.GEOMETRY_KEY)
+        restored = False
+        if saved is not None:
+            try:
+                restored = bool(self.restoreGeometry(saved))
+            except (TypeError, ValueError):
+                restored = False
+        if restored:
+            self.show()
+        else:
+            self.showMaximized()
+
+    def _update_title(self) -> None:
+        """Name the open capture in the title bar, so the taskbar says which."""
+        if self._loaded_name:
+            self.setWindowTitle(f"{self._loaded_name} - CanLab")
+        else:
+            self.setWindowTitle("CanLab")
+
+    def _save_geometry(self) -> None:
+        from PyQt6.QtCore import QSettings
+        QSettings("CanLab", "CanLab").setValue(
+            self.GEOMETRY_KEY, self.saveGeometry())
+
+    def _build_view_menu(self, mb) -> None:
+        """Navigation and bus shortcuts, in a menu so they can be discovered.
+
+        The application had exactly one shortcut, Preferences. These are the
+        ones a desktop tool is expected to have. They live in a menu rather
+        than as bare key bindings because Qt then shows each key next to its
+        item, which is the only way a user finds out they exist.
+        """
+        view_menu = mb.addMenu("View")
+
+        # Alt rather than Ctrl for the tab numbers, so Ctrl+number stays free
+        # inside the tables and text fields. Alt+0 is the tenth, as in browsers.
+        for i in range(self.tabs.count()):
+            label = self.tabs.tabText(i).replace("&", "&&")
+            action = QAction(label, self)
+            if i < 10:
+                action.setShortcut(QKeySequence(f"Alt+{(i + 1) % 10}"))
+            action.triggered.connect(
+                lambda _=False, index=i: self.tabs.setCurrentIndex(index))
+            view_menu.addAction(action)
+
+        view_menu.addSeparator()
+        for text, sequence, handler in [
+            ("Next Tab",         "Ctrl+Tab",       lambda: self._step_tab(1)),
+            ("Previous Tab",     "Ctrl+Shift+Tab", lambda: self._step_tab(-1)),
+            ("Find in Frames",   QKeySequence.StandardKey.Find,
+             self._focus_frame_filter),
+        ]:
+            action = QAction(text, self)
+            action.setShortcut(sequence if isinstance(sequence, str)
+                               else QKeySequence(sequence))
+            action.triggered.connect(handler)
+            view_menu.addAction(action)
+
+        view_menu.addSeparator()
+        for text, sequence, handler in [
+            ("Undo Signal Edit", QKeySequence.StandardKey.Undo, self._undo_dbc),
+            ("Redo Signal Edit", QKeySequence.StandardKey.Redo, self._redo_dbc),
+        ]:
+            action = QAction(text, self)
+            action.setShortcut(QKeySequence(sequence))
+            action.triggered.connect(handler)
+            view_menu.addAction(action)
+
+        view_menu.addSeparator()
+        for text, sequence, handler in [
+            ("Connect / Disconnect Bus", "Ctrl+D", self._toggle_connection),
+            ("Arm / Disarm TX",          "Ctrl+E", lambda: self._act_arm.trigger()),
+        ]:
+            action = QAction(text, self)
+            action.setShortcut(QKeySequence(sequence))
+            action.triggered.connect(handler)
+            view_menu.addAction(action)
+
+    def _undo_dbc(self) -> None:
+        if self._state.undo_dbc():
+            self.statusBar().showMessage("Undid the last signal edit.", 2500)
+        else:
+            self.statusBar().showMessage("Nothing to undo.", 2500)
+
+    def _redo_dbc(self) -> None:
+        if self._state.redo_dbc():
+            self.statusBar().showMessage("Redid the signal edit.", 2500)
+        else:
+            self.statusBar().showMessage("Nothing to redo.", 2500)
+
+    def _step_tab(self, delta: int) -> None:
+        count = self.tabs.count()
+        self.tabs.setCurrentIndex((self.tabs.currentIndex() + delta) % count)
+
+    def _focus_frame_filter(self) -> None:
+        """Ctrl+F goes to the frame filter, switching to FRAMES if needed."""
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i).startswith("FRAMES"):
+                self.tabs.setCurrentIndex(i)
+                break
+        line = getattr(self.frames_tab, "filter_id", None)
+        if line is not None:
+            line.setFocus()
+            line.selectAll()
+
+    def _toggle_connection(self) -> None:
+        """Ctrl+D connects or disconnects the bus, whichever applies."""
+        if self._state.is_connected:
+            self._disconnect_can()
+        else:
+            self._connect_can()
 
     # ── Central layout ────────────────────────────────────────────────────────
 
@@ -332,9 +509,20 @@ class MainWindow(QMainWindow):
         main_lay.addWidget(self.id_panel)
 
         self.tabs = QTabWidget()
+        # Fifteen tab labels in one row need 1162 px, which forced the whole
+        # window to a 1662 px minimum: it would not fit a 1366x768 laptop at
+        # all. Let the bar scroll and elide instead, so the window can shrink
+        # to what a tab page actually needs.
+        # Scroll buttons rather than eliding: a truncated "SIG..." is worse
+        # than an arrow, and the bar only scrolls when there is genuinely no
+        # room. Either way the bar stops dictating the window's minimum width.
+        self.tabs.setUsesScrollButtons(True)
+        self.tabs.setElideMode(Qt.TextElideMode.ElideNone)
+        self.tabs.tabBar().setUsesScrollButtons(True)
 
         # Core tabs (0–5)
         self.frames_tab  = FramesTab()
+        self.sniffer_tab = SnifferTab()
         self.signals_tab = SignalsTab()
         self.plot_tab    = PlotTab()
         self.ai_tab      = AIEngineTab()
@@ -353,6 +541,7 @@ class MainWindow(QMainWindow):
         self.gateway_tab      = GatewayTab()
 
         self.tabs.addTab(self.frames_tab,       "FRAMES")
+        self.tabs.addTab(self.sniffer_tab,      "SNIFFER")
         self.tabs.addTab(self.signals_tab,      "SIGNALS")
         self.tabs.addTab(self.plot_tab,         "PLOT")
         self.tabs.addTab(self.ai_tab,           "AI ENGINE ★")
@@ -386,18 +575,6 @@ class MainWindow(QMainWindow):
         self.lbl_connection.setFont(mono_font(8))
         self.lbl_connection.setStyleSheet(f"color:{COLORS['dim']}")
         sb.addWidget(self.lbl_connection)
-        sb.addWidget(_sep())
-
-        self.lbl_repo_sb = QLabel("REPO: none")
-        self.lbl_repo_sb.setFont(mono_font(8))
-        self.lbl_repo_sb.setStyleSheet(f"color:{COLORS['dim']}")
-        sb.addWidget(self.lbl_repo_sb)
-        sb.addWidget(_sep())
-
-        self.lbl_fingerprint_sb = QLabel("FP: —")
-        self.lbl_fingerprint_sb.setFont(mono_font(8))
-        self.lbl_fingerprint_sb.setStyleSheet(f"color:{COLORS['dim']}")
-        sb.addWidget(self.lbl_fingerprint_sb)
 
         # Bus load bar (right side)
         self.load_bar = QProgressBar()
@@ -434,8 +611,6 @@ class MainWindow(QMainWindow):
         self._state.id_selected.connect(self._on_id_selected)
         self._state.frames_loaded.connect(self._on_frames_loaded)
         self._state.can_connected.connect(self._on_can_status)
-        self._state.repo_loaded.connect(self._on_repo_loaded)
-        self._state.fingerprint_matched.connect(self._on_fingerprint)
         self._state.bus_load_update.connect(self._on_bus_load_update)
         self.id_panel.analyze_requested.connect(self._analyze_id)
         self.id_panel.plot_requested.connect(self._plot_id)
@@ -454,32 +629,24 @@ class MainWindow(QMainWindow):
             self._load_log_file(path)
 
     def _load_log_file(self, path: str):
-        # Parse off the GUI thread: large BLF/pcap/CSV captures take seconds and
-        # would otherwise freeze the whole window (including the ability to
-        # cancel). A busy indicator shows while the worker runs.
-        self.statusBar().showMessage(f"Loading {os.path.basename(path)}…")
-        from ui.compute_worker import ComputeWorker
-        worker = ComputeWorker(parse_log_file, path)
-        self._log_workers = getattr(self, "_log_workers", [])
-        self._log_workers.append(worker)
-
-        def _done(df):
-            self.statusBar().clearMessage()
-            self._log_workers.remove(worker)
-            if df is None or df.empty:
+        try:
+            df = parse_log_file(path)
+            self._remember_recent(path)
+            self._loaded_name = os.path.basename(path)
+            self._update_title()
+            if df.empty:
                 QMessageBox.warning(self, "Empty", "No frames found in file.")
                 return
             self._state.load_frames(df, os.path.basename(path))
-            self._correlate_annotations(df)
+        except Exception as e:
+            QMessageBox.critical(self, "Parse Error", str(e))
 
-        def _failed(err):
-            self.statusBar().clearMessage()
-            self._log_workers.remove(worker)
-            QMessageBox.critical(self, "Parse Error", err)
-
-        worker.done.connect(_done)
-        worker.failed.connect(_failed)
-        worker.start()
+    def _import_dbc(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import DBC", "", "DBC (*.dbc);;All Files (*)"
+        )
+        if path:
+            self._load_dbc_file(path)
 
     def _load_dbc_file(self, path: str):
         try:
@@ -495,7 +662,7 @@ class MainWindow(QMainWindow):
     # ── Project save / load ───────────────────────────────────────────────────
 
     def _save_project(self):
-        from core.project import save_project
+        from canlab.core.project import save_project
         path, _ = QFileDialog.getSaveFileName(
             self, "Save Project", "project.canlab", "CANLAB Project (*.canlab)"
         )
@@ -504,14 +671,13 @@ class MainWindow(QMainWindow):
         try:
             save_project(self._state, path)
             self.statusBar().showMessage(f"Project saved: {path}", 4000)
-            self.setWindowTitle(
-                f"CANLAB — {os.path.basename(path)}"
-            )
+            self._loaded_name = os.path.basename(path)
+            self._update_title()
         except Exception as e:
             QMessageBox.critical(self, "Save Error", str(e))
 
     def _open_project(self):
-        from core.project import load_project
+        from canlab.core.project import load_project
         path, _ = QFileDialog.getOpenFileName(
             self, "Open Project", "", "CANLAB Project (*.canlab)"
         )
@@ -520,100 +686,11 @@ class MainWindow(QMainWindow):
         try:
             load_project(self._state, path)
             self.statusBar().showMessage(f"Project loaded: {path}", 4000)
-            self.setWindowTitle(f"CANLAB — {os.path.basename(path)}")
+            self._loaded_name = os.path.basename(path)
+            self._update_title()
             self.lbl_total_frames.animate_to(len(self._state.frames_df))
         except Exception as e:
             QMessageBox.critical(self, "Load Error", str(e))
-
-    # ── GitHub fetch ──────────────────────────────────────────────────────────
-
-    def _fetch_github(self):
-        from core.github_fetcher import GitHubRepoDialog
-        url = self.gh_url_edit.text().strip()
-        dlg = GitHubRepoDialog(
-            initial_url=url,
-            token=self._gh_token,
-            parent=self,
-        )
-        dlg.logs_ready.connect(self._on_github_logs_ready)
-        dlg.dbcs_ready.connect(self._on_github_dbcs_ready)
-        dlg.readme_ready.connect(self._on_github_readme)
-        dlg.repo_meta_ready.connect(self._on_repo_meta)
-        dlg.exec()
-
-    def _on_github_logs_ready(self, paths: list):
-        loaded = 0
-        for path in paths:
-            try:
-                self._load_log_file(path)
-                loaded += 1
-            except Exception as e:
-                self.statusBar().showMessage(
-                    f"Could not load {os.path.basename(path)}: {e}", 5000
-                )
-        if loaded:
-            self.statusBar().showMessage(f"Loaded {loaded} log file(s) from repo.", 4000)
-
-    def _on_github_dbcs_ready(self, paths: list):
-        loaded = 0
-        for path in paths:
-            try:
-                self._load_dbc_file(path)
-                loaded += 1
-            except Exception as e:
-                self.statusBar().showMessage(
-                    f"Could not import {os.path.basename(path)}: {e}", 5000
-                )
-        if loaded:
-            self.statusBar().showMessage(f"Imported {loaded} DBC file(s) from repo.", 4000)
-
-    def _on_github_readme(self, readme: str):
-        self._state.repo_readme = readme
-        events = parse_annotations(readme)
-        self._pending_events = events
-        if not self._state.frames_df.empty:
-            self._correlate_with_events(self._state.frames_df, events)
-
-    def _on_repo_meta(self, info: dict):
-        self._state.set_repo_context(
-            info=info,
-            readme=self._state.repo_readme,
-            url=self.gh_url_edit.text().strip(),
-        )
-
-    def _on_repo_loaded(self, info: dict):
-        name = f"{info.get('owner','')}/{info.get('repo','')}"
-        self.lbl_repo_status.setText(f"  {name}")
-        self.lbl_repo_status.setStyleSheet(f"color:{COLORS['green']}")
-        self.lbl_repo_sb.setText(f"REPO: {name}")
-        self.lbl_repo_sb.setStyleSheet(f"color:{COLORS['green']}")
-        self.setWindowTitle(
-            f"CANLAB — {name}  ({info.get('description','')})"
-        )
-
-    def _on_fingerprint(self, result: dict):
-        model = result.get("model", "?")
-        conf  = int(result.get("confidence", 0) * 100)
-        self.lbl_fingerprint_sb.setText(f"FP: {model} ({conf}%)")
-        self.lbl_fingerprint_sb.setStyleSheet(f"color:{COLORS['green']}")
-
-    # ── Annotation correlation ────────────────────────────────────────────────
-
-    def _correlate_annotations(self, df: pd.DataFrame):
-        events = getattr(self, "_pending_events", [])
-        if events and not df.empty:
-            self._correlate_with_events(df, events)
-
-    def _correlate_with_events(self, df: pd.DataFrame, events: list):
-        if not events or df.empty:
-            return
-        correlations = correlate_events(df, events)
-        self._state.annotations = correlations
-        total_ids = sum(len(v) for v in correlations.values())
-        if correlations:
-            self.statusBar().showMessage(
-                f"Correlated {len(correlations)} events across {total_ids} IDs", 5000
-            )
 
     # ── CAN live ──────────────────────────────────────────────────────────────
 
@@ -628,7 +705,7 @@ class MainWindow(QMainWindow):
         injected_bus = None
         if getattr(self._state, "active_backend", "python-can") == "panda":
             try:
-                from core.panda_backend import PandaBus, is_available
+                from canlab.core.panda_backend import PandaBus, is_available
                 if is_available():
                     injected_bus = PandaBus(
                         bus_index=0, bitrate=bitrate,
@@ -645,111 +722,134 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.warning(self, "Panda Error", str(e))
 
-        self._live_worker = LiveCANWorker(iface, channel, bitrate, bus=injected_bus,
-                                          fd=fd, data_bitrate=data_bitrate)
-        self._live_worker.frame_received.connect(self._on_live_frame)
-        self._live_worker.error.connect(self._on_live_error)
-        self._live_worker.started.connect(self._on_worker_started)
-        self._live_worker.start()
+        try:
+            bus = injected_bus or self._open_bus(iface, channel, bitrate,
+                                                 fd, data_bitrate,
+                                                 self._can_settings.get("extra"))
+        except Exception as e:
+            from canlab.core.adapters import Adapter, _HINTS
+            text = f"{type(e).__name__}: {e}"
+            hint = next((h for needle, h in _HINTS if needle.lower() in text.lower()), "")
+            QMessageBox.critical(
+                self, "CAN Error",
+                f"Could not open {self._can_settings.get('name') or channel} "
+                f"({Adapter.from_dict(self._can_settings).describe()}):\n{text}"
+                + (f"\n\nHint: {hint}" if hint else "")
+                + "\n\nSettings > CAN ADAPTERS can detect and test adapters.")
+            return
 
-        # Multi-bus recording: if extra buses are configured in Settings, spawn a
-        # MultiBusWorker and route each tagged frame through the same pipeline.
-        if self._multibus_config:
-            self._multibus_worker = MultiBusWorker(self._multibus_config)
-            self._multibus_worker.frame_received.connect(
-                lambda name, m: self._on_live_frame(m, bus_name=name))
-            self._multibus_worker.error.connect(
-                lambda name, e: self._on_live_error(f"[{name}] {e}"))
-            self._multibus_worker.start_all()
+        hubs = [self._make_hub(bus, channel, bitrate, 0)]
+        # Extra buses configured in Settings each get their own hub and bus index.
+        for i, cfg in enumerate(self._multibus_config, start=1):
+            name = cfg.get("name") or cfg.get("channel", "?")
+            try:
+                extra = self._open_bus(cfg.get("interface", "socketcan"),
+                                       cfg.get("channel", "can0"),
+                                       int(cfg.get("bitrate", 500000)))
+            except Exception as e:
+                self.statusBar().showMessage(f"Bus {name}: {e}", 5000)
+                continue
+            hubs.append(self._make_hub(extra, name,
+                                       int(cfg.get("bitrate", 500000)), i))
 
-        self._act_connect.setEnabled(False)
-        self._act_disconnect.setEnabled(True)
+        self._hubs = hubs
+        for hub in self._hubs:
+            hub.start()
+        self._state.bus_hub      = self._hubs[0]
+        self._state.can_bus      = self._hubs[0]   # gated .send for REST /inject
+        self._state.is_connected = True
+        self._drain_timer.start()
+
+        self._update_connect_action()
         self._state.can_connected.emit(True)
 
-    def _on_worker_started(self):
-        # Share the bus handle with state so injection + diagnostics can use it.
-        # The Bus object is created inside the worker thread and may not exist
-        # immediately, so poll for it rather than assuming it's ready after a
-        # fixed 500 ms (slow USB/Panda opens raced that and left can_bus=None).
-        self._share_bus_attempts = 0
-        self._poll_share_bus()
+    # ── Adapters ──────────────────────────────────────────────────────────────
 
-    def _poll_share_bus(self):
-        if not self._live_worker:
+    def _refresh_adapter_combo(self):
+        """Saved adapters from Settings; the current one selected."""
+        from canlab.core.adapters import adapters_from_json
+        from canlab.settings_dialog import SettingsDialog, settings
+        st = settings()
+        self._adapters = adapters_from_json(st.value(SettingsDialog.S_ADAPTERS, "[]", str))
+        combo = self.adapter_combo
+        combo.blockSignals(True)
+        combo.clear()
+        for a in self._adapters:
+            # The name alone in the box, the whole configuration on hover:
+            # the full string was being cut off mid-word in the toolbar.
+            combo.addItem(f"{a.name} · {a.channel}", a.name)
+            combo.setItemData(combo.count() - 1, a.describe(), Qt.ItemDataRole.ToolTipRole)
+        if not self._adapters:
+            combo.addItem(f"{self._can_settings.get('interface')} "
+                          f"{self._can_settings.get('channel')}", "")
+        combo.addItem("Manage adapters…", "__manage__")
+        idx = combo.findData(self._can_settings.get("name", ""))
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        combo.blockSignals(False)
+
+    def _on_adapter_picked(self, index: int):
+        key = self.adapter_combo.itemData(index)
+        if key == "__manage__":
+            self._refresh_adapter_combo()          # back to the current one
+            self._open_settings(tab="CAN ADAPTERS")
             return
-        bus = self._live_worker.get_bus()
-        if bus is not None:
-            self._state.can_bus      = bus
-            self._state.is_connected = True
-            return
-        self._share_bus_attempts += 1
-        if self._share_bus_attempts < 50:      # retry up to ~5 s
-            QTimer.singleShot(100, self._poll_share_bus)
-        else:
-            self.statusBar().showMessage(
-                "CAN bus handle not ready — injection/diagnostics unavailable", 5000
-            )
+        for a in self._adapters:
+            if a.name == key:
+                self._can_settings = {"interface": a.interface, "channel": a.channel,
+                                      "bitrate": a.bitrate, "fd": a.fd,
+                                      "data_bitrate": a.data_bitrate,
+                                      "extra": dict(a.extra), "name": a.name}
+                from canlab.settings_dialog import SettingsDialog, settings
+                st = settings()
+                st.setValue(SettingsDialog.S_ADAPTER_DEFAULT, a.name)
+                st.setValue(SettingsDialog.S_INTERFACE, a.interface)
+                st.setValue(SettingsDialog.S_CHANNEL, a.channel)
+                st.setValue(SettingsDialog.S_BITRATE, str(a.bitrate))
+                st.setValue(SettingsDialog.S_FD, a.fd)
+                st.setValue(SettingsDialog.S_FD_BITRATE, str(a.data_bitrate))
+                import json
+                st.setValue(SettingsDialog.S_EXTRA, json.dumps(a.extra))
+                self.statusBar().showMessage(f"Adapter: {a.name} ({a.describe()})", 4000)
+                return
+
+    def _open_bus(self, interface: str, channel: str, bitrate: int,
+                  fd: bool = False, data_bitrate=None, extra: dict | None = None):
+        from canlab.core.adapters import Adapter
+        adapter = Adapter(name=channel, interface=interface, channel=str(channel),
+                          bitrate=int(bitrate), fd=bool(fd),
+                          data_bitrate=int(data_bitrate or 2_000_000), extra=dict(extra or {}))
+        return can.interface.Bus(**adapter.bus_kwargs())
+
+    def _make_hub(self, bus, name: str, bitrate: int, index: int):
+        from canlab.core.bus_hub import BusHub
+        return BusHub(
+            bus, name=name, bus_index=index, bitrate=bitrate,
+            on_error=self.live_error.emit,
+            on_load=self._state.bus_load_update.emit,
+            on_trigger=lambda rule, msg: self._state.trigger_fired.emit(rule, msg),
+            triggers_getter=lambda: self._state.triggers,
+        )
+
+    def _drain_live_frames(self):
+        rows = []
+        for hub in self._hubs:
+            rows.extend(hub.drain())
+        if rows:
+            self._live_frame_count += len(rows)
+            self._state.append_rows(rows)
 
     def _disconnect_can(self):
-        if self._live_worker:
-            self._live_worker.stop()
-            self._live_worker = None
-        if self._multibus_worker:
-            self._multibus_worker.stop_all()
-            self._multibus_worker = None
-        # Flush any buffered live frames so they aren't lost on disconnect.
-        if self._live_rows:
-            self._state.append_frames(pd.DataFrame(self._live_rows))
-            self._live_rows.clear()
-        self._live_last_ts.clear()
+        self._drain_timer.stop()
+        self._drain_live_frames()       # flush the tail so no frames are lost
+        self._state.drop_bus_views()
+        for hub in self._hubs:
+            hub.shutdown()
+        self._hubs = []
+        self._state.bus_hub      = None
         self._state.can_bus      = None
         self._state.is_connected = False
-        self._act_connect.setEnabled(True)
-        self._act_disconnect.setEnabled(False)
+        self._update_connect_action()
         self._state.can_connected.emit(False)
-        self._bus_load_meter.reset()
-
-    def _on_live_frame(self, msg, bus_name=None):
-        self._live_frame_count += 1
-
-        # Bus load
-        load = self._bus_load_meter.add_frame(msg.dlc, msg.timestamp)
-        if load is not None:
-            self._state.bus_load_update.emit(load)
-
-        # Trigger check
-        if self._state.triggers:
-            from core.trigger import check_triggers
-            fired = check_triggers(
-                self._state.triggers, msg.arbitration_id, bytes(msg.data)
-            )
-            for rule in fired:
-                self._state.trigger_fired.emit(rule, msg)
-
-        # UDS response routing
-        if 0x7E8 <= msg.arbitration_id <= 0x7EF:
-            self._state.uds_response.emit(msg.arbitration_id, bytes(msg.data))
-
-        data = bytes(msg.data)[:8]
-        byte_data = list(data) + [None] * (8 - len(data))
-        can_id = format(msg.arbitration_id, "03X")
-        # Per-ID inter-frame delta so live frames show real timing, not 0.0.
-        prev_ts = self._live_last_ts.get(can_id)
-        delta = (msg.timestamp - prev_ts) if prev_ts is not None else 0.0
-        self._live_last_ts[can_id] = msg.timestamp
-        row = {
-            "Timestamp": msg.timestamp,
-            "ID":        can_id,
-            "Bus":       bus_name if bus_name is not None else "live",
-            "DLC":       msg.dlc,
-            "Delta":     delta,
-            **{f"B{i}": byte_data[i] for i in range(8)},
-        }
-        self._live_rows.append(row)
-        if len(self._live_rows) >= 50:
-            df = pd.DataFrame(self._live_rows)
-            self._state.append_frames(df)
-            self._live_rows.clear()
 
     def _on_live_error(self, err: str):
         QMessageBox.critical(self, "CAN Error", err)
@@ -763,10 +863,10 @@ class MainWindow(QMainWindow):
             return
         ids = set(self._state.frames_df["ID"].unique().tolist())
         self.statusBar().showMessage("Matching against opendbc (fetching index)…")
-        from ui.compute_worker import ComputeWorker
+        from canlab.ui.compute_worker import ComputeWorker
 
         def _work():
-            from core.opendbc_matcher import refresh_index, match_capture
+            from canlab.core.opendbc_matcher import refresh_index, match_capture
             refresh_index()                      # fetch+cache (network, best-effort)
             return match_capture(ids, top_k=8)
 
@@ -784,11 +884,54 @@ class MainWindow(QMainWindow):
                 "No matches (index empty or no overlap). Requires network access "
                 "to fetch the opendbc library on first run.")
             return
-        lines = [f"{m['score']*100:5.1f}%  {m['dbc']}   "
-                 f"({len(m['matched_ids'])} IDs, {m['message_count']} msgs)"
-                 for m in matches]
-        QMessageBox.information(self, "opendbc matches (by ID overlap)",
-                                "\n".join(lines))
+        from canlab.ui.opendbc_dialog import OpendbcMatchDialog
+        dlg = OpendbcMatchDialog(matches, self)
+        if dlg.exec() and dlg.chosen:
+            self._apply_opendbc(dlg.chosen, only_seen=dlg.only_seen)
+
+    def _apply_opendbc(self, dbc_name: str, only_seen: bool = True) -> None:
+        """Load a matched opendbc database straight into the signal list.
+
+        The match already said this DBC explains the capture; making the user
+        go and find the file by hand was the missing step. Signals for messages
+        not on this bus are skipped by default, since an OEM database carries
+        hundreds of them and they would only clutter the builder.
+        """
+        from canlab.core.canid import normalize_id
+        from canlab.core.dbc_manager import load_dbc
+        from canlab.core.opendbc_matcher import CACHE_DIR
+        path = CACHE_DIR / dbc_name
+        if not path.exists():
+            QMessageBox.warning(self, "opendbc", f"{dbc_name} is not in the cache.")
+            return
+        try:
+            incoming = load_dbc(str(path))
+        except Exception as exc:
+            QMessageBox.critical(self, "opendbc", f"Could not read {dbc_name}:\n{exc}")
+            return
+        seen = {normalize_id(i) for i in self._state.frames_df["ID"].unique()} \
+            if only_seen and not self._state.frames_df.empty else None
+        have = {(normalize_id(s.get("message_id", "")), s.get("signal_name"))
+                for s in self._state.dbc_signals}
+        added, skipped = [], 0
+        for sig in incoming:
+            mid = normalize_id(sig.get("message_id", ""))
+            if seen is not None and mid not in seen:
+                skipped += 1
+                continue
+            if (mid, sig.get("signal_name")) in have:
+                continue
+            added.append(sig)
+        if not added:
+            QMessageBox.information(self, "opendbc",
+                                    "Nothing new to add from that database.")
+            return
+        self._state.replace_dbc_signals(list(self._state.dbc_signals) + added)
+        msgs = len({s["message_id"] for s in added})
+        self.statusBar().showMessage(
+            f"opendbc: applied {len(added)} signals across {msgs} messages from "
+            f"{dbc_name}" + (f" ({skipped} for messages not on this bus skipped)"
+                             if skipped else ""), 8000)
 
     def _export_timeseries(self):
         if self._state.frames_df.empty or not self._state.dbc_signals:
@@ -801,7 +944,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            from core.timeseries_export import export_timeseries
+            from canlab.core.timeseries_export import export_timeseries
             n = export_timeseries(self._state.frames_df, self._state.dbc_signals, path)
             QMessageBox.information(self, "Export", f"Wrote {n} rows to {path}")
         except Exception as e:
@@ -811,7 +954,7 @@ class MainWindow(QMainWindow):
         if self._state.frames_df.empty:
             QMessageBox.information(self, "Multiplexers", "Load a capture first.")
             return
-        from core.mux_detector import detect_all_multiplexers
+        from canlab.core.mux_detector import detect_all_multiplexers
         res = detect_all_multiplexers(self._state.frames_df)
         if not res:
             QMessageBox.information(self, "Multiplexers",
@@ -838,7 +981,7 @@ class MainWindow(QMainWindow):
             cols = [c.lower() for c in ref.columns]
             tcol = ref.columns[cols.index("timestamp")] if "timestamp" in cols else ref.columns[0]
             vcol = ref.columns[cols.index("value")] if "value" in cols else ref.columns[1]
-            from core.reference_calibrate import calibrate_against_reference
+            from canlab.core.reference_calibrate import calibrate_against_reference
             cand = calibrate_against_reference(
                 self._state.frames_df,
                 ref[tcol].to_numpy(), ref[vcol].to_numpy(), top_k=8)
@@ -855,12 +998,13 @@ class MainWindow(QMainWindow):
                                 "\n".join(lines))
 
     def _toggle_arm(self, checked: bool):
-        from core.safety import set_armed
+        from canlab.core.safety import set_armed
         if checked:
             ok = QMessageBox.warning(
                 self, "Arm Bus Transmit",
-                "Arming enables injection, replay, fuzzing, and gateway forwarding "
-                "to write frames onto the connected bus.\n\n"
+                "Arming lets CanLab transmit on the connected bus — injection, "
+                "replay, fuzzing, gateway forwarding AND every diagnostic request "
+                "(UDS, OBD-II, XCP, DoIP). Nothing is sent while disarmed.\n\n"
                 "Only arm on an isolated bench setup — never on a vehicle you are "
                 "driving. Arm transmit now?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -870,9 +1014,13 @@ class MainWindow(QMainWindow):
                 self._act_arm.setChecked(False)   # reverts text via toggled
                 return
         set_armed(checked)
-        self._act_arm.setText("ARM TX: ON" if checked else "ARM TX: OFF")
+        self._set_pill(self._act_arm, checked, "ARM TX", COLORS["error"],
+                       "Bus transmit is ARMED: every send is live. Click to disarm (Ctrl+E)."
+                       if checked else
+                       "Bus transmit is disarmed: nothing can be sent. Click to arm (Ctrl+E).")
         self.statusBar().showMessage(
-            "Bus transmit ARMED" if checked else "Bus transmit disarmed", 3000
+            "Bus transmit ARMED — every send is live" if checked
+            else "Bus transmit disarmed — nothing can be sent", 3000
         )
 
     def _toggle_rest_api(self):
@@ -882,7 +1030,7 @@ class MainWindow(QMainWindow):
             self._stop_rest_api()
 
     def _start_rest_api(self):
-        from core.rest_api import RestAPIServer
+        from canlab.core.rest_api import RestAPIServer
         try:
             self._rest_api_server = RestAPIServer(
                 state_getter=get_state,
@@ -890,7 +1038,10 @@ class MainWindow(QMainWindow):
             )
             self._rest_api_server.start()
             self._state.rest_api_running = True
-            self._act_rest.setText(f"REST API: ON :{self._state.rest_api_port}")
+            self._set_pill(self._act_rest, True, f"REST :{self._state.rest_api_port}",
+                           COLORS["green"],
+                           f"REST API running on 127.0.0.1:{self._state.rest_api_port}. "
+                           "Click to stop it.")
             token = self._rest_api_server.token
             self.statusBar().showMessage(
                 f"REST API running on 127.0.0.1:{self._state.rest_api_port}", 4000
@@ -906,73 +1057,109 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "REST API", f"Could not start: {e}")
 
+    def _trim_capture(self):
+        """Cut the loaded capture down to a window, a set of IDs or one bus."""
+        from canlab.ui.trim_dialog import TrimDialog
+        df = self._state.frames_snapshot()
+        if df is None or df.empty:
+            QMessageBox.information(self, "Trim capture", "Open a capture first.")
+            return
+        dlg = TrimDialog(df, self)
+        if not dlg.exec():
+            return
+        kept = dlg.result_frames
+        if kept is None or kept.empty:
+            return
+        if dlg.replace_loaded:
+            self._state.load_frames(kept, f"{self._loaded_name or 'capture'} (trimmed)")
+            self.statusBar().showMessage(
+                f"Trimmed to {len(kept)} frames. Reopen the file to get the rest back.",
+                6000)
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save trimmed capture", "", "SavvyCAN CSV (*.csv)")
+        if not path:
+            return
+        if not path.lower().endswith(".csv"):
+            path += ".csv"
+        from canlab.cli import write_savvycan_csv
+        write_savvycan_csv(kept, path)
+        self.statusBar().showMessage(f"Wrote {len(kept)} frames to {path}", 5000)
+
+    # ── MCP server ────────────────────────────────────────────────────────────
+
+    def _toggle_mcp(self):
+        if self._mcp_service is None:
+            self._start_mcp()
+        else:
+            self._stop_mcp()
+
+    def _start_mcp(self, quiet: bool = False):
+        from canlab.settings_dialog import SettingsDialog, settings
+        st = settings()
+        cfg = {"port": int(st.value(SettingsDialog.S_MCP_PORT, 8766, int)),
+               "allow_remote": st.value(SettingsDialog.S_MCP_REMOTE, False, bool),
+               "token": st.value(SettingsDialog.S_MCP_TOKEN, "", str)}
+        try:
+            from canlab.core.mcp_service import AppBackend, McpService
+            from canlab.core.mcp_tools import CanLabTools
+            from canlab.ui.gui_invoke import GuiInvoker
+        except ImportError as e:
+            QMessageBox.warning(self, "MCP", f"The MCP SDK is not installed ({e}).\n\n"
+                                "Install it with: pip install -e \".[mcp]\"")
+            return
+        if not hasattr(self, "_gui_invoker"):
+            self._gui_invoker = GuiInvoker(self)
+        tools = CanLabTools(AppBackend(self._state, self._gui_invoker))
+        svc = McpService(tools, host="0.0.0.0" if cfg["allow_remote"] else "127.0.0.1",
+                         port=cfg["port"], token=cfg["token"],
+                         allow_remote=cfg["allow_remote"])
+        try:
+            svc.start()
+        except Exception as e:
+            if quiet:
+                self.statusBar().showMessage(f"MCP server did not start: {e}", 8000)
+            else:
+                QMessageBox.critical(self, "MCP", f"Could not start the MCP server on port "
+                                     f"{cfg['port']}:\n{e}")
+            return
+        self._mcp_service = svc
+        self._set_pill(self._act_mcp, True, f"MCP :{cfg['port']}", COLORS["green"],
+                       f"MCP server running at {svc.url}. Settings > MCP shows what to "
+                       "paste into Claude Code, Claude Desktop, Codex or ChatGPT.")
+        self.statusBar().showMessage(
+            f"MCP server at {svc.url}. Settings > MCP shows what to paste into "
+            "Claude Code, Claude Desktop, Codex or ChatGPT.", 8000)
+
+    def _stop_mcp(self):
+        if self._mcp_service is not None:
+            self._mcp_service.stop()
+            self._mcp_service = None
+        self._set_pill(self._act_mcp, False, "MCP", COLORS["green"],
+                       "MCP server is stopped. Click to let an assistant "
+                       "(Claude, ChatGPT, Codex) work on this capture.")
+
+    def _open_mcp_settings(self):
+        self._open_settings(tab="MCP")
+
     def _stop_rest_api(self):
         if self._rest_api_server:
             self._rest_api_server.stop()
             self._rest_api_server = None
         self._state.rest_api_running = False
-        self._act_rest.setText("REST API: OFF")
+        self._set_pill(self._act_rest, False, "REST", COLORS["green"],
+                       "REST API server is stopped. Click to start it.")
 
     # ── Plugins ───────────────────────────────────────────────────────────────
 
     def _load_plugins(self):
-        """Discover plugins and activate only user-approved ones.
-
-        Plugins run with full app privileges, so we never auto-execute an
-        unseen or edited plugin. Approval is trust-on-first-use, keyed by the
-        file's SHA-256 and persisted in QSettings; editing a plugin re-prompts.
-        """
-        from core.plugin_loader import discover_plugins, activate_plugins
+        from canlab.core.plugin_loader import discover_plugins, activate_plugins
         self._plugins = discover_plugins()
-        if not self._plugins:
-            return
-
-        settings = QSettings("CanLab", "CanLab")
-        approved = set(settings.value("approved_plugins", [], type=list) or [])
-
-        pending = [p for p in self._plugins
-                   if p.get("fingerprint")
-                   and f"{p['path']}::{p['fingerprint']}" not in approved]
-        if pending:
-            listing = "\n".join(f"  • {p['name']} v{p['version']}  ({p['path']})"
-                                for p in pending)
-            reply = QMessageBox.question(
-                self, "Approve plugins?",
-                "CanLab found plugin(s) that will run with full app "
-                "privileges:\n\n" + listing +
-                "\n\nOnly approve plugins you trust. Load them now?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if reply == QMessageBox.StandardButton.Yes:
-                for p in pending:
-                    approved.add(f"{p['path']}::{p['fingerprint']}")
-                settings.setValue("approved_plugins", sorted(approved))
-            else:
-                # Leave unapproved plugins discovered-but-disabled.
-                for p in pending:
-                    p["enabled"] = False
-
-        to_run = [p for p in self._plugins if p.get("enabled")]
-        activated = activate_plugins(to_run, self)
+        activated = activate_plugins(self._plugins, self)
         if activated:
             self.statusBar().showMessage(
                 f"Plugins loaded: {', '.join(activated)}", 5000
             )
-
-    def _show_plugins_menu(self):
-        from core.plugin_loader import discover_plugins
-        self._plugins = discover_plugins()
-        menu = QMenu(self)
-        if not self._plugins:
-            menu.addAction("No plugins found  (~/.canlab/plugins/)")
-        else:
-            for p in self._plugins:
-                status = "✓" if p.get("enabled") else "✗"
-                err    = f"  [{p.get('error','')}]" if p.get("error") else ""
-                a = menu.addAction(f"{status} {p['name']} v{p['version']}{err}")
-                a.setEnabled(False)
-        menu.exec(self.cursor().pos())
 
     # ── Bus load status bar ───────────────────────────────────────────────────
 
@@ -1003,11 +1190,12 @@ class MainWindow(QMainWindow):
     def _open_gateway(self):
         self.tabs.setCurrentIndex(14)   # GATEWAY tab
 
-    def _open_settings(self):
+    def _open_settings(self, tab: str = ""):
         dlg = SettingsDialog(self)
+        if tab:
+            dlg.show_tab(tab)
         if dlg.exec():
             self._api_key      = dlg.get_api_key()
-            self._gh_token     = dlg.get_gh_token()
             self._can_settings = dlg.get_can_settings()
             self._state.rest_api_port = dlg.get_rest_api_port()
             self.ai_tab.set_api_key(self._api_key)
@@ -1016,11 +1204,14 @@ class MainWindow(QMainWindow):
                 model=dlg.get_ai_model(),
                 groq_key=dlg.get_groq_key(),
                 api_key=self._api_key,
+                openai_key=dlg.get_openai_key(),
             )
-            gh_url = dlg.get_github_url()
-            if gh_url and not self.gh_url_edit.text().strip():
-                self.gh_url_edit.setText(gh_url)
             self._multibus_config = dlg.get_multibus_config()
+            self._refresh_adapter_combo()
+            if self._mcp_service is not None:
+                # The port or token may have changed; the assistant reconnects.
+                self._stop_mcp()
+                self._start_mcp(quiet=True)
 
     def _open_rlog(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -1040,9 +1231,11 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            from core.dbc_manager import export_opendbc
-            from core.openpilot_export import HYUNDAI_MSG_META
-            dbc_str = export_opendbc(self._state.dbc_signals, HYUNDAI_MSG_META)
+            from canlab.core.dbc_manager import export_opendbc
+            from canlab.core.vehicle_profile import active_profile, message_meta
+            ids = {s.get("message_id", "") for s in self._state.dbc_signals}
+            meta = message_meta(active_profile(self._state), ids)
+            dbc_str = export_opendbc(self._state.dbc_signals, meta)
             with open(path, "w") as f:
                 f.write(dbc_str)
             self.statusBar().showMessage(f"openpilot DBC exported: {path}", 5000)
@@ -1059,7 +1252,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            from core.lua_exporter import signals_to_lua_dissector
+            from canlab.core.lua_exporter import signals_to_lua_dissector
             lua_str = signals_to_lua_dissector(self._state.dbc_signals)
             with open(path, "w") as f:
                 f.write(lua_str)
@@ -1075,29 +1268,18 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            from core.can_matrix_parser import parse_can_matrix
-            from core.dbc_manager import build_db_from_signals
+            from canlab.core.can_matrix_parser import parse_can_matrix
+            from canlab.core.dbc_manager import get_db
             sigs = parse_can_matrix(path)
             for sig in sigs:
                 self._state.add_dbc_signal(sig)
-            build_db_from_signals(self._state.dbc_signals)
+            get_db(self._state)
             self.statusBar().showMessage(
                 f"CAN Matrix: imported {len(sigs)} signals from {os.path.basename(path)}", 5000
             )
             self.tabs.setCurrentIndex(4)   # DBC Builder tab
         except Exception as e:
             QMessageBox.critical(self, "Import Error", str(e))
-
-    def _sync_community(self):
-        url = getattr(self._state, "community_profiles_url", "")
-        if not url:
-            QMessageBox.information(
-                self, "No URL",
-                "Set a Community Profiles URL in Settings → GITHUB."
-            )
-            return
-        self.tabs.setCurrentIndex(6)   # INTELLIGENCE tab
-        self.intelligence_tab._comm_fetch()
 
     def _analyze_id(self, hex_id: str):
         self.tabs.setCurrentIndex(3)
@@ -1115,9 +1297,6 @@ class MainWindow(QMainWindow):
 
     def _on_frames_loaded(self, count: int):
         self.lbl_total_frames.animate_to(count)
-        events = getattr(self, "_pending_events", [])
-        if events and not self._state.frames_df.empty:
-            self._correlate_with_events(self._state.frames_df, events)
 
     def _on_can_status(self, connected: bool):
         self._can_dot.set_active(connected)
@@ -1139,24 +1318,54 @@ class MainWindow(QMainWindow):
             self.lbl_total_frames.animate_to(total)
 
     def closeEvent(self, event):
-        # Stop and join every background thread before the window (and its C++
-        # objects) are torn down. A running QThread destroyed with its parent
-        # raises "QThread: Destroyed while thread is still running" and can crash
-        # on exit.
+        self._save_geometry()
+        from canlab.core.safety import set_armed
+        set_armed(False)                       # stops every registered TX worker
         self._stop_rest_api()
-        if self._live_worker:
-            self._live_worker.stop()
-            self._live_worker.wait(2000)
-            self._live_worker = None
-        if self._multibus_worker:
-            self._multibus_worker.stop_all()
-            self._multibus_worker = None
-        for w in getattr(self, "_log_workers", []):
-            w.wait(2000)
-        opendbc = getattr(self, "_opendbc_worker", None)
-        if opendbc is not None:
-            opendbc.wait(2000)
+        self._stop_mcp()
+        if self._hubs:
+            self._disconnect_can()
+        for i in range(self.tabs.count()):
+            tab = self.tabs.widget(i)
+            if hasattr(tab, "cleanup"):
+                try:
+                    tab.cleanup()
+                except Exception:
+                    pass
         event.accept()
+
+
+def _saved_can_settings() -> dict:
+    """The CAN interface the user last chose (these used to reset every launch)."""
+    from canlab.settings_dialog import SettingsDialog, settings
+    st = settings()
+    return {
+        "interface": st.value(SettingsDialog.S_INTERFACE, "socketcan", str),
+        "channel": st.value(SettingsDialog.S_CHANNEL, "can0", str),
+        "bitrate": int(st.value(SettingsDialog.S_BITRATE, 500000, int)),
+        "fd": st.value(SettingsDialog.S_FD, False, bool),
+        "data_bitrate": int(st.value(SettingsDialog.S_FD_BITRATE, 2000000, int)),
+        "extra": _json_dict(st.value(SettingsDialog.S_EXTRA, "{}", str)),
+        "name": st.value(SettingsDialog.S_ADAPTER_DEFAULT, "", str),
+    }
+
+
+def _json_dict(text) -> dict:
+    import json
+    try:
+        d = json.loads(text or "{}")
+    except (ValueError, TypeError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def _saved_multibus() -> list:
+    import json
+    from canlab.settings_dialog import SettingsDialog, settings
+    try:
+        return json.loads(settings().value(SettingsDialog.S_MULTIBUS, "[]", str))
+    except (ValueError, TypeError):
+        return []
 
 
 def _sep() -> QLabel:

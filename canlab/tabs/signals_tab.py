@@ -4,10 +4,11 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QComboBox, QHeaderView, QFileDialog,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QColor, QBrush, QFont
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.signal_analyzer import analyze_all
+from PyQt6.QtGui import QColor, QBrush
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+from canlab.core.canid import normalize_id
+from canlab.core.signal_analyzer import analyze_all
 
 BYTE_COLS = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
 
@@ -110,6 +111,11 @@ class SignalsTab(QWidget):
         self._worker.done.connect(self._on_analyze_done)
         self._worker.start()
 
+    def cleanup(self):
+        w = getattr(self, "_worker", None)
+        if w is not None and w.isRunning():
+            w.requestInterruption(); w.quit(); w.wait(2000)
+
     def _on_analyze_done(self, result_df):
         self._signals_df = result_df
         self._apply_filter(self._filter_type)
@@ -133,7 +139,6 @@ class SignalsTab(QWidget):
 
             dbc_status = ""
             can_id = str(row.get("ID", ""))
-            from core.canid import normalize_id
             nid = normalize_id(can_id)
             if any(normalize_id(s.get("message_id", "")) == nid
                    for s in self._state.dbc_signals):

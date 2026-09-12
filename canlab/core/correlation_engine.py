@@ -9,36 +9,45 @@ lag sweep (±50 ms) to catch feed-forward / delayed relationships.
 
 import numpy as np
 import pandas as pd
-from scipy.stats import pearsonr
 
 BYTE_COLS = [f"B{i}" for i in range(8)]
 LAG_OFFSETS_MS = [-50, -25, -12, 0, 12, 25, 50]
 
 
+_pearsonr = None
+
+
+def pearsonr(*args, **kwargs):
+    """Thin wrapper so importing this module does not pull in SciPy.
+
+    SciPy costs real time to import and nothing needs it until this analysis is
+    actually requested, so the handle is resolved on first call and cached.
+    """
+    global _pearsonr
+    if _pearsonr is None:
+        from scipy.stats import pearsonr as _impl
+        _pearsonr = _impl
+    return _pearsonr(*args, **kwargs)
+
+
 def _align(s1: np.ndarray, t1: np.ndarray,
            s2: np.ndarray, t2: np.ndarray,
            max_dt: float = 0.1) -> tuple[np.ndarray, np.ndarray]:
-    """Nearest-neighbour align s2 onto t1 timestamps (vectorized).
+    """Nearest-neighbour align s2 onto t1 timestamps.
 
-    For each t1[i], pick the s2 sample whose timestamp is closest, keeping it
-    only if within max_dt. Uses searchsorted instead of the old per-row Python
-    while-loop, which dominated runtime on large captures (called per byte-pair
-    over hundreds of ID pairs). Requires t2 sorted ascending — callers sort by
-    Timestamp before calling.
+    Vectorised: the per-sample Python loop this replaces ran once per byte pair
+    per lag offset, which is where a cross-ID sweep spent nearly all its time.
     """
     if len(t1) == 0 or len(t2) == 0:
-        return np.array([], dtype=float), np.array([], dtype=float)
-
+        return np.empty(0), np.empty(0)
     idx = np.searchsorted(t2, t1)
-    idx_left  = np.clip(idx - 1, 0, len(t2) - 1)
-    idx_right = np.clip(idx,     0, len(t2) - 1)
-    d_left  = np.abs(t2[idx_left]  - t1)
-    d_right = np.abs(t2[idx_right] - t1)
-    nearest = np.where(d_left <= d_right, idx_left, idx_right)
-    dist    = np.minimum(d_left, d_right)
-
-    keep = dist <= max_dt
-    return s1[keep].astype(float), s2[nearest[keep]].astype(float)
+    left = np.clip(idx - 1, 0, len(t2) - 1)
+    right = np.clip(idx, 0, len(t2) - 1)
+    take_left = np.abs(t2[left] - t1) <= np.abs(t2[right] - t1)
+    nearest = np.where(take_left, left, right)
+    close = np.abs(t2[nearest] - t1) <= max_dt
+    return (np.asarray(s1, dtype=float)[close],
+            np.asarray(s2, dtype=float)[nearest[close]])
 
 
 def _best_r_with_lag(s1: np.ndarray, t1: np.ndarray,

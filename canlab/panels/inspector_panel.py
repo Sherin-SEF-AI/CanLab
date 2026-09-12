@@ -1,14 +1,11 @@
-import numpy as np
 import pandas as pd
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QTextEdit, QPushButton,
-    QGridLayout, QFrame,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QBrush, QFont
-import pyqtgraph as pg
-from theme import COLORS, mono_font
-from core.state import get_state
+from PyQt6.QtGui import QColor
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
 
 BYTE_COLS = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
 
@@ -18,12 +15,20 @@ class InspectorPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(280)
+        # See id_panel: resizable, with a floor that keeps a hex row readable.
+        self.setMinimumWidth(210)
+        self.setMaximumWidth(480)
+        self.resize(280, self.height())
         self._state = get_state()
         self._current_id = ""
         self._build_ui()
         self._state.id_selected.connect(self._update_for_id)
-        self._state.frames_updated.connect(lambda: self._update_for_id(self._current_id))
+        # Re-analysing on every capture batch kept a worker-sized load on the GUI
+        # thread; once a second over a bounded window is plenty for a live view.
+        from canlab.ui.throttle import Coalescer
+        self._refresh_coalescer = Coalescer(
+            lambda: self._update_for_id(self._current_id), 1000, self)
+        self._state.frames_updated.connect(self._refresh_coalescer.poke)
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
@@ -88,7 +93,7 @@ class InspectorPanel(QWidget):
         if not hex_id:
             return
         self._current_id = hex_id
-        frames = self._state.get_frames_for_id(hex_id)
+        frames = self._state.get_frames_for_id(hex_id, tail=2000)
         self.lbl_id.setText(f"0x{hex_id}")
 
         if frames.empty:
@@ -133,7 +138,7 @@ class InspectorPanel(QWidget):
         self.stats_text.setPlainText("\n".join(stat_lines))
 
         # Type
-        from core.signal_analyzer import analyze_id
+        from canlab.core.signal_analyzer import analyze_id
         stats = analyze_id(frames)
         stype = stats.get("suspected_type", "UNKNOWN")
         type_colors = {
@@ -161,7 +166,7 @@ class _ByteHeatmap(QWidget):
         self.update()
 
     def paintEvent(self, event):
-        from PyQt6.QtGui import QPainter, QColor
+        from PyQt6.QtGui import QPainter
         painter = QPainter(self)
         w = self.width() / 8
         h = self.height()
@@ -173,7 +178,6 @@ class _ByteHeatmap(QWidget):
             color = QColor(r, g, b)
             painter.fillRect(int(i * w), 0, int(w) - 1, h, color)
             painter.setPen(QColor(COLORS["border"]))
-            from PyQt6.QtCore import QRect
             painter.drawText(
                 int(i * w), 0, int(w), h,
                 Qt.AlignmentFlag.AlignCenter,

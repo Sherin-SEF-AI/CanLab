@@ -21,7 +21,7 @@
 </header>
 <div class="wrap">
   <div class="layout">
-    <aside class="toc"><h2>On this page</h2><nav><a href="#rest-api">REST API</a><a href="#mcp-server">MCP server</a><a href="#plugins">Plugins</a><a href="#ai-engine">AI engine</a><a href="#hardware-backends">Hardware backends</a></nav></aside>
+    <aside class="toc"><h2>On this page</h2><nav><a href="#rest-api">REST API</a><a href="#mcp-server-claude-chatgpt-and-codex">MCP server: Claude, ChatGPT and Codex</a><a href="#plugins">Plugins</a><a href="#ai-engine">AI engine</a><a href="#hardware-adapters">Hardware adapters</a><a href="#trimming-a-capture">Trimming a capture</a></nav></aside>
     <main id="main">
 
 <h1>Integrations</h1>
@@ -47,12 +47,40 @@ POST /inject      # inject a frame: needs the token AND ARM TX
      alone will not transmit.</p>
 </div>
 
-<h2 id="mcp-server">MCP server</h2>
-<p><code>mcp_server.py</code> exposes the analysis as Model Context Protocol
-   tools, so an MCP client can drive the loop. Run it with
-   <code>python mcp_server.py</code> from the source root; it needs
-   <code>pip install mcp</code>.</p>
-<div class="table-scroll"><table><thead><tr><th>Tool</th><th>Does</th></tr></thead><tbody><tr><td><code>load_log</code></td><td>Load a capture from a path.</td></tr><tr><td><code>list_ids</code></td><td>Every arbitration ID with counts and rates.</td></tr><tr><td><code>byte_stats</code></td><td>Per-byte statistics for one ID.</td></tr><tr><td><code>detect_counters_checksums</code></td><td>Run the counter and checksum sweep.</td></tr><tr><td><code>correlate</code></td><td>Byte correlation between two IDs.</td></tr><tr><td><code>detect_multiplexers</code></td><td>Find multiplexed messages.</td></tr><tr><td><code>match_opendbc</code></td><td>Rank the capture against opendbc.</td></tr><tr><td><code>calibrate</code></td><td>Fit fields against a reference CSV.</td></tr></tbody></table></div>
+<h2 id="mcp-server-claude-chatgpt-and-codex">MCP server: Claude, ChatGPT and Codex</h2>
+<p>CanLab is a Model Context Protocol server. An assistant connected to it can
+   load a capture, list IDs, read byte statistics and raw frames, run every
+   detector, draft a DBC, define and remove signals, decode frames, annotate
+   the timeline and rank bytes against those annotations: 25 tools in
+   <code>canlab/core/mcp_tools.py</code>. <strong>No MCP tool transmits.</strong>
+   Putting frames on a wire stays behind ARM TX in the window, where a person
+   is watching.</p>
+<p>The same tools are served two ways.</p>
+<div class="table-scroll"><table><thead><tr><th>Where</th><th>How</th></tr></thead><tbody><tr><td><strong>Inside the window</strong></td><td>The <strong>MCP</strong> toolbar toggle, or Settings &rarr; MCP, starts a Streamable HTTP server on <code>127.0.0.1:8766/mcp</code> over the capture you have loaded or are recording right now. A signal the assistant adds appears in DBC BUILDER as one undoable step.</td></tr><tr><td><strong>Headless</strong></td><td><code>canlab-mcp</code> serves stdio and loads captures on request; <code>canlab-mcp --http</code> serves the same over HTTP with no window.</td></tr></tbody></table></div>
+<p>Settings &rarr; MCP writes the exact configuration for each client and copies
+   it to the clipboard. In short:</p>
+<pre><code># Claude Code, against the running window (or a headless --http server)
+claude mcp add --transport http canlab http://127.0.0.1:8766/mcp
+
+# Claude Desktop and Codex CLI launch stdio servers, so bridge to the window
+canlab-mcp --attach http://127.0.0.1:8766/mcp
+
+# Claude Desktop, headless, no window needed
+{"command": "/path/to/.venv/bin/canlab-mcp"}</code></pre>
+<p>ChatGPT connects from OpenAI's servers, so it cannot reach your loopback
+   address. Publish the server over HTTPS first, with
+   <code>cloudflared tunnel --url http://127.0.0.1:8766</code> or ngrok, tick
+   <em>allow connections from other machines</em>, and add
+   <code>https://&lt;tunnel-host&gt;/mcp</code> as a connector. The
+   <code>search</code> and <code>fetch</code> tools exist for ChatGPT's
+   connector contract; Developer mode exposes the rest.</p>
+<div class="warn">
+  <span class="callout-title">A tunnel has no authentication</span>
+  <p>The in-window server takes an optional bearer token, but ChatGPT's
+     connectors cannot send one. While a tunnel is up, anyone who learns the
+     URL can read the capture and edit the signal list. Nothing can transmit,
+     but close the tunnel when you are done.</p>
+</div>
 
 <h2 id="plugins">Plugins</h2>
 <p>Drop a <code>.py</code> file into <code>~/.canlab/plugins/</code>. It needs
@@ -78,9 +106,11 @@ def register(app):
 </div>
 
 <h2 id="ai-engine">AI engine</h2>
-<p>Three providers: <strong>Anthropic</strong>, <strong>Groq</strong> and
-   <strong>Ollama</strong>, the last running locally with no key and nothing
-   leaving the machine. Configure in <strong>Settings &rarr; API KEYS</strong>.</p>
+<p>Four providers: <strong>Anthropic</strong>, <strong>OpenAI</strong>,
+   <strong>Groq</strong> and <strong>Ollama</strong>, the last running locally
+   with no key and nothing leaving the machine. Configure in
+   <strong>Settings &rarr; API KEYS</strong>; the model field is editable, so a
+   model id newer than the built-in list can be typed in.</p>
 <p>What is sent, when you click Analyze on an ID, is that message's statistics:
    byte roles, message type and period, the checksum guess, similar IDs, and a
    sample of frames. Not your whole capture, and nothing at all until you
@@ -89,14 +119,35 @@ def register(app):
    reasons about measured facts rather than raw hex. Its answers are still
    suggestions; treat them the way you would treat the heuristics.</p>
 
-<h2 id="hardware-backends">Hardware backends</h2>
-<p>Anything <a href="https://python-can.readthedocs.io">python-can</a> supports
-   works. A comma.ai Panda is also supported directly through
+<h2 id="hardware-adapters">Hardware adapters</h2>
+<p><strong>Settings &rarr; CAN ADAPTERS</strong> keeps a list of named adapters
+   and the toolbar switches between them, so a bench with a PEAK on one port
+   and a CANable on another is two clicks rather than two retypings. Each
+   adapter is a backend, a channel, a bitrate, a CAN FD flag and whatever else
+   that backend needs, such as an slcan stick's serial baud rate or a
+   socketcand host.</p>
+<p><strong>Detect connected</strong> asks every python-can backend what it can
+   see, reads CAN network devices from sysfs, and recognises common USB sticks
+   by vendor and product id. <strong>Test</strong> opens the adapter and listens
+   for one second; it never transmits, and when opening fails it names the fix,
+   whether that is the <code>ip link</code> command, a missing pip package or
+   the dialout group.</p>
+<div class="table-scroll"><table><thead><tr><th>Backend</th><th>Notes</th></tr></thead><tbody><tr><td><code>socketcan</code></td><td>Linux. The kernel owns the bitrate, so bring the device up first. PEAK, Kvaser, candleLight and 8devices adapters all appear here.</td></tr><tr><td><code>gvret</code></td><td><strong>SavvyCAN's own hardware</strong>: Macchina M2 and A0, EVTV CANDue, ESP32RET. python-can ships no backend for it, so CanLab supplies one in <code>core/gvret.py</code> and registers it as an interface. Give it a serial port, or <code>&lt;ip&gt;:23</code> for a board on WiFi.</td></tr><tr><td><code>slcan</code></td><td>CANable with slcan firmware, USBtin, Lawicel.</td></tr><tr><td><code>gs_usb</code></td><td>candleLight over libusb, where there is no kernel driver.</td></tr><tr><td><code>pcan</code>, <code>kvaser</code>, <code>vector</code>, <code>ixxat</code></td><td>Vendor drivers, which come from the vendor.</td></tr><tr><td><code>virtual</code>, <code>udp_multicast</code></td><td>No hardware at all, for trying the application.</td></tr></tbody></table></div>
+<p><code>pip install canlab[adapters]</code> adds pyserial and gs_usb. A
+   comma.ai Panda is supported separately through
    <code>core/panda_backend.py</code>, presented as a python-can compatible bus
-   with the safety model selectable.</p>
-<p>The multi-bus configuration in <strong>Settings &rarr; MULTI-BUS</strong>
-   lets you capture from more than one interface at once, which is what you
-   want when a vehicle has separate powertrain and body buses.</p>
+   with the safety model selectable. The multi-bus configuration in
+   <strong>Settings &rarr; MULTI-BUS</strong> captures from more than one
+   interface at once, which is what you want when a vehicle has separate
+   powertrain and body buses.</p>
+
+<h2 id="trimming-a-capture">Trimming a capture</h2>
+<p><strong>Tools &rarr; Trim capture</strong> cuts the loaded capture down to a
+   time window, a frame or percentage range, a set of IDs or ID ranges, or one
+   bus, with a live count as you type. The result either replaces what is
+   loaded or is written to a file. Every analysis runs over whatever is loaded,
+   so trimming first makes the detectors faster and their output shorter.</p>
+
 
     </main>
   </div>

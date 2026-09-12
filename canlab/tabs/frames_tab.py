@@ -4,20 +4,24 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QComboBox, QPushButton, QCheckBox, QDialog,
     QTextEdit, QHeaderView,
 )
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor, QBrush, QFont
-from theme import COLORS, mono_font
-from core.state import get_state
+from PyQt6.QtCore import QTimer
+from PyQt6.QtGui import QColor, QBrush, QFontMetrics
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
 
 BYTE_COLS   = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
 ALL_COLUMNS = ["Timestamp", "ID", "Bus", "DLC"] + BYTE_COLS + ["Delta"]
-MAX_DISPLAY = 5000
+# Rows kept in the table. Rebuilding it costs about 0.1 ms per row, and at
+# 5000 rows a refresh took longer than the 300 ms coalescing interval, so
+# during live capture the GUI thread did nothing but rebuild the table. About
+# 45 rows are visible at a time; 1000 is ample scrollback.
+MAX_DISPLAY = 1000
 
 
 def _active_byte_cols(df) -> list:
     """Return B0..B7 normally; extend to B0..B{n-1} if CAN FD frames present."""
     try:
-        from core.canfd import columns_for_dataframe
+        from canlab.core.canfd import columns_for_dataframe
         return columns_for_dataframe(df)
     except Exception:
         return BYTE_COLS
@@ -101,10 +105,28 @@ class FramesTab(QWidget):
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setDefaultSectionSize(20)
         self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        # NOT ResizeToContents. That mode re-measures every row of a column
+        # each time a cell changes, so filling the table costs O(rows^2) and
+        # only while it is on screen -- during live capture the GUI thread sat
+        # inside one refresh for minutes. The columns are monospace and of
+        # known width, so size them once instead.
+        self.table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Interactive)
         self.table.setShowGrid(False)
         self.table.doubleClicked.connect(self._show_frame_detail)
         lay.addWidget(self.table)
+
+    def _size_columns(self, columns: list[str]) -> None:
+        """Width for each column from the font, once per column-set change."""
+        fm = QFontMetrics(mono_font())
+        pad = fm.horizontalAdvance("0") * 2 + 12
+        widths = {"Timestamp": fm.horizontalAdvance("0000.0000") + pad,
+                  "ID": fm.horizontalAdvance("1FFFFFFF") + pad,
+                  "Bus": fm.horizontalAdvance("Bus") + pad,
+                  "DLC": fm.horizontalAdvance("DLC") + pad,
+                  "Delta": fm.horizontalAdvance("0000.0ms") + pad}
+        for i, name in enumerate(columns):
+            self.table.setColumnWidth(i, widths.get(name, fm.horizontalAdvance("FF") + pad))
 
     def _on_freeze(self, frozen: bool):
         self._frozen = frozen
@@ -121,12 +143,15 @@ class FramesTab(QWidget):
     def _refresh(self):
         if self._frozen:
             return
-        df = self._state.frames_df
+        store = self._state.store
+        # Only the visible tail is materialised unless a filter needs the rest.
+        df = store.materialize() if self._filter_id or self._filter_bus else \
+            store.tail(MAX_DISPLAY)
         if df.empty:
             return
 
         # Update bus combo
-        buses = ["All"] + [str(b) for b in sorted(df["Bus"].unique())] if "Bus" in df.columns else ["All"]
+        buses = ["All"] + [str(b) for b in sorted(store.buses(), key=str)]
         cur = self.filter_bus.currentText()
         self.filter_bus.blockSignals(True)
         self.filter_bus.clear()
@@ -142,8 +167,10 @@ class FramesTab(QWidget):
         if self._filter_bus and self._filter_bus != "All":
             fdf = fdf[fdf["Bus"].astype(str) == self._filter_bus]
 
-        # Limit display
-        total = len(fdf)
+        # Limit display. Unfiltered, only the tail was materialised, so the
+        # real total is the store's -- counting the rows we happen to hold
+        # would report "1000 / 1000" for a capture of sixty thousand.
+        total = len(fdf) if (self._filter_id or self._filter_bus) else len(store)
         fdf = fdf.tail(MAX_DISPLAY)
         self.lbl_count.setText(f"{len(fdf)} / {total} frames")
 
@@ -153,10 +180,20 @@ class FramesTab(QWidget):
         if self.table.columnCount() != len(all_cols):
             self.table.setColumnCount(len(all_cols))
             self.table.setHorizontalHeaderLabels(all_cols)
+            self._size_columns(all_cols)
 
+        # One repaint for the whole rebuild rather than one per cell.
+        self.table.setUpdatesEnabled(False)
+        try:
+            self._fill_rows(fdf, active_byte_cols)
+        finally:
+            self.table.setUpdatesEnabled(True)
+
+        if self._follow and self.table.rowCount() > 0:
+            self.table.scrollToBottom()
+
+    def _fill_rows(self, fdf, active_byte_cols) -> None:
         self.table.setRowCount(len(fdf))
-        prev_bytes: dict = {}
-
         for row_idx, (_, row) in enumerate(fdf.iterrows()):
             cid = str(row.get("ID", ""))
             vals = [
@@ -196,9 +233,6 @@ class FramesTab(QWidget):
                 self.table.setItem(row_idx, col_idx, item)
 
             self._last_bytes[cid] = byte_vals
-
-        if self._follow and self.table.rowCount() > 0:
-            self.table.scrollToBottom()
 
     def _show_frame_detail(self, index):
         row = index.row()

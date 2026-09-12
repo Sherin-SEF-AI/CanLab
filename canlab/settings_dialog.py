@@ -1,18 +1,22 @@
+import json
+import logging
+
 import keyring
-from pathlib import Path
+from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QLabel, QLineEdit, QPushButton, QComboBox,
-    QGroupBox, QGridLayout, QFileDialog, QMessageBox,
-    QSpinBox, QListWidget, QListWidgetItem, QCheckBox,
+    QGroupBox, QGridLayout, QSpinBox, QListWidget, QCheckBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QRadioButton, QButtonGroup,
 )
-from theme import COLORS, mono_font
+from canlab.theme import mono_font
+
+log = logging.getLogger(__name__)
 
 KEYRING_SERVICE    = "canlab"
 KEYRING_API_KEY    = "anthropic_api_key"
-KEYRING_GH_TOKEN   = "github_token"
 KEYRING_GROQ_KEY   = "groq_api_key"
+KEYRING_OPENAI_KEY = "openai_api_key"
 KEYRING_AI_PROVIDER = "ai_provider"
 KEYRING_AI_MODEL    = "ai_model"
 
@@ -21,14 +25,16 @@ AI_MODELS = {
     "Anthropic": [
         "claude-sonnet-5",
         "claude-opus-4-8",
-        "claude-haiku-4-5-20251001",
+        "claude-haiku-4-5",
+    ],
+    "OpenAI": [
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-4.1",
     ],
     "Groq": [
         "llama-3.3-70b-versatile",
-        "llama-3.1-70b-versatile",
         "llama-3.1-8b-instant",
-        "mixtral-8x7b-32768",
-        "gemma2-9b-it",
     ],
     "Ollama": [
         "llama3.1",
@@ -40,8 +46,29 @@ AI_MODELS = {
 }
 
 
+def settings() -> QSettings:
+    """Everything that is not a secret lives here, so it survives a restart.
+
+    Only API keys go to the OS keyring; interface, bitrate, REST port, vehicle
+    profile and the plugin allow-list used to be held in memory and were lost
+    on every exit.
+    """
+    return QSettings("CanLab", "CanLab")
+
+
+def _keyring_set(key: str, value: str) -> bool:
+    """Store a secret, tolerating a missing or locked keyring backend."""
+    try:
+        keyring.set_password(KEYRING_SERVICE, key, value)
+        return True
+    except Exception:
+        log.warning("keyring unavailable; %s kept for this session only", key,
+                    exc_info=True)
+        return False
+
+
 def save_api_key(key: str):
-    keyring.set_password(KEYRING_SERVICE, KEYRING_API_KEY, key)
+    _keyring_set(KEYRING_API_KEY, key)
 
 
 def load_api_key() -> str:
@@ -51,19 +78,8 @@ def load_api_key() -> str:
         return ""
 
 
-def save_gh_token(token: str):
-    keyring.set_password(KEYRING_SERVICE, KEYRING_GH_TOKEN, token)
-
-
-def load_gh_token() -> str:
-    try:
-        return keyring.get_password(KEYRING_SERVICE, KEYRING_GH_TOKEN) or ""
-    except Exception:
-        return ""
-
-
 def save_groq_key(key: str):
-    keyring.set_password(KEYRING_SERVICE, KEYRING_GROQ_KEY, key)
+    _keyring_set(KEYRING_GROQ_KEY, key)
 
 
 def load_groq_key() -> str:
@@ -73,8 +89,19 @@ def load_groq_key() -> str:
         return ""
 
 
+def save_openai_key(key: str):
+    _keyring_set(KEYRING_OPENAI_KEY, key)
+
+
+def load_openai_key() -> str:
+    try:
+        return keyring.get_password(KEYRING_SERVICE, KEYRING_OPENAI_KEY) or ""
+    except Exception:
+        return ""
+
+
 def save_ai_provider(provider: str):
-    keyring.set_password(KEYRING_SERVICE, KEYRING_AI_PROVIDER, provider)
+    _keyring_set(KEYRING_AI_PROVIDER, provider)
 
 
 def load_ai_provider() -> str:
@@ -85,7 +112,7 @@ def load_ai_provider() -> str:
 
 
 def save_ai_model(model: str):
-    keyring.set_password(KEYRING_SERVICE, KEYRING_AI_MODEL, model)
+    _keyring_set(KEYRING_AI_MODEL, model)
 
 
 def load_ai_model() -> str:
@@ -103,9 +130,16 @@ class SettingsDialog(QDialog):
         self._build_ui()
         self._load_values()
 
+    def show_tab(self, title: str) -> None:
+        for i in range(self._tabs.count()):
+            if self._tabs.tabText(i) == title:
+                self._tabs.setCurrentIndex(i)
+                return
+
     def _build_ui(self):
         lay = QVBoxLayout(self)
         tabs = QTabWidget()
+        self._tabs = tabs
 
         # ── API Keys ──────────────────────────────────────────────────────────
         api_tab = QWidget()
@@ -148,6 +182,26 @@ class SettingsDialog(QDialog):
         groq_g_lay.addWidget(hint_groq, 1, 0, 1, 3)
         api_lay.addWidget(groq_grp)
 
+        # OpenAI (the ChatGPT models)
+        oai_grp = QGroupBox("OpenAI API")
+        oai_g_lay = QGridLayout(oai_grp)
+        oai_g_lay.addWidget(QLabel("API Key:"), 0, 0)
+        self.openai_key_edit = QLineEdit()
+        self.openai_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.openai_key_edit.setPlaceholderText("sk-…")
+        oai_g_lay.addWidget(self.openai_key_edit, 0, 1)
+        btn_show_oai = QPushButton("Show")
+        btn_show_oai.setCheckable(True)
+        btn_show_oai.toggled.connect(lambda v: self.openai_key_edit.setEchoMode(
+            QLineEdit.EchoMode.Normal if v else QLineEdit.EchoMode.Password))
+        btn_show_oai.setFixedWidth(60)
+        oai_g_lay.addWidget(btn_show_oai, 0, 2)
+        hint_oai = QLabel("Get your key at platform.openai.com. Any model id can be typed below.")
+        hint_oai.setFont(mono_font(8))
+        hint_oai.setObjectName("label_dim")
+        oai_g_lay.addWidget(hint_oai, 1, 0, 1, 3)
+        api_lay.addWidget(oai_grp)
+
         # Active provider + model
         model_grp = QGroupBox("Active AI Provider")
         model_g_lay = QGridLayout(model_grp)
@@ -158,10 +212,11 @@ class SettingsDialog(QDialog):
         model_g_lay.addWidget(self.provider_combo, 0, 1)
         model_g_lay.addWidget(QLabel("Model:"), 1, 0)
         self.model_combo = QComboBox()
+        self.model_combo.setEditable(True)      # newer model ids than the list knows
         self.model_combo.setFont(mono_font(9))
         model_g_lay.addWidget(self.model_combo, 1, 1)
         hint_model = QLabel(
-            "Groq default: llama-3.3-70b-versatile  ·  Anthropic default: claude-sonnet-5"
+            "Defaults: Anthropic claude-sonnet-5, OpenAI gpt-5, Groq llama-3.3-70b-versatile"
         )
         hint_model.setFont(mono_font(7))
         hint_model.setObjectName("label_dim")
@@ -176,100 +231,68 @@ class SettingsDialog(QDialog):
         api_lay.addStretch()
         tabs.addTab(api_tab, "API KEYS")
 
-        # ── CAN Interface ─────────────────────────────────────────────────────
+        # ── CAN adapters ──────────────────────────────────────────────────────
         can_tab = QWidget()
         can_lay = QVBoxLayout(can_tab)
-        can_grp = QGroupBox("Default CAN Interface")
-        can_g_lay = QGridLayout(can_grp)
-        can_g_lay.addWidget(QLabel("Interface:"), 0, 0)
-        self.iface_combo = QComboBox()
-        self.iface_combo.addItems(["socketcan", "pcan", "kvaser", "virtual"])
-        can_g_lay.addWidget(self.iface_combo, 0, 1)
-        can_g_lay.addWidget(QLabel("Channel:"), 1, 0)
-        self.channel_edit = QLineEdit("can0")
-        can_g_lay.addWidget(self.channel_edit, 1, 1)
-        can_g_lay.addWidget(QLabel("Bitrate:"), 2, 0)
-        self.bitrate_combo = QComboBox()
-        self.bitrate_combo.addItems(["500000", "250000", "1000000"])
-        can_g_lay.addWidget(self.bitrate_combo, 2, 1)
-        can_g_lay.addWidget(QLabel("Enable CAN FD:"), 3, 0)
-        self.chk_canfd = QCheckBox("CAN FD (up to 64 bytes, 8 Mbps)")
-        can_g_lay.addWidget(self.chk_canfd, 3, 1)
-        can_g_lay.addWidget(QLabel("FD Data Bitrate:"), 4, 0)
-        self.fd_bitrate_combo = QComboBox()
-        self.fd_bitrate_combo.addItems(["2000000", "4000000", "8000000"])
-        can_g_lay.addWidget(self.fd_bitrate_combo, 4, 1)
-        can_lay.addWidget(can_grp)
+        can_lay.addWidget(QLabel(
+            "Hardware adapters the application can connect to. The default one is "
+            "what Connect CAN opens; the toolbar switches between them. Test opens "
+            "the adapter and listens for a second, it never transmits.",
+            font=mono_font(8), wordWrap=True))
+        self.adapter_table = QTableWidget(0, 5)
+        self.adapter_table.setHorizontalHeaderLabels(["Name", "Backend", "Channel", "Bitrate", "Default"])
+        self.adapter_table.setFont(mono_font())
+        self.adapter_table.verticalHeader().setDefaultSectionSize(22)
+        self.adapter_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.adapter_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.adapter_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.adapter_table.doubleClicked.connect(lambda *_: self._adapter_edit())
+        can_lay.addWidget(self.adapter_table)
+        row1 = QHBoxLayout()
+        for text, slot in (("Detect connected…", self._adapter_detect),
+                           ("Add…", self._adapter_add), ("Edit…", self._adapter_edit),
+                           ("Remove", self._adapter_remove), ("Test", self._adapter_test),
+                           ("Set as default", self._adapter_set_default)):
+            b = QPushButton(text)
+            b.clicked.connect(slot)
+            row1.addWidget(b)
+        row1.addStretch()
+        can_lay.addLayout(row1)
+        self.lbl_adapter_test = QLabel("")
+        self.lbl_adapter_test.setFont(mono_font(8))
+        self.lbl_adapter_test.setWordWrap(True)
+        can_lay.addWidget(self.lbl_adapter_test)
         can_lay.addStretch()
-        tabs.addTab(can_tab, "CAN INTERFACE")
+        tabs.addTab(can_tab, "CAN ADAPTERS")
+        self._adapters: list = []
+        self._adapter_default: str = ""
+        self._adapter_worker = None
 
-        # ── GitHub ────────────────────────────────────────────────────────────
-        gh_tab = QWidget()
-        gh_lay = QVBoxLayout(gh_tab)
-        gh_grp = QGroupBox("GitHub Repository")
-        gh_g_lay = QGridLayout(gh_grp)
-        gh_g_lay.addWidget(QLabel("Default Repo URL:"), 0, 0)
-        self.gh_url_edit = QLineEdit()
-        self.gh_url_edit.setPlaceholderText("https://github.com/owner/repo")
-        gh_g_lay.addWidget(self.gh_url_edit, 0, 1)
-        gh_lay.addWidget(gh_grp)
-        token_grp = QGroupBox("GitHub Token")
-        token_g_lay = QGridLayout(token_grp)
-        token_g_lay.addWidget(QLabel("Token:"), 0, 0)
-        self.gh_token_edit = QLineEdit()
-        self.gh_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.gh_token_edit.setPlaceholderText("ghp_… (optional)")
-        token_g_lay.addWidget(self.gh_token_edit, 0, 1)
-        btn_show_tok = QPushButton("Show")
-        btn_show_tok.setCheckable(True)
-        btn_show_tok.toggled.connect(lambda v: self.gh_token_edit.setEchoMode(
-            QLineEdit.EchoMode.Normal if v else QLineEdit.EchoMode.Password
-        ))
-        token_g_lay.addWidget(btn_show_tok, 0, 2)
-        hint = QLabel(
-            "A token raises GitHub API rate limit from 60 to 5000 req/hr."
+        # ── Vehicle profile ───────────────────────────────────────────────────
+        veh_tab = QWidget()
+        veh_lay = QVBoxLayout(veh_tab)
+        veh_grp = QGroupBox("Vehicle Profile")
+        veh_g = QGridLayout(veh_grp)
+        veh_g.addWidget(QLabel("Profile:"), 0, 0)
+        self.profile_combo = QComboBox()
+        from canlab.core.vehicle_profile import list_profiles
+        for pid, pname in list_profiles():
+            self.profile_combo.addItem(pname, pid)
+        veh_g.addWidget(self.profile_combo, 0, 1)
+        hint_veh = QLabel(
+            "Sets where injected frames carry their rolling counter and checksum, "
+            "which algorithm computes the checksum, the metadata attached to an "
+            "openpilot export, and the framing hint given to the AI.\n\n"
+            "'Generic' assumes nothing: no counter and no checksum are added. "
+            "A profile describes framing only — it never identifies your vehicle."
         )
-        hint.setFont(mono_font(8))
-        hint.setObjectName("label_dim")
-        hint.setWordWrap(True)
-        token_g_lay.addWidget(hint, 1, 0, 1, 3)
-        gh_lay.addWidget(token_grp)
-
-        comm_grp = QGroupBox("Community Profiles")
-        comm_g_lay = QGridLayout(comm_grp)
-        comm_g_lay.addWidget(QLabel("Profiles URL:"), 0, 0)
-        self.community_url_edit = QLineEdit()
-        self.community_url_edit.setPlaceholderText(
-            "https://raw.githubusercontent.com/.../profiles.json"
-        )
-        comm_g_lay.addWidget(self.community_url_edit, 0, 1)
-        hint_comm = QLabel("JSON array of vehicle profiles. Leave blank to use built-in defaults.")
-        hint_comm.setFont(mono_font(8))
-        hint_comm.setObjectName("label_dim")
-        hint_comm.setWordWrap(True)
-        comm_g_lay.addWidget(hint_comm, 1, 0, 1, 2)
-        gh_lay.addWidget(comm_grp)
-        gh_lay.addStretch()
-        tabs.addTab(gh_tab, "GITHUB")
-
-        # ── Cache ─────────────────────────────────────────────────────────────
-        cache_tab = QWidget()
-        cache_lay = QVBoxLayout(cache_tab)
-        cache_grp = QGroupBox("Cache")
-        cache_g_lay = QGridLayout(cache_grp)
-        default_cache = str(Path.home() / ".canlab" / "cache")
-        cache_g_lay.addWidget(QLabel("Cache Dir:"), 0, 0)
-        self.cache_dir_edit = QLineEdit(default_cache)
-        cache_g_lay.addWidget(self.cache_dir_edit, 0, 1)
-        btn_browse = QPushButton("Browse")
-        btn_browse.clicked.connect(self._browse_cache)
-        cache_g_lay.addWidget(btn_browse, 0, 2)
-        btn_clear = QPushButton("Clear Cache")
-        btn_clear.clicked.connect(self._clear_cache)
-        cache_g_lay.addWidget(btn_clear, 1, 1)
-        cache_lay.addWidget(cache_grp)
-        cache_lay.addStretch()
-        tabs.addTab(cache_tab, "CACHE")
+        hint_veh.setFont(mono_font(8))
+        hint_veh.setObjectName("label_dim")
+        hint_veh.setWordWrap(True)
+        veh_g.addWidget(hint_veh, 1, 0, 1, 2)
+        veh_lay.addWidget(veh_grp)
+        veh_lay.addStretch()
+        tabs.addTab(veh_tab, "VEHICLE")
 
         # ── REST API ──────────────────────────────────────────────────────────
         rest_tab = QWidget()
@@ -295,6 +318,68 @@ class SettingsDialog(QDialog):
         rest_lay.addWidget(rest_grp)
         rest_lay.addStretch()
         tabs.addTab(rest_tab, "REST API")
+
+        # ── MCP server (assistants: Claude, ChatGPT, Codex) ───────────────────
+        mcp_tab = QWidget()
+        mcp_lay = QVBoxLayout(mcp_tab)
+        mcp_grp = QGroupBox("MCP Server (in the application)")
+        mcp_g = QGridLayout(mcp_grp)
+        mcp_g.addWidget(QLabel("Port:"), 0, 0)
+        self.mcp_port_spin = QSpinBox()
+        self.mcp_port_spin.setRange(1024, 65535)
+        self.mcp_port_spin.setValue(8766)
+        mcp_g.addWidget(self.mcp_port_spin, 0, 1)
+        self.chk_mcp_autostart = QCheckBox("Start the MCP server when CanLab opens")
+        mcp_g.addWidget(self.chk_mcp_autostart, 1, 0, 1, 3)
+        self.chk_mcp_remote = QCheckBox("Allow connections from other machines "
+                                        "(needed behind a tunnel, for ChatGPT)")
+        mcp_g.addWidget(self.chk_mcp_remote, 2, 0, 1, 3)
+        mcp_g.addWidget(QLabel("Bearer token:"), 3, 0)
+        self.mcp_token_edit = QLineEdit()
+        self.mcp_token_edit.setPlaceholderText("empty = no token (loopback only is still safe)")
+        self.mcp_token_edit.setFont(mono_font(8))
+        mcp_g.addWidget(self.mcp_token_edit, 3, 1)
+        btn_tok = QPushButton("Generate")
+        btn_tok.setFixedWidth(80)
+        btn_tok.clicked.connect(self._mcp_generate_token)
+        mcp_g.addWidget(btn_tok, 3, 2)
+        hint_mcp = QLabel(
+            "An assistant connected here works on the capture you have loaded or "
+            "are recording, and signals it defines appear in the DBC Builder. "
+            "No MCP tool transmits. Start and stop it from the MCP toolbar toggle."
+        )
+        hint_mcp.setFont(mono_font(8))
+        hint_mcp.setObjectName("label_dim")
+        hint_mcp.setWordWrap(True)
+        mcp_g.addWidget(hint_mcp, 4, 0, 1, 3)
+        mcp_lay.addWidget(mcp_grp)
+
+        client_grp = QGroupBox("Connect an assistant")
+        cg = QVBoxLayout(client_grp)
+        self.mcp_client_combo = QComboBox()
+        self.mcp_client_combo.addItem("Claude Code (command)", "claude_code")
+        self.mcp_client_combo.addItem("Claude Desktop (claude_desktop_config.json)", "claude_desktop")
+        self.mcp_client_combo.addItem("Codex CLI (~/.codex/config.toml)", "codex")
+        self.mcp_client_combo.addItem("ChatGPT (connector)", "chatgpt")
+        self.mcp_client_combo.setFont(mono_font(9))
+        cg.addWidget(self.mcp_client_combo)
+        from PyQt6.QtWidgets import QPlainTextEdit
+        self.mcp_snippet = QPlainTextEdit()
+        self.mcp_snippet.setReadOnly(True)
+        self.mcp_snippet.setFont(mono_font(8))
+        self.mcp_snippet.setMinimumHeight(120)
+        cg.addWidget(self.mcp_snippet)
+        btn_copy = QPushButton("Copy to clipboard")
+        btn_copy.clicked.connect(self._mcp_copy_snippet)
+        cg.addWidget(btn_copy)
+        mcp_lay.addWidget(client_grp)
+        mcp_lay.addStretch()
+        tabs.addTab(mcp_tab, "MCP")
+        for w in (self.mcp_port_spin, ):
+            w.valueChanged.connect(self._mcp_refresh_snippet)
+        self.mcp_token_edit.textChanged.connect(self._mcp_refresh_snippet)
+        self.mcp_client_combo.currentIndexChanged.connect(self._mcp_refresh_snippet)
+        self._mcp_refresh_snippet()
 
         # ── Backend ───────────────────────────────────────────────────────────
         backend_tab = QWidget()
@@ -356,10 +441,14 @@ class SettingsDialog(QDialog):
         # ── Plugins ───────────────────────────────────────────────────────────
         plug_tab = QWidget()
         plug_lay = QVBoxLayout(plug_tab)
-        plug_lay.addWidget(QLabel("Plugins are loaded from  ~/.canlab/plugins/*.py", font=mono_font(8)))
+        plug_lay.addWidget(QLabel(
+            "Plugins are loaded from ~/.canlab/plugins/*.py. Tick one to let it "
+            "run — an enabled plugin executes with full application privileges.",
+            font=mono_font(8), wordWrap=True))
         self.plugins_list = QListWidget()
         self.plugins_list.setFont(mono_font())
         plug_lay.addWidget(self.plugins_list)
+        self.plugins_list.itemChanged.connect(self._on_plugin_toggled)
         btn_refresh = QPushButton("Refresh Plugin List")
         btn_refresh.clicked.connect(self._refresh_plugins)
         plug_lay.addWidget(btn_refresh)
@@ -379,16 +468,136 @@ class SettingsDialog(QDialog):
         btn_row.addWidget(btn_cancel)
         lay.addLayout(btn_row)
 
+    def _mcp_generate_token(self):
+        import secrets
+        self.mcp_token_edit.setText(secrets.token_urlsafe(24))
+
+    def _mcp_refresh_snippet(self, *_):
+        from canlab.core.mcp_service import client_snippets
+        from canlab.mcp_server import MCP_PATH
+        url = f"http://127.0.0.1:{self.mcp_port_spin.value()}{MCP_PATH}"
+        key = self.mcp_client_combo.currentData()
+        self.mcp_snippet.setPlainText(
+            client_snippets(url, self.mcp_token_edit.text().strip()).get(key, ""))
+
+    def _mcp_copy_snippet(self):
+        from PyQt6.QtWidgets import QApplication
+        QApplication.clipboard().setText(self.mcp_snippet.toPlainText())
+
+    def get_mcp_config(self) -> dict:
+        return {"port": self.mcp_port_spin.value(),
+                "autostart": self.chk_mcp_autostart.isChecked(),
+                "allow_remote": self.chk_mcp_remote.isChecked(),
+                "token": self.mcp_token_edit.text().strip()}
+
+    def get_openai_key(self) -> str:
+        return self.openai_key_edit.text().strip()
+
     def _on_provider_changed(self, provider: str):
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         self.model_combo.addItems(AI_MODELS.get(provider, []))
         self.model_combo.blockSignals(False)
 
+    # Settings keys (QSettings), kept in one place so save/load cannot drift.
+    S_INTERFACE = "can/interface"
+    S_CHANNEL = "can/channel"
+    S_BITRATE = "can/bitrate"
+    S_FD = "can/fd"
+    S_FD_BITRATE = "can/data_bitrate"
+    S_MULTIBUS = "can/multibus"
+    S_EXTRA = "can/extra"                 # backend-specific kwargs of the default adapter
+    S_ADAPTERS = "can/adapters"           # every saved adapter, JSON
+    S_ADAPTER_DEFAULT = "can/adapter_default"
+    S_REST_PORT = "rest/port"
+    S_MCP_PORT = "mcp/port"
+    S_MCP_AUTOSTART = "mcp/autostart"
+    S_MCP_REMOTE = "mcp/allow_remote"
+    S_MCP_TOKEN = "mcp/token"
+    S_PROFILE = "vehicle/profile"
+    S_BACKEND = "backend/kind"
+    S_PANDA_SAFETY = "backend/panda_safety"
+    S_FRAME_CAP = "frames/cap"
+
+    def _load_persisted(self):
+        st = settings()
+        from canlab.core.adapters import Adapter, adapters_from_json
+        self._adapters = adapters_from_json(st.value(self.S_ADAPTERS, "[]", str))
+        self._adapter_default = st.value(self.S_ADAPTER_DEFAULT, "", str)
+        if not self._adapters:
+            # First run after the upgrade: the single interface that used to be
+            # configured becomes the first adapter.
+            try:
+                extra = json.loads(st.value(self.S_EXTRA, "{}", str))
+            except (ValueError, TypeError):
+                extra = {}
+            legacy = Adapter(
+                name="Default", interface=st.value(self.S_INTERFACE, "socketcan", str),
+                channel=st.value(self.S_CHANNEL, "can0", str),
+                bitrate=int(st.value(self.S_BITRATE, 500000, int)),
+                fd=st.value(self.S_FD, False, bool),
+                data_bitrate=int(st.value(self.S_FD_BITRATE, 2000000, int)),
+                extra=extra if isinstance(extra, dict) else {})
+            self._adapters = [legacy]
+            self._adapter_default = legacy.name
+        if self._adapter_default not in [a.name for a in self._adapters]:
+            self._adapter_default = self._adapters[0].name
+        self._adapter_refresh_table()
+        self.rest_port_spin.setValue(int(st.value(self.S_REST_PORT, 8765, int)))
+        self.mcp_port_spin.setValue(int(st.value(self.S_MCP_PORT, 8766, int)))
+        self.chk_mcp_autostart.setChecked(st.value(self.S_MCP_AUTOSTART, False, bool))
+        self.chk_mcp_remote.setChecked(st.value(self.S_MCP_REMOTE, False, bool))
+        self.mcp_token_edit.setText(st.value(self.S_MCP_TOKEN, "", str))
+        idx = self.profile_combo.findData(st.value(self.S_PROFILE, "generic", str))
+        if idx >= 0:
+            self.profile_combo.setCurrentIndex(idx)
+        panda = st.value(self.S_BACKEND, "python-can", str) == "panda"
+        self.radio_panda.setChecked(panda)
+        self.radio_pycan.setChecked(not panda)
+        self.panda_safety_combo.setCurrentText(
+            st.value(self.S_PANDA_SAFETY, "SAFETY_NOOUTPUT", str))
+        self.multibus_table.setRowCount(0)   # replace, never append
+        try:
+            for row in json.loads(st.value(self.S_MULTIBUS, "[]", str)):
+                r = self.multibus_table.rowCount()
+                self.multibus_table.insertRow(r)
+                for ci, key in enumerate(("name", "interface", "channel", "bitrate")):
+                    self.multibus_table.setItem(r, ci,
+                                                QTableWidgetItem(str(row.get(key, ""))))
+        except (ValueError, TypeError):
+            log.debug("stored multi-bus config unreadable", exc_info=True)
+
+    def _save_persisted(self):
+        st = settings()
+        from canlab.core.adapters import adapters_to_json
+        st.setValue(self.S_ADAPTERS, adapters_to_json(self._adapters))
+        st.setValue(self.S_ADAPTER_DEFAULT, self._adapter_default)
+        # The default adapter is mirrored into the single-interface keys, which
+        # is what the window reads at start-up.
+        d = self.default_adapter()
+        st.setValue(self.S_INTERFACE, d.interface)
+        st.setValue(self.S_CHANNEL, d.channel)
+        st.setValue(self.S_BITRATE, str(d.bitrate))
+        st.setValue(self.S_FD, d.fd)
+        st.setValue(self.S_FD_BITRATE, str(d.data_bitrate))
+        st.setValue(self.S_EXTRA, json.dumps(d.extra))
+        st.setValue(self.S_REST_PORT, self.rest_port_spin.value())
+        st.setValue(self.S_MCP_PORT, self.mcp_port_spin.value())
+        st.setValue(self.S_MCP_AUTOSTART, self.chk_mcp_autostart.isChecked())
+        st.setValue(self.S_MCP_REMOTE, self.chk_mcp_remote.isChecked())
+        st.setValue(self.S_MCP_TOKEN, self.mcp_token_edit.text().strip())
+        st.setValue(self.S_PROFILE, self.profile_combo.currentData() or "generic")
+        st.setValue(self.S_BACKEND,
+                    "panda" if self.radio_panda.isChecked() else "python-can")
+        st.setValue(self.S_PANDA_SAFETY, self.panda_safety_combo.currentText())
+        st.setValue(self.S_MULTIBUS, json.dumps(self.get_multibus_config()))
+        st.sync()
+
     def _load_values(self):
+        self._load_persisted()
         self.api_key_edit.setText(load_api_key())
-        self.gh_token_edit.setText(load_gh_token())
         self.groq_key_edit.setText(load_groq_key())
+        self.openai_key_edit.setText(load_openai_key())
 
         # Restore saved provider + model
         saved_provider = load_ai_provider()
@@ -400,14 +609,15 @@ class SettingsDialog(QDialog):
         midx = self.model_combo.findText(saved_model)
         if midx >= 0:
             self.model_combo.setCurrentIndex(midx)
+        elif saved_model:
+            self.model_combo.setCurrentText(saved_model)   # a typed-in model id
 
-        # Community URL default
-        from core.state import get_state
+        from canlab.core.state import get_state
         state = get_state()
-        self.community_url_edit.setText(
-            getattr(state, "community_profiles_url", "")
-        )
         # Backend
+        idx = self.profile_combo.findData(getattr(state, "vehicle_profile", "generic"))
+        if idx >= 0:
+            self.profile_combo.setCurrentIndex(idx)
         backend = getattr(state, "active_backend", "python-can")
         self.radio_panda.setChecked(backend == "panda")
         self.radio_pycan.setChecked(backend != "panda")
@@ -417,55 +627,57 @@ class SettingsDialog(QDialog):
 
     def _save(self):
         api_key  = self.api_key_edit.text().strip()
-        gh_token = self.gh_token_edit.text().strip()
         groq_key = self.groq_key_edit.text().strip()
+        openai_key = self.openai_key_edit.text().strip()
         if api_key:
             save_api_key(api_key)
-        save_gh_token(gh_token)
         if groq_key:
             save_groq_key(groq_key)
+        if openai_key:
+            save_openai_key(openai_key)
         save_ai_provider(self.provider_combo.currentText())
-        save_ai_model(self.model_combo.currentText())
+        save_ai_model(self.model_combo.currentText().strip())
 
         # Persist new settings to AppState
-        from core.state import get_state
+        from canlab.core.state import get_state
         state = get_state()
-        comm_url = self.community_url_edit.text().strip()
-        if comm_url:
-            state.community_profiles_url = comm_url
-
+        self._save_persisted()
+        state.vehicle_profile = self.profile_combo.currentData() or "generic"
         state.active_backend = "panda" if self.radio_panda.isChecked() else "python-can"
         state.panda_safety_model = self.panda_safety_combo.currentText()
-        state.canfd_enabled  = self.chk_canfd.isChecked()
+        state.canfd_enabled  = self.default_adapter().fd
         state.canfd_toggled.emit(state.canfd_enabled)
 
         self.accept()
 
-    def _browse_cache(self):
-        path = QFileDialog.getExistingDirectory(self, "Select Cache Directory")
-        if path:
-            self.cache_dir_edit.setText(path)
-
-    def _clear_cache(self):
-        import shutil
-        cache = Path(self.cache_dir_edit.text())
-        if cache.exists():
-            shutil.rmtree(cache)
-            cache.mkdir(parents=True, exist_ok=True)
-            QMessageBox.information(self, "Cleared", "Cache cleared.")
-
     def _refresh_plugins(self):
-        from core.plugin_loader import discover_plugins
-        plugins = discover_plugins()
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtWidgets import QListWidgetItem
+
+        from canlab.core.plugin_loader import discover_plugins
+        self.plugins_list.blockSignals(True)
         self.plugins_list.clear()
+        plugins = discover_plugins()
         if not plugins:
             self.plugins_list.addItem("No plugins found.")
         for p in plugins:
-            status = "✓" if p.get("enabled") else "✗"
-            err    = f"  ERROR: {p.get('error','')}" if p.get("error") else ""
-            self.plugins_list.addItem(
-                f"{status}  {p['name']}  v{p['version']}  —  {p['path']}{err}"
-            )
+            err = f"   [{p.get('error')}]" if p.get("error") else ""
+            item = QListWidgetItem(f"{p['name']}  v{p['version']}  —  {p['path']}{err}")
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if p.get("enabled")
+                               else Qt.CheckState.Unchecked)
+            item.setData(Qt.ItemDataRole.UserRole, p["path"])
+            self.plugins_list.addItem(item)
+        self.plugins_list.blockSignals(False)
+
+    def _on_plugin_toggled(self, item):
+        """Enabling a plugin is what allows it to run, so persist it at once."""
+        from PyQt6.QtCore import Qt
+
+        from canlab.core.plugin_loader import set_enabled
+        path = item.data(Qt.ItemDataRole.UserRole)
+        if path:
+            set_enabled(path, item.checkState() == Qt.CheckState.Checked)
 
     def _mb_add_row(self):
         row = self.multibus_table.rowCount()
@@ -497,20 +709,123 @@ class SettingsDialog(QDialog):
     def get_api_key(self) -> str:
         return self.api_key_edit.text().strip()
 
-    def get_gh_token(self) -> str:
-        return self.gh_token_edit.text().strip()
+    def get_vehicle_profile(self) -> str:
+        return self.profile_combo.currentData() or "generic"
 
     def get_can_settings(self) -> dict:
-        return {
-            "interface":   self.iface_combo.currentText(),
-            "channel":     self.channel_edit.text(),
-            "bitrate":     int(self.bitrate_combo.currentText()),
-            "fd":          self.chk_canfd.isChecked(),
-            "data_bitrate": int(self.fd_bitrate_combo.currentText()),
-        }
+        """The default adapter, in the shape the window's connect path takes."""
+        d = self.default_adapter()
+        return {"interface": d.interface, "channel": d.channel, "bitrate": int(d.bitrate),
+                "fd": d.fd, "data_bitrate": int(d.data_bitrate), "extra": dict(d.extra),
+                "name": d.name}
 
-    def get_github_url(self) -> str:
-        return self.gh_url_edit.text().strip()
+    # ── CAN adapters ──────────────────────────────────────────────────────────
+
+    def default_adapter(self):
+        for a in self._adapters:
+            if a.name == self._adapter_default:
+                return a
+        if self._adapters:
+            return self._adapters[0]
+        from canlab.core.adapters import Adapter
+        return Adapter(name="Default", interface="socketcan", channel="can0")
+
+    def get_adapters(self) -> list:
+        return list(self._adapters)
+
+    def _adapter_refresh_table(self):
+        t = self.adapter_table
+        t.setRowCount(0)
+        for a in self._adapters:
+            r = t.rowCount()
+            t.insertRow(r)
+            fd = f" FD {a.data_bitrate // 1000}k" if a.fd else ""
+            for ci, val in enumerate((a.name, a.interface, a.channel,
+                                      f"{a.bitrate // 1000} kbit/s{fd}",
+                                      "yes" if a.name == self._adapter_default else "")):
+                t.setItem(r, ci, QTableWidgetItem(val))
+
+    def _adapter_selected(self):
+        r = self.adapter_table.currentRow()
+        return self._adapters[r] if 0 <= r < len(self._adapters) else None
+
+    def _unique_name(self, name: str) -> str:
+        names = {a.name for a in self._adapters}
+        base, n = name, 2
+        while name in names:
+            name = f"{base} ({n})"
+            n += 1
+        return name
+
+    def _adapter_add(self):
+        from canlab.ui.adapter_dialog import AdapterDialog
+        dlg = AdapterDialog(parent=self)
+        if dlg.exec():
+            a = dlg.adapter()
+            a.name = self._unique_name(a.name)
+            self._adapters.append(a)
+            if len(self._adapters) == 1:
+                self._adapter_default = a.name
+            self._adapter_refresh_table()
+
+    def _adapter_edit(self):
+        from canlab.ui.adapter_dialog import AdapterDialog
+        a = self._adapter_selected()
+        if a is None:
+            return
+        dlg = AdapterDialog(a, parent=self)
+        if dlg.exec():
+            new = dlg.adapter()
+            if new.name != a.name:
+                new.name = self._unique_name(new.name)
+            if self._adapter_default == a.name:
+                self._adapter_default = new.name
+            self._adapters[self._adapters.index(a)] = new
+            self._adapter_refresh_table()
+
+    def _adapter_remove(self):
+        a = self._adapter_selected()
+        if a is None:
+            return
+        self._adapters.remove(a)
+        if self._adapter_default == a.name:
+            self._adapter_default = self._adapters[0].name if self._adapters else ""
+        self._adapter_refresh_table()
+
+    def _adapter_set_default(self):
+        a = self._adapter_selected()
+        if a is not None:
+            self._adapter_default = a.name
+            self._adapter_refresh_table()
+
+    def _adapter_detect(self):
+        from canlab.ui.adapter_dialog import DetectDialog
+        dlg = DetectDialog(parent=self)
+        if dlg.exec():
+            for a in dlg.chosen():
+                a.name = self._unique_name(a.name)
+                self._adapters.append(a)
+            if self._adapters and not self._adapter_default:
+                self._adapter_default = self._adapters[0].name
+            self._adapter_refresh_table()
+
+    def _adapter_test(self):
+        a = self._adapter_selected()
+        if a is None:
+            self.lbl_adapter_test.setText("Select an adapter first.")
+            return
+        if self._adapter_worker is not None and self._adapter_worker.isRunning():
+            return
+        from canlab.core.adapters import probe_adapter
+        from canlab.ui.adapter_dialog import format_test_result
+        from canlab.ui.compute_worker import ComputeWorker
+        self.lbl_adapter_test.setText(f"Opening {a.name}...")
+        self._adapter_worker = ComputeWorker(probe_adapter, a, listen_s=1.0, parent=self)
+        self._adapter_worker.done.connect(
+            lambda r: self.lbl_adapter_test.setText(f"{a.name}: {format_test_result(r)}"))
+        self._adapter_worker.failed.connect(
+            lambda e: self.lbl_adapter_test.setText(f"{a.name}: failed: {e}"))
+        self._adapter_worker.start()
 
     def get_rest_api_port(self) -> int:
         return self.rest_port_spin.value()
@@ -522,4 +837,4 @@ class SettingsDialog(QDialog):
         return self.provider_combo.currentText()
 
     def get_ai_model(self) -> str:
-        return self.model_combo.currentText()
+        return self.model_combo.currentText().strip()

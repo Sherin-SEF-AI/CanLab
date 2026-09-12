@@ -2,6 +2,9 @@
 import json
 from pathlib import Path
 from datetime import datetime
+import logging
+
+log = logging.getLogger(__name__)
 
 MEMORY_FILE = Path.home() / ".canlab" / "memory.json"
 
@@ -11,7 +14,7 @@ def load_memory() -> list:
         if MEMORY_FILE.exists():
             return json.loads(MEMORY_FILE.read_text())
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
     return []
 
 
@@ -20,7 +23,7 @@ def save_memory(entries: list):
     try:
         MEMORY_FILE.write_text(json.dumps(entries, indent=2))
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
 
 
 def add_entry(entries: list, hex_id: str, conclusion: str, source: str = "AI") -> list:
@@ -43,3 +46,21 @@ def get_memory_context(entries: list, max_entries: int = 20) -> str:
     for e in entries[-max_entries:]:
         lines.append(f"ID 0x{e['id']}: {e['conclusion'][:200]}")
     return "\n".join(lines)
+
+
+def merge_entries(existing: list, incoming: list) -> list:
+    """Merge memory from a project archive into the session's memory.
+
+    Loading a project used to replace the global list outright, so the next
+    save wrote the project's memory over everything else the user had.
+    """
+    merged = list(existing or [])
+    seen = {(e.get("id"), e.get("conclusion")) for e in merged if isinstance(e, dict)}
+    for entry in incoming or []:
+        if not isinstance(entry, dict):
+            continue
+        key = (entry.get("id"), entry.get("conclusion"))
+        if key not in seen:
+            merged.append(entry)
+            seen.add(key)
+    return merged

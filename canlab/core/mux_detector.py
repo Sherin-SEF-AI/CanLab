@@ -20,7 +20,6 @@ BYTE_COLS = [f"B{i}" for i in range(8)]
 
 
 def _byte_matrix(frames_for_id: pd.DataFrame) -> np.ndarray:
-    cols = [c for c in BYTE_COLS if c in frames_for_id.columns]
     n = len(frames_for_id)
     mat = np.full((n, 8), np.nan)
     for i, c in enumerate(BYTE_COLS):
@@ -31,7 +30,7 @@ def _byte_matrix(frames_for_id: pd.DataFrame) -> np.ndarray:
 
 def detect_multiplexer(frames_for_id: pd.DataFrame,
                        min_modes: int = 2, max_modes: int = 16,
-                       min_score: float = 0.35) -> dict | None:
+                       min_score: float = 0.60) -> dict | None:
     """Return the most likely multiplexor for one ID, or None.
 
     {

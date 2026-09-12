@@ -29,6 +29,9 @@ from typing import Optional
 
 import can
 from PyQt6.QtCore import QThread, pyqtSignal
+import logging
+
+log = logging.getLogger(__name__)
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
@@ -36,7 +39,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 def _open_bus(cfg: dict) -> can.BusABC:
     return can.interface.Bus(
         channel=cfg.get("channel", "can0"),
-        bustype=cfg.get("interface", "socketcan"),
+        interface=cfg.get("interface", "socketcan"),
         bitrate=cfg.get("bitrate", 500_000),
     )
 
@@ -65,7 +68,7 @@ def _apply_rule(rule: dict, arb_id: int, data: bytes) -> tuple[Optional[int], Op
         try:
             new_id = int(new_id_str, 16)
         except ValueError:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
     if rule.get("action") == "Modify":
         idx = int(rule.get("mod_byte", 0))
@@ -137,12 +140,14 @@ class GatewayWorker(QThread):
         self.wait(3000)
 
     def run(self):
-        from core.safety import require_armed, is_armed, BusNotArmedError
+        from canlab.core import safety
+        from canlab.core.safety import BusNotArmedError, BlockedIdError
         try:
-            require_armed()
+            safety.require_armed()
         except BusNotArmedError as e:
             self.error.emit(str(e))
             return
+        safety.register_tx_worker(self)
         try:
             bus_a = _open_bus(self._cfg_a)
             bus_b = _open_bus(self._cfg_b)
@@ -157,12 +162,6 @@ class GatewayWorker(QThread):
 
         try:
             while self._running:
-                # Disarming ARM TX must stop the MitM bridge from forwarding
-                # frames onto either bus immediately, not just on next start.
-                if not is_armed():
-                    self.error.emit("Bus transmit disarmed — gateway stopped.")
-                    break
-
                 try:
                     src, msg = q.get(timeout=0.1)
                 except queue.Empty:
@@ -210,7 +209,14 @@ class GatewayWorker(QThread):
                         data=new_data,
                         is_extended_id=msg.is_extended_id,
                     )
-                    dest_bus.send(fwd_msg)
+                    safety.gated_send(dest_bus, fwd_msg)
+                except BusNotArmedError as e:
+                    self.error.emit(str(e))
+                    self._running = False
+                    break
+                except BlockedIdError as e:
+                    self.error.emit(f"Forward blocked ({src}): {e}")
+                    continue
                 except Exception as e:
                     self.error.emit(f"Forward error ({src}): {e}")
 
@@ -224,15 +230,16 @@ class GatewayWorker(QThread):
                 self._maybe_emit_stats()
 
         finally:
+            safety.unregister_tx_worker(self)
             stop_evt.set()
             try:
                 bus_a.shutdown()
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
             try:
                 bus_b.shutdown()
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
 
     def _maybe_emit_stats(self):
         now = time.monotonic()

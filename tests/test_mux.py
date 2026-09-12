@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from core.mux_detector import detect_multiplexer
+from canlab.core.mux_detector import detect_multiplexer
 
 
 def _muxed_frames(n=400):
@@ -44,7 +44,7 @@ def test_non_muxed_returns_none():
 
 def test_dbc_emits_mux_tokens():
     pytest.importorskip("cantools")
-    from core.dbc_manager import signals_to_dbc_string
+    from canlab.core.dbc_manager import signals_to_dbc_string
     sigs = [
         {"message_id": "300", "message_name": "MUXED", "msg_length": 8,
          "signal_name": "Mode", "start_bit": 0, "length": 8, "mux_role": "M"},

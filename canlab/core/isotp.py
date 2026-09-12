@@ -7,14 +7,24 @@ Implements:
   Consecutive   (PCI N_PCI = 0x2x): collect in order until length reached
   Flow Control  (PCI N_PCI = 0x3x): sent by us after FF received
 
+The payload contract is *unframed*: callers pass the service bytes only
+(``[0x22, 0xF1, 0x90]``), never the PCI/length byte, and get the response
+service bytes back the same way. Getting this wrong is silent — the frame still
+goes out, just malformed — so the tests pin the exact bytes on the wire.
+
 Usage:
     session = ISOTPSession(bus, tx_id=0x7E0, rx_id=0x7E8)
-    payload = session.send(uds_request_bytes, timeout=1.0)
+    payload = session.request(bytes([0x22, 0xF1, 0x90]))    # handles NRC 0x78
     if payload:
         ...
 """
 import time
 from typing import Optional
+import logging
+
+from canlab.core.safety import gated_send
+
+log = logging.getLogger(__name__)
 
 # Flow Control constants
 FC_CTS   = 0x30   # Continue To Send
@@ -24,6 +34,29 @@ FC_OVFLW = 0x32
 BLOCK_SIZE = 0        # 0 = no block limit
 ST_MIN     = 0        # 0 ms separation time (fastest)
 
+NRC_RESPONSE_PENDING = 0x78   # requestCorrectlyReceivedResponsePending
+P2_STAR_DEFAULT      = 5.0    # seconds to wait after a 0x78, per ISO 14229
+MAX_PENDING          = 20     # give up rather than wait forever
+
+# CAN FD payload lengths a frame can actually be padded to.
+_FD_LENGTHS = (8, 12, 16, 20, 24, 32, 48, 64)
+
+
+def is_response_pending(payload) -> bool:
+    """True for a UDS ``7F <service> 78`` response-pending reply."""
+    return (payload is not None and len(payload) >= 3
+            and payload[0] == 0x7F and payload[2] == NRC_RESPONSE_PENDING)
+
+
+def _pad(frame: bytes, tx_dl: int = 8) -> bytes:
+    """Pad a frame up to the next legal CAN(-FD) length."""
+    if len(frame) <= 8:
+        return frame + bytes(8 - len(frame))
+    for n in _FD_LENGTHS:
+        if len(frame) <= n <= tx_dl:
+            return frame + bytes(n - len(frame))
+    return frame[:tx_dl]
+
 
 class ISOTPSession:
     """
@@ -31,41 +64,51 @@ class ISOTPSession:
     Mimics the python-can recv() API (returns None on timeout).
     """
 
-    def __init__(self, bus, tx_id: int, rx_id: int, extended_id: bool = False,
-                 padding: int = 0x00):
-        self._bus      = bus
-        self._tx_id    = tx_id
-        self._rx_id    = rx_id
-        self._ext      = bool(extended_id)
-        self._padding  = padding & 0xFF
+    def __init__(self, bus, tx_id: int, rx_id, tx_dl: int = 8):
+        self._bus   = bus
+        self._tx_id = tx_id
+        # rx_id may be one id or several (functional addressing answers from any
+        # of 0x7E8-0x7EF).
+        self._rx_ids = ({int(rx_id)} if isinstance(rx_id, int)
+                        else {int(r) for r in rx_id})
+        self._rx_id = next(iter(self._rx_ids)) if len(self._rx_ids) == 1 else None
+        self._tx_dl = int(tx_dl)
+        self.last_rx_id = None
 
-    def _pad(self, frame: bytes) -> bytes:
-        """Pad a CAN frame out to 8 bytes with the configured padding byte."""
-        if len(frame) >= 8:
-            return frame[:8]
-        return frame + bytes([self._padding]) * (8 - len(frame))
+    def _rx_match(self, arb_id: int) -> bool:
+        if arb_id in self._rx_ids:
+            self.last_rx_id = arb_id
+            return True
+        return False
+
+    def _fc_tx_id(self) -> int:
+        """Flow control goes back to the ECU that started the transfer."""
+        if self._rx_id is not None or self.last_rx_id is None:
+            return self._tx_id
+        return self.last_rx_id - 0x08
 
     def send(self, data: bytes, timeout: float = 1.0) -> Optional[bytes]:
         """
-        Send `data` and return the fully assembled response, or None on
-        timeout / error.
-
-        ``data`` is the *service payload only* — e.g. ``b"\\x01\\x0C"`` for OBD-II
-        mode 01 PID 0x0C, or ``b"\\x22\\xF1\\x90"`` for UDS ReadDataByIdentifier.
-        This method adds the ISO-TP PCI byte(s) and pads the frame itself.
-        Callers must NOT prepend a length byte or pad the payload: doing so
-        produced a double PCI (``03 02 01 0C``) that no ECU answers, and pushed
-        8-byte padded requests down the multi-frame path as a bogus First Frame.
+        Send `data` (UDS request bytes) and return the fully assembled response,
+        or None on timeout / error.
         """
         import can
         n = len(data)
 
         if n <= 7:
             # Single Frame
-            frame = self._pad(bytes([n & 0x0F]) + data)
+            frame = _pad(bytes([n & 0x0F]) + data, self._tx_dl)
             try:
-                self._bus.send(can.Message(arbitration_id=self._tx_id,
-                                           data=frame, is_extended_id=self._ext))
+                gated_send(self._bus, can.Message(arbitration_id=self._tx_id,
+                                                  data=frame, is_extended_id=False))
+            except Exception:
+                return None
+        elif self._tx_dl > 8 and n <= self._tx_dl - 2:
+            # CAN FD escape single frame: PCI 0x00 then a full length byte.
+            frame = _pad(bytes([0x00, n]) + data, self._tx_dl)
+            try:
+                gated_send(self._bus, can.Message(arbitration_id=self._tx_id,
+                                                  data=frame, is_extended_id=False))
             except Exception:
                 return None
         else:
@@ -74,10 +117,10 @@ class ISOTPSession:
             #  request longer than 7 bytes.)
             hi = (n >> 8) & 0x0F
             lo = n & 0xFF
-            ff = self._pad(bytes([0x10 | hi, lo]) + data[:6])
+            ff = bytes([0x10 | hi, lo]) + data[:6]
             try:
-                self._bus.send(can.Message(arbitration_id=self._tx_id,
-                                           data=ff, is_extended_id=self._ext))
+                gated_send(self._bus, can.Message(arbitration_id=self._tx_id,
+                                                  data=ff, is_extended_id=False))
             except Exception:
                 return None
             if not self._send_consecutive_frames(data, timeout):
@@ -114,10 +157,10 @@ class ISOTPSession:
                 continue
 
             chunk = data[idx:idx + 7]
-            cf = self._pad(bytes([0x20 | (sn & 0x0F)]) + chunk)
+            cf = bytes([0x20 | (sn & 0x0F)]) + chunk + bytes(7 - len(chunk))
             try:
-                self._bus.send(can.Message(arbitration_id=self._tx_id,
-                                           data=cf, is_extended_id=self._ext))
+                gated_send(self._bus, can.Message(arbitration_id=self._tx_id,
+                                                  data=cf, is_extended_id=False))
             except Exception:
                 return False
             idx += 7
@@ -137,11 +180,30 @@ class ISOTPSession:
                 time.sleep(st)
         return True
 
+    def request(self, data: bytes, timeout: float = 1.0,
+                p2_star: float = P2_STAR_DEFAULT):
+        """Send a UDS request and return the final response payload.
+
+        A ``7F xx 78`` (response pending) reply is not an answer — the ECU is
+        asking for more time — so keep waiting for the real one instead of
+        reporting the NRC to the caller.
+        """
+        resp = self.send(data, timeout=timeout)
+        pending = 0
+        while is_response_pending(resp) and pending < MAX_PENDING:
+            pending += 1
+            resp = self.receive(p2_star)
+        return resp
+
+    def receive(self, timeout: float = 1.0):
+        """Wait for one assembled response without sending anything."""
+        return self._receive(None, timeout)
+
     def _wait_for_fc(self, deadline: float):
         """Block until a Flow Control frame arrives; return (fs, bs, stmin)."""
         while time.monotonic() < deadline:
             resp = self._bus.recv(timeout=0.05)
-            if resp is None or resp.arbitration_id != self._rx_id:
+            if resp is None or not self._rx_match(resp.arbitration_id):
                 continue
             raw = bytes(resp.data)
             if raw and (raw[0] >> 4) & 0x0F == 0x3:
@@ -158,7 +220,7 @@ class ISOTPSession:
             return st_min / 1000.0            # 0-127 ms
         if 0xF1 <= st_min <= 0xF9:
             return (st_min - 0xF0) / 10000.0  # 100-900 microseconds
-        return 0.0
+        return 0.127                          # reserved: treat as the 127 ms max
 
     def _receive(self, expected_len: Optional[int], timeout: float,
                  passive: bool = False) -> Optional[bytes]:
@@ -167,7 +229,6 @@ class ISOTPSession:
         If expected_len is None we infer from the SF/FF length byte.
         When passive=True (sniffing), no Flow Control is transmitted.
         """
-        import can
         deadline  = time.monotonic() + timeout
         payload   = bytearray()
         total_len = expected_len  # None until we parse SF/FF
@@ -175,7 +236,7 @@ class ISOTPSession:
 
         while time.monotonic() < deadline:
             resp = self._bus.recv(timeout=0.05)
-            if resp is None or resp.arbitration_id != self._rx_id:
+            if resp is None or not self._rx_match(resp.arbitration_id):
                 continue
 
             raw = bytes(resp.data)
@@ -188,12 +249,12 @@ class ISOTPSession:
 
             if pci == 0x0:  # Single Frame
                 length = raw[0] & 0x0F
-                payload = bytearray(raw[1:1 + length])
-                return bytes(payload)
+                if length == 0 and len(raw) > 1:
+                    # CAN FD escape single frame: the real length follows.
+                    return bytes(raw[2:2 + raw[1]])
+                return bytes(raw[1:1 + length])
 
             if pci == 0x1:  # First Frame
-                if len(raw) < 2:
-                    continue
                 length = ((raw[0] & 0x0F) << 8) | raw[1]
                 total_len = length
                 payload   = bytearray(raw[2:])  # first 6 payload bytes
@@ -218,25 +279,13 @@ class ISOTPSession:
     def _send_fc(self):
         """Send a Flow Control CTS frame."""
         import can
-        fc = self._pad(bytes([FC_CTS, BLOCK_SIZE, ST_MIN]))
+        fc = bytes([FC_CTS, BLOCK_SIZE, ST_MIN, 0, 0, 0, 0, 0])
         try:
             msg = can.Message(
-                arbitration_id=self._tx_id,
+                arbitration_id=self._fc_tx_id(),
                 data=fc,
-                is_extended_id=self._ext,
+                is_extended_id=False,
             )
-            self._bus.send(msg)
+            gated_send(self._bus, msg)
         except Exception:
-            pass
-
-
-def recv_isotp(bus, rx_id: int, timeout: float = 1.0) -> Optional[bytes]:
-    """
-    Passive receive only (no request sent). Useful for sniffing ISO-TP responses.
-    Returns assembled payload or None on timeout.
-    """
-    dummy_tx = rx_id - 8  # typical response offset reversed
-    session  = ISOTPSession(bus, tx_id=dummy_tx, rx_id=rx_id)
-    # passive=True: do not inject Flow Control while merely sniffing, which would
-    # otherwise put frames on the bus and could corrupt another tester's transfer.
-    return session._receive(None, timeout, passive=True)
+            log.warning("suppressed exception", exc_info=True)

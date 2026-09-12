@@ -1,247 +1,330 @@
-import pandas as pd
-import numpy as np
-import re
-from pathlib import Path
-
-"""
-Log parsers for CanLab.
+"""Log parsers for CanLab.
 
 Every parser returns a DataFrame with the canonical schema:
-    Timestamp (float, seconds), ID (canonical hex string), Bus (int),
-    DLC (int), B0..B7 (ints, NaN for missing bytes), Delta (per-ID diff).
-Some parsers also set Extended (bool).
+    Timestamp (float seconds), ID (canonical uppercase hex str), Bus (int),
+    DLC (int, payload byte count), Extended (bool), B0..B7 (float, NaN for
+    absent bytes), B8..B{n-1} only when some frame carries more than 8 bytes
+    (CAN FD), Delta (seconds since the previous frame with the same ID).
 
-Supported capture formats:
-    SavvyCAN CSV, candump .log, openpilot .rlog/.qlog, .pcap/.pcapng,
-    Vector .blf, Vector .asc, and MDF4 .mf4/.mdf (CANedge).
+Error frames and remote frames are skipped by every parser (they carry no
+payload semantics); the count of skipped frames is logged.
+
+Supported capture formats: SavvyCAN / GVRET CSV, candump `-l` logs (classic,
+CAN FD `##` lines, error frames), pcap/pcapng with LINKTYPE_CAN_SOCKETCAN,
+Vector BLF and ASC (python-can readers), MDF4 (asammdf), openpilot rlog/qlog.
 """
+from __future__ import annotations
+
+import logging
+import math
+import re
+import warnings
+import struct
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from canlab.core.canid import normalize_id
+
+log = logging.getLogger(__name__)
+
+CAN_EFF_FLAG = 0x80000000
+CAN_RTR_FLAG = 0x40000000
+CAN_ERR_FLAG = 0x20000000
+CAN_EFF_MASK = 0x1FFFFFFF
+CAN_SFF_MASK = 0x7FF
+LINKTYPE_CAN_SOCKETCAN = 227
+CANFD_FDF = 0x04          # fd_flags bit in the pcap header byte 5
+
+# CAN FD DLC code -> payload length (used where a source reports the code)
+DLC_TO_LEN = {
+    0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7,
+    8: 8, 9: 12, 10: 16, 11: 20, 12: 24, 13: 32, 14: 48, 15: 64,
+}
+
+BASE_COLUMNS = ["Timestamp", "ID", "Bus", "DLC", "Extended"]
+BYTE_COLS8 = [f"B{i}" for i in range(8)]
 
 
-def _hexbyte(v):
-    """Parse one SavvyCAN data-byte token (hex string) to an int, or NaN."""
-    if v is None or (isinstance(v, float) and np.isnan(v)):
-        return np.nan
-    s = str(v).strip()
-    if not s:
+# ── row helpers ───────────────────────────────────────────────────────────────
+
+def _bus_index(channel) -> int:
+    """Map a channel name/number to a small int (can0 -> 0, vcan1 -> 1)."""
+    if channel is None:
+        return 0
+    if isinstance(channel, (int, np.integer)):
+        return int(channel)
+    m = re.search(r"(\d+)\s*$", str(channel))
+    return int(m.group(1)) if m else 0
+
+
+def make_row(ts: float, arb_id: int, extended: bool, bus, data: bytes, dlc=None) -> dict:
+    """Build a canonical row dict. ``dlc`` defaults to ``len(data)``."""
+    data = bytes(data)
+    n = len(data)
+    row = {
+        "Timestamp": float(ts),
+        "ID":        normalize_id(int(arb_id)),
+        "Bus":       _bus_index(bus),
+        "DLC":       int(n if dlc is None else dlc),
+        "Extended":  bool(extended),
+    }
+    for i in range(max(8, n)):
+        row[f"B{i}"] = float(data[i]) if i < n else np.nan
+    return row
+
+
+def _finish(rows: list[dict]) -> pd.DataFrame:
+    """Rows -> sorted canonical DataFrame with Delta."""
+    if not rows:
+        return pd.DataFrame(columns=BASE_COLUMNS + BYTE_COLS8 + ["Delta"])
+    df = pd.DataFrame(rows)
+    byte_cols = sorted((c for c in df.columns if re.fullmatch(r"B\d+", c)),
+                       key=lambda c: int(c[1:]))
+    for c in BYTE_COLS8:
+        if c not in df.columns:
+            df[c] = np.nan
+            byte_cols.append(c)
+    byte_cols = sorted(set(byte_cols), key=lambda c: int(c[1:]))
+    df = df[BASE_COLUMNS + byte_cols]
+    df = df.sort_values("Timestamp", kind="stable").reset_index(drop=True)
+    df["Bus"] = df["Bus"].astype(int)
+    df["DLC"] = df["DLC"].astype(int)
+    df["Extended"] = df["Extended"].astype(bool)
+    df["Delta"] = _compute_delta(df)
+    return df
+
+
+def _compute_delta(df: pd.DataFrame) -> pd.Series:
+    return df.groupby("ID")["Timestamp"].diff().fillna(0.0)
+
+
+def _int_or_nan(v, base: int = 16) -> float:
+    s = str(v).strip() if v is not None else ""
+    if not s or s.lower() == "nan":
         return np.nan
     try:
-        return int(s, 16) & 0xFF
+        return float(int(s, base))
     except ValueError:
         return np.nan
 
 
-def _bytes_are_hex(df: pd.DataFrame, cols: list) -> bool:
-    """Decide whether SavvyCAN data-byte columns are hex or decimal.
+def _hex_or_nan(v) -> float:
+    return _int_or_nan(v, 16)
 
-    Real SavvyCAN pads each data byte to exactly two hex digits (``00``–``FF``).
-    The bundled decimal sample uses variable-width decimal (``0``, ``150``). So:
-    a hex letter anywhere ⇒ hex; a token wider than 2 chars or a bare single
-    digit ⇒ decimal; otherwise (all tokens exactly two digits) default to hex,
-    which is SavvyCAN's actual format.
+
+def _bytes_are_hex(columns) -> bool:
+    """Whether SavvyCAN data-byte tokens are hex or decimal.
+
+    Real SavvyCAN pads each data byte to exactly two hex digits (00 to FF), but
+    decimal exports exist and use variable width (0, 150). Reading a decimal
+    export as hex turns 150 into 336 and fails the whole parse, so decide from
+    the tokens: a hex letter anywhere means hex; a token wider than two
+    characters or a bare single digit means decimal; all two-digit and no
+    letters defaults to hex, which is what SavvyCAN itself writes.
     """
-    import re
     letter = re.compile(r"[A-Fa-f]")
-    sample_tokens = []
-    for c in cols:
-        vals = df[c].dropna().astype(str).head(2000).tolist()
-        sample_tokens.extend(vals)
-        if len(sample_tokens) >= 4000:
-            break
-    saw_two_digit = False
-    for tok in sample_tokens:
-        tok = tok.strip()
-        if not tok:
+    seen_two_digit = False
+    for column in columns:
+        if column is None:
             continue
-        if letter.search(tok):
-            return True                 # definitely hex
-        if len(tok) > 2 or len(tok) == 1:
-            return False                # decimal (SavvyCAN always pads to 2)
-        saw_two_digit = True
-    # All tokens were exactly two digits with no letters: treat as hex
-    # (SavvyCAN) when we actually saw such tokens; empty ⇒ harmless default.
-    return saw_two_digit
+        for token in column.astype(str).head(2000):
+            token = token.strip()
+            if not token or token.lower() == "nan":
+                continue
+            if letter.search(token):
+                return True
+            if len(token) > 2 or len(token) == 1:
+                return False
+            seen_two_digit = True
+    return seen_two_digit
 
+
+# ── SavvyCAN / GVRET CSV ─────────────────────────────────────────────────────
 
 def parse_savvycan_csv(filepath: str) -> pd.DataFrame:
-    """Parse GVRET SavvyCAN CSV format.
+    """Parse a SavvyCAN/GVRET CSV export.
 
-    SavvyCAN writes a trailing comma after the last data byte (``…,00,``), so
-    every data row has one more field than the 14-column header. Without
-    ``index_col=False`` pandas silently promotes the first column (Time Stamp)
-    to the row index and shifts every remaining column left by one — real IDs
-    land in the timestamp column, the ID column fills with the Extended flag,
-    and the whole capture decodes as garbage. ``index_col=False`` keeps the
-    columns aligned; the extra trailing field is dropped as an unnamed column.
+    Real exports write the ID and D1..D8 as hexadecimal. The ``Time Stamp``
+    column is microseconds when it is an integer column; a column with decimal
+    points is treated as seconds.
     """
-    # Read the ID and data-byte columns as strings. Otherwise an all-numeric ID
-    # column (e.g. "018", "111") is inferred as int64 — dropping the leading zero
-    # and turning "018" into decimal 18, which normalize_id then renders as
-    # 0x12 ("012"). Byte columns must stay strings so hex tokens survive.
-    str_cols = {c: str for c in ("ID", "D1", "D2", "D3", "D4",
-                                 "D5", "D6", "D7", "D8")}
-    df = pd.read_csv(filepath, skipinitialspace=True, index_col=False,
-                     dtype=str_cols)
-    # Drop the phantom column created by SavvyCAN's trailing comma, if present.
-    df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]]
-    df.columns = [c.strip() for c in df.columns]
-
+    # index_col=False matters: SavvyCAN writes a trailing comma after the last
+    # data byte, so each data row has one more field than the 14-column header.
+    # Without it pandas promotes Time Stamp to the index and shifts every column
+    # left, putting IDs in the timestamp column and the Extended flag in ID.
+    with warnings.catch_warnings():
+        # index_col=False on a row with one field more than the header warns
+        # about "loss of data". The extra field is the empty string after
+        # SavvyCAN's trailing comma, so dropping it is the point.
+        warnings.simplefilter("ignore", pd.errors.ParserWarning)
+        df = pd.read_csv(filepath, dtype=str, skipinitialspace=True,
+                         encoding="utf-8-sig", keep_default_na=False,
+                         index_col=False)
+    df.columns = [str(c).strip().lstrip("﻿") for c in df.columns]
     col_map = {
-        "Time Stamp": "Timestamp",
-        "ID":         "ID",
-        "Extended":   "Extended",
-        "Dir":        "Dir",
-        "Bus":        "Bus",
-        "LEN":        "DLC",
+        "Time Stamp": "Timestamp", "Timestamp": "Timestamp",
+        "ID": "ID", "Extended": "Extended", "Dir": "Dir", "Bus": "Bus", "LEN": "DLC",
         "D1": "B0", "D2": "B1", "D3": "B2", "D4": "B3",
         "D5": "B4", "D6": "B5", "D7": "B6", "D8": "B7",
     }
     df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+    if "Timestamp" not in df.columns or "ID" not in df.columns:
+        raise ValueError("SavvyCAN CSV needs 'Time Stamp' and 'ID' columns")
 
-    if "Timestamp" in df.columns:
-        df["Timestamp"] = pd.to_numeric(df["Timestamp"], errors="coerce") / 1_000_000.0
+    ts_text = df["Timestamp"].astype(str).str.strip()
+    ts = pd.to_numeric(ts_text, errors="coerce")
+    seconds = ts_text.str.contains(r"\.", regex=True).any()
+    ts = ts if seconds else ts / 1_000_000.0
 
-    if "ID" in df.columns:
-        df["ID"] = df["ID"].apply(_normalize_id)
+    ids = df["ID"].astype(str).str.strip()
+    id_int = pd.Series([_hex_or_nan(x) for x in ids], index=df.index)
 
-    byte_cols = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
-    present = [c for c in byte_cols if c in df.columns]
-    as_hex = _bytes_are_hex(df, present)
-    for col in byte_cols:
-        if col not in df.columns:
-            df[col] = np.nan
-        elif as_hex:
-            # Real SavvyCAN writes data bytes in hex ("0A", "FF"). Parsing them
-            # with to_numeric read "10" as decimal 10 (not 0x10) and turned any
-            # value with a hex letter into NaN — corrupting every byte.
-            df[col] = df[col].map(_hexbyte)
-        else:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+    rows = []
+    ext_col = df["Extended"].astype(str).str.strip().str.lower() if "Extended" in df.columns else None
+    bus_col = df["Bus"] if "Bus" in df.columns else None
+    dlc_col = df["DLC"] if "DLC" in df.columns else None
+    byte_vals = [df[c] if c in df.columns else None for c in BYTE_COLS8]
+    byte_base = 16 if _bytes_are_hex(byte_vals) else 10
+    for i in range(len(df)):
+        if math.isnan(id_int.iloc[i]) or math.isnan(ts.iloc[i]):
+            continue
+        data = []
+        for col in byte_vals:
+            v = _int_or_nan(col.iloc[i], byte_base) if col is not None else np.nan
+            if math.isnan(v):
+                break
+            data.append(int(v))
+        dlc = None
+        if dlc_col is not None:
+            try:
+                dlc = int(str(dlc_col.iloc[i]).strip())
+            except ValueError:
+                dlc = None
+        arb = int(id_int.iloc[i])
+        extended = (ext_col.iloc[i] in ("true", "1", "yes")) if ext_col is not None else arb > CAN_SFF_MASK
+        bus = bus_col.iloc[i] if bus_col is not None else 0
+        try:
+            bus = int(str(bus).strip() or 0)
+        except ValueError:
+            bus = _bus_index(bus)
+        rows.append(make_row(ts.iloc[i], arb, extended, bus, bytes(data), dlc))
+    return _finish(rows)
 
-    if "Bus" not in df.columns:
-        df["Bus"] = 0
-    if "DLC" not in df.columns:
-        df["DLC"] = 8
-    else:
-        df["DLC"] = pd.to_numeric(df["DLC"], errors="coerce").fillna(8).astype(int)
 
-    df = df.dropna(subset=["Timestamp", "ID"])
-    df = df.sort_values("Timestamp").reset_index(drop=True)
+# ── candump -l ───────────────────────────────────────────────────────────────
 
-    df["Delta"] = _compute_delta(df)
-
-    return df
+_CANDUMP_RE = re.compile(
+    r"^\((?P<ts>\d+(?:\.\d+)?)\)\s+(?P<iface>\S+)\s+"
+    r"(?P<id>[0-9A-Fa-f]{3,8})(?P<sep>##|#)(?P<rest>\S*)")
 
 
 def parse_candump_log(filepath: str) -> pd.DataFrame:
-    """Parse standard candump log format: (timestamp) interface ID#DATA"""
-    rows = []
-    pattern = re.compile(
-        r"\((\d+\.\d+)\)\s+(\S+)\s+([0-9A-Fa-f]+)#([0-9A-Fa-f]*)"
-    )
-    with open(filepath) as f:
+    """Parse ``candump -l`` output: classic ``ID#DATA``, CAN FD ``ID##F DATA``,
+    remote ``ID#R`` (skipped) and error frames (skipped)."""
+    rows, skipped = [], 0
+    with open(filepath, encoding="utf-8-sig", errors="replace") as f:
         for line in f:
-            m = pattern.match(line.strip())
+            m = _CANDUMP_RE.match(line.strip())
             if not m:
                 continue
-            ts, iface, can_id, data_hex = m.groups()
-            data_hex = data_hex.upper()
-            byte_vals = [int(data_hex[i:i+2], 16) for i in range(0, len(data_hex), 2)]
-            while len(byte_vals) < 8:
-                byte_vals.append(np.nan)
-            rows.append({
-                "Timestamp": float(ts),
-                "ID":        _normalize_id(can_id),
-                "Bus":       iface,
-                "DLC":       len(data_hex) // 2,
-                **{f"B{i}": byte_vals[i] for i in range(8)},
-            })
-    df = pd.DataFrame(rows)
-    if not df.empty:
-        df = df.sort_values("Timestamp").reset_index(drop=True)
-        df["Delta"] = _compute_delta(df)
-    return df
+            id_hex, rest = m.group("id"), m.group("rest")
+            raw_id = int(id_hex, 16)
+            if len(id_hex) == 8 and raw_id & CAN_ERR_FLAG:
+                skipped += 1
+                continue
+            if rest[:1].upper() == "R":
+                skipped += 1
+                continue
+            if m.group("sep") == "##":
+                data_hex = rest[1:]          # first nibble = FD flags (BRS/ESI)
+            else:
+                data_hex = rest
+            data_hex = re.sub(r"[^0-9A-Fa-f]", "", data_hex)
+            data = bytes(int(data_hex[i:i + 2], 16) for i in range(0, len(data_hex) - 1, 2))
+            extended = len(id_hex) == 8
+            arb = raw_id & (CAN_EFF_MASK if extended else CAN_SFF_MASK)
+            rows.append(make_row(float(m.group("ts")), arb, extended, m.group("iface"), data))
+    if skipped:
+        log.info("candump: skipped %d error/remote frames", skipped)
+    return _finish(rows)
+
+
+# ── pcap / pcapng (LINKTYPE_CAN_SOCKETCAN) ───────────────────────────────────
+
+def _plausible(word: int) -> bool:
+    """Does this ID/flags word look like a real data frame? (Error-flagged words
+    are not counted: under the wrong byte order random payload bytes often
+    land on the error bit.)"""
+    if word & CAN_ERR_FLAG:
+        return False
+    if word & CAN_EFF_FLAG:
+        return (word & CAN_EFF_MASK) > CAN_SFF_MASK
+    return (word & ~CAN_RTR_FLAG) <= CAN_SFF_MASK
+
+
+def _choose_id_order(packets: list[bytes]) -> str:
+    """LINKTYPE_CAN_SOCKETCAN specifies a big-endian ID word, but captures made
+    with old libpcap versions wrote the host (little-endian) order. Pick the
+    order under which more frames are plausible; ties go to the spec."""
+    be = sum(_plausible(struct.unpack_from(">I", b, 0)[0]) for b in packets)
+    le = sum(_plausible(struct.unpack_from("<I", b, 0)[0]) for b in packets)
+    return "<I" if le > be else ">I"
 
 
 def parse_pcap(filepath: str) -> pd.DataFrame:
-    """Parse .pcap / .pcapng files containing CAN frames (Linux SocketCAN linktype 227)."""
+    """Parse .pcap/.pcapng files of SocketCAN frames (linktype 227, classic or FD)."""
     import dpkt
 
-    rows = []
-    opener = dpkt.pcapng.Reader if filepath.lower().endswith(".pcapng") else dpkt.pcap.Reader
-
+    rows, skipped = [], 0
     with open(filepath, "rb") as f:
+        opener = dpkt.pcapng.Reader if filepath.lower().endswith(".pcapng") else dpkt.pcap.Reader
         try:
             reader = opener(f)
         except Exception:
-            # pcapng reader may fail on plain pcap — fall back
             f.seek(0)
             reader = dpkt.pcap.Reader(f)
-
-        for ts, buf in reader:
-            # SocketCAN linktype = 227 (DLT_CAN_SOCKETCAN)
-            # Frame layout: 4-byte CAN ID (LE) | 1-byte DLC | 3-byte pad | 8-byte data
-            if len(buf) < 8:
+        linktype = reader.datalink()
+        if linktype != LINKTYPE_CAN_SOCKETCAN:
+            raise ValueError(
+                f"pcap link type {linktype} is not SocketCAN ({LINKTYPE_CAN_SOCKETCAN}); "
+                "capture with tcpdump/wireshark on a can interface")
+        packets = [(ts, bytes(buf)) for ts, buf in reader if len(buf) >= 8]
+        fmt = _choose_id_order([b for _, b in packets])
+        if fmt == "<I":
+            log.info("pcap: ID word is little-endian (old libpcap); using host order")
+        for ts, buf in packets:
+            word = struct.unpack_from(fmt, buf, 0)[0]
+            if word & (CAN_ERR_FLAG | CAN_RTR_FLAG):
+                skipped += 1
                 continue
-            try:
-                import struct
-                can_id_raw, dlc = struct.unpack_from("<IB", buf, 0)
-                # Mask out flags: bit 31 = EFF (extended), bit 30 = RTR, bit 29 = ERR
-                extended = bool(can_id_raw & 0x80000000)
-                can_id   = can_id_raw & 0x1FFFFFFF
-                dlc      = min(dlc, 8)
-                data     = buf[8: 8 + dlc]
-                byte_vals = list(data) + [np.nan] * (8 - len(data))
-                rows.append({
-                    "Timestamp": float(ts),
-                    "ID":        format(can_id, "03X"),
-                    "Bus":       0,
-                    "DLC":       dlc,
-                    "Extended":  extended,
-                    **{f"B{i}": byte_vals[i] for i in range(8)},
-                })
-            except Exception:
-                continue
+            extended = bool(word & CAN_EFF_FLAG)
+            arb = word & (CAN_EFF_MASK if extended else CAN_SFF_MASK)
+            length = buf[4]
+            fd_flags = buf[5]
+            max_len = 64 if (fd_flags & CANFD_FDF or length > 8) else 8
+            data = buf[8:8 + min(length, max_len)]
+            rows.append(make_row(float(ts), arb, extended, 0, data))
+    if skipped:
+        log.info("pcap: skipped %d error/remote frames", skipped)
+    return _finish(rows)
 
-    df = pd.DataFrame(rows)
-    if df.empty:
-        return df
-    df = df.sort_values("Timestamp").reset_index(drop=True)
-    df["Delta"] = _compute_delta(df)
-    return df
 
+# ── python-can readers (BLF / ASC) ───────────────────────────────────────────
 
 def _rows_from_can_messages(messages) -> pd.DataFrame:
-    """Build a canonical-schema DataFrame from an iterable of python-can Messages."""
-    rows = []
+    rows, skipped = [], 0
     for msg in messages:
-        # Skip error frames / remote frames without payload semantics.
-        if getattr(msg, "is_error_frame", False):
+        if getattr(msg, "is_error_frame", False) or getattr(msg, "is_remote_frame", False):
+            skipped += 1
             continue
         data = bytes(msg.data) if msg.data is not None else b""
-        dlc = msg.dlc if msg.dlc is not None else len(data)
-        byte_vals = list(data[:8]) + [np.nan] * (8 - min(len(data), 8))
-        channel = msg.channel
-        if isinstance(channel, str):
-            m = re.search(r"\d+", channel)
-            bus = int(m.group()) if m else 0
-        elif isinstance(channel, int):
-            bus = channel
-        else:
-            bus = 0
-        rows.append({
-            "Timestamp": float(msg.timestamp),
-            "ID":        _normalize_id(msg.arbitration_id),
-            "Bus":       bus,
-            "DLC":       int(dlc),
-            "Extended":  bool(msg.is_extended_id),
-            **{f"B{i}": byte_vals[i] for i in range(8)},
-        })
-    df = pd.DataFrame(rows)
-    if df.empty:
-        return df
-    df = df.sort_values("Timestamp").reset_index(drop=True)
-    df["Delta"] = _compute_delta(df)
-    return df
+        rows.append(make_row(msg.timestamp, msg.arbitration_id, msg.is_extended_id,
+                             msg.channel, data[:64]))
+    if skipped:
+        log.info("reader: skipped %d error/remote frames", skipped)
+    return _finish(rows)
 
 
 def parse_blf(filepath: str) -> pd.DataFrame:
@@ -258,87 +341,72 @@ def parse_asc(filepath: str) -> pd.DataFrame:
         return _rows_from_can_messages(reader)
 
 
+# ── MDF4 (asammdf) ───────────────────────────────────────────────────────────
+
 def parse_mdf(filepath: str) -> pd.DataFrame:
     """Parse an MDF4 CAN capture (.mf4/.mdf, e.g. CANedge) via asammdf.
 
-    Requires the optional ``asammdf`` dependency. Raises a clear ImportError
-    telling the user how to install it when the package is missing.
+    Requires the optional ``asammdf`` dependency (``pip install canlab[mdf]``).
     """
     try:
         from asammdf import MDF
     except ImportError as e:
         raise ImportError(
             "Reading MDF4 (.mf4/.mdf) captures requires the 'asammdf' package. "
-            "Install it with: pip install asammdf"
-        ) from e
+            "Install it with: pip install asammdf") from e
+
+    def _get(mdf, name):
+        try:
+            return np.asarray(mdf.get(name).samples)
+        except Exception:
+            return None
 
     rows = []
     with MDF(filepath) as mdf:
-        # asammdf exposes raw CAN frames through the bus-logging helper; each
-        # returned Signal carries a structured record with ID/DLC/DataBytes.
-        try:
-            bus_signals = mdf.get_bus_signals("CAN") if hasattr(mdf, "get_bus_signals") else []
-        except Exception:
-            bus_signals = []
-
-        # Preferred path: iterate raw CAN_DataFrame records directly.
-        frame_names = [
-            name for name in mdf.channels_db
-            if "CAN_DataFrame" in name
-        ]
-        seen = set()
-        for name in frame_names:
+        bases = []
+        for name in mdf.channels_db:
             base = name.split(".")[0]
-            if base in seen:
-                continue
-            seen.add(base)
+            if "CAN_DataFrame" in base and base not in bases:
+                bases.append(base)
+        for base in bases:
             try:
-                ids = mdf.get(f"{base}.ID")
-                timestamps = ids.timestamps
-                id_vals = np.asarray(ids.samples)
-                dlcs = np.asarray(mdf.get(f"{base}.DLC").samples)
-                data_bytes = np.asarray(mdf.get(f"{base}.DataBytes").samples)
-                try:
-                    ide = np.asarray(mdf.get(f"{base}.IDE").samples)
-                except Exception:
-                    ide = None
+                ids_sig = mdf.get(f"{base}.ID")
             except Exception:
                 continue
-
+            timestamps = np.asarray(ids_sig.timestamps)
+            id_vals = np.asarray(ids_sig.samples)
+            dlcs = _get(mdf, f"{base}.DLC")
+            lengths = _get(mdf, f"{base}.DataLength")
+            data_bytes = _get(mdf, f"{base}.DataBytes")
+            ide = _get(mdf, f"{base}.IDE")
+            bus = _get(mdf, f"{base}.BusChannel")
+            if data_bytes is None:
+                continue
             for i in range(len(timestamps)):
-                dlc = int(dlcs[i]) if i < len(dlcs) else 0
-                raw = data_bytes[i]
-                data = bytes(int(b) & 0xFF for b in np.asarray(raw).ravel()[:8])
-                byte_vals = list(data[:8]) + [np.nan] * (8 - min(len(data), 8))
-                extended = bool(ide[i]) if ide is not None else int(id_vals[i]) > 0x7FF
-                rows.append({
-                    "Timestamp": float(timestamps[i]),
-                    "ID":        _normalize_id(int(id_vals[i])),
-                    "Bus":       0,
-                    "DLC":       dlc,
-                    "Extended":  extended,
-                    **{f"B{j}": byte_vals[j] for j in range(8)},
-                })
+                raw = np.asarray(data_bytes[i]).ravel()
+                if lengths is not None and i < len(lengths):
+                    n = int(lengths[i])
+                elif dlcs is not None and i < len(dlcs):
+                    n = DLC_TO_LEN.get(int(dlcs[i]), int(dlcs[i]))
+                else:
+                    n = len(raw)
+                data = bytes(int(b) & 0xFF for b in raw[:min(n, 64)])
+                arb = int(id_vals[i])
+                extended = bool(ide[i]) if ide is not None and i < len(ide) else arb > CAN_SFF_MASK
+                b = int(bus[i]) if bus is not None and i < len(bus) else 0
+                rows.append(make_row(float(timestamps[i]), arb & CAN_EFF_MASK, extended, b, data))
+    return _finish(rows)
 
-    df = pd.DataFrame(rows)
-    if df.empty:
-        return df
-    df = df.sort_values("Timestamp").reset_index(drop=True)
-    df["Delta"] = _compute_delta(df)
-    return df
 
+# ── dispatch ─────────────────────────────────────────────────────────────────
 
 def parse_log_file(filepath: str) -> pd.DataFrame:
-    """Auto-detect format and parse.
-
-    Supports .csv, .log, .rlog, .qlog, .pcap, .pcapng, .blf, .asc,
-    and MDF4 .mf4/.mdf (CANedge).
-    """
+    """Auto-detect the capture format from the suffix/header and parse it."""
     path = Path(filepath)
     suffix = path.suffix.lower()
     try:
         if suffix in (".rlog", ".qlog"):
-            from core.openpilot_parser import parse_rlog
+            from canlab.core.openpilot_parser import parse_rlog
             return parse_rlog(filepath)
         if suffix in (".pcap", ".pcapng"):
             return parse_pcap(filepath)
@@ -349,90 +417,16 @@ def parse_log_file(filepath: str) -> pd.DataFrame:
         if suffix in (".mf4", ".mdf"):
             return parse_mdf(filepath)
         if suffix == ".log":
-            # candump marks CAN FD frames with a double '##' (id##flags+data).
-            # The classic parser's single-'#' regex mangles those, so detect FD
-            # frames up front and use the FD-aware parser when present.
-            if _candump_has_fd(filepath):
-                return parse_candump_fd(filepath)
             return parse_candump_log(filepath)
-        # Try SavvyCAN first
-        with open(filepath) as f:
+        with open(filepath, encoding="utf-8-sig", errors="replace") as f:
             header = f.readline()
         if "Time Stamp" in header or "D1" in header:
             return parse_savvycan_csv(filepath)
-        # Fall back to candump
         return parse_candump_log(filepath)
     except Exception as e:
         raise ValueError(f"Failed to parse {filepath}: {e}") from e
 
 
-def _candump_has_fd(filepath: str, sniff_lines: int = 2000) -> bool:
-    """True if any of the first sniff_lines candump lines is a CAN FD frame."""
-    fd_re = re.compile(r"\)\s+\S+\s+[0-9A-Fa-f]+##")
-    try:
-        with open(filepath) as f:
-            for i, line in enumerate(f):
-                if i >= sniff_lines:
-                    break
-                if fd_re.search(line):
-                    return True
-    except Exception:
-        return False
-    return False
-
-
-def parse_candump_fd(filepath: str) -> pd.DataFrame:
-    """
-    Parse candump logs that contain CAN FD frames (DLC > 8).
-    Lines with ## prefix (FD frames) are supported alongside classic frames.
-    FD frames get B0..B{n-1} columns; missing classic columns filled with NaN.
-    """
-    rows = []
-    pattern_classic = re.compile(
-        r"\((\d+\.\d+)\)\s+(\S+)\s+([0-9A-Fa-f]+)#([0-9A-Fa-f]*)"
-    )
-    # CAN FD: (ts) iface ID##FLAGS DATA
-    pattern_fd = re.compile(
-        r"\((\d+\.\d+)\)\s+(\S+)\s+([0-9A-Fa-f]+)##([0-9A-Fa-f])([0-9A-Fa-f]*)"
-    )
-    with open(filepath) as f:
-        for line in f:
-            line = line.strip()
-            m_fd = pattern_fd.match(line)
-            m_cl = pattern_classic.match(line)
-
-            if m_fd:
-                ts, iface, can_id, _flags, data_hex = m_fd.groups()
-            elif m_cl:
-                ts, iface, can_id, data_hex = m_cl.groups()
-            else:
-                continue
-
-            data_hex = data_hex.upper()
-            byte_vals = [int(data_hex[i:i+2], 16) for i in range(0, len(data_hex), 2)]
-            dlc = len(byte_vals)
-            row: dict = {
-                "Timestamp": float(ts),
-                "ID":        _normalize_id(can_id),
-                "Bus":       iface,
-                "DLC":       dlc,
-            }
-            for i in range(max(dlc, 8)):
-                row[f"B{i}"] = byte_vals[i] if i < dlc else np.nan
-            rows.append(row)
-
-    df = pd.DataFrame(rows)
-    if not df.empty:
-        df = df.sort_values("Timestamp").reset_index(drop=True)
-        df["Delta"] = _compute_delta(df)
-    return df
-
-
 def _normalize_id(val) -> str:
     # Kept for backwards compatibility; canonical logic lives in core.canid.
-    from core.canid import normalize_id
     return normalize_id(val)
-
-
-def _compute_delta(df: pd.DataFrame) -> pd.Series:
-    return df.groupby("ID")["Timestamp"].diff().fillna(0.0)

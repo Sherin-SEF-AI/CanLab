@@ -3,7 +3,7 @@
 
 import sys
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 ROOT = Path("canlab")
 
@@ -14,14 +14,16 @@ pil_datas, pil_binaries, pil_hiddenimports = collect_all("PIL")
 
 a = Analysis(
     [str(ROOT / "main.py")],
-    pathex=["canlab"],
+    pathex=["."],
     binaries=pil_binaries,
     datas=[
-        (str(ROOT / "canlab.png"),             "."           ),
-        (str(ROOT / "sample_data"),            "sample_data" ),
+        (str(ROOT / "canlab.png"),             "canlab"             ),
+        (str(ROOT / "assets"),                 "canlab/assets"      ),
+        (str(ROOT / "sample_data"),            "canlab/sample_data" ),
         *pil_datas,
     ],
     hiddenimports=[
+        *collect_submodules("canlab"),
         # PyQt6
         "PyQt6", "PyQt6.QtCore", "PyQt6.QtWidgets", "PyQt6.QtGui",
         "PyQt6.QtNetwork", "PyQt6.QtTest", "PyQt6.sip",

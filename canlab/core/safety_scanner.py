@@ -5,7 +5,8 @@ Sweeps a signal value from min → max in configurable steps while monitoring
 a watchdog ID. If the watchdog ID disappears (frequency drops to zero) or an
 anomaly frame arrives, the scan aborts and emits safety_cutout.
 
-Reuses InjectionWorker internals (pack_signal, hyundai_checksum).
+Frames are packed and stamped exactly as the injector does, using the
+selected vehicle profile.
 """
 import time
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -50,8 +51,12 @@ class SafetyScanWorker(QThread):
         self._last_watchdog_ts = time.monotonic()
 
     def run(self):
-        from core.injection import pack_signal, hyundai_checksum
+        from canlab.core.injection import annotate, pack_signal
+        from canlab.core import safety
+        from canlab.core.safety import (BusNotArmedError, BlockedIdError,
+                                         require_armed)
         import can
+        safety.register_tx_worker(self)
 
         step_size = (self._max - self._min) / (self._steps - 1)
         mid_str   = self._sig.get("message_id", "0")
@@ -59,8 +64,6 @@ class SafetyScanWorker(QThread):
             mid = int(mid_str, 16)
         except (ValueError, TypeError):
             mid = 0
-
-        from core.safety import require_armed, BusNotArmedError
 
         for i in range(self._steps):
             if self._abort:
@@ -80,13 +83,10 @@ class SafetyScanWorker(QThread):
             value = self._min + i * step_size
             data  = pack_signal(value, self._sig)
 
-            if self._apply_counter:
-                # counter in upper nibble of byte 0
-                data[0] = (data[0] & 0x0F) | ((self._counter & 0x0F) << 4)
-                self._counter = (self._counter + 1) & 0x0F
-
-            if self._apply_checksum:
-                data[7] = hyundai_checksum(bytes(data), mid)
+            self._counter = (self._counter + 1) & 0xFF
+            annotate(data, mid, self._counter,
+                     apply_counter=self._apply_counter,
+                     apply_checksum=self._apply_checksum)
 
             try:
                 msg = can.Message(
@@ -94,9 +94,14 @@ class SafetyScanWorker(QThread):
                     data=bytes(data),
                     is_extended_id=False,
                 )
-                self._bus.send(msg)
+                safety.gated_send(self._bus, msg)
+            except (BusNotArmedError, BlockedIdError) as e:
+                self.error.emit(str(e))
+                safety.unregister_tx_worker(self)
+                return
             except Exception as e:
                 self.error.emit(str(e))
+                safety.unregister_tx_worker(self)
                 return
 
             self.step_done.emit(value, bytes(data))
@@ -110,5 +115,6 @@ class SafetyScanWorker(QThread):
 
             time.sleep(self._step_delay)
 
+        safety.unregister_tx_worker(self)
         if not self._abort:
             self.scan_finished.emit()

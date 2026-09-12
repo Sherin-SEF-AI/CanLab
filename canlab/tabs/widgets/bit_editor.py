@@ -10,46 +10,77 @@ Bit numbering follows cantools / DBC convention:
   Big-endian (Motorola): MSB = start_bit
 """
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox
-from PyQt6.QtCore    import Qt, pyqtSignal, QRect, QPoint
+from PyQt6.QtCore    import Qt, pyqtSignal, QPoint
 from PyQt6.QtGui     import QPainter, QPen, QBrush, QColor, QFont
 
-from theme import COLORS, mono_font
+from canlab.theme import COLORS, mono_font
+from canlab.core.bit_coords import grid_to_dbc, dbc_to_grid
 
 
 CELL  = 28    # px per bit cell
-ROWS  = 8
 COLS  = 8
-TOTAL = ROWS * COLS   # 64 bits
+DEFAULT_ROWS = 8      # classic CAN; an FD message can be up to 64 rows
+MAX_ROWS = 64
 
 
 class _Grid(QWidget):
     """Raw 8×8 grid. Mouse events handle selection."""
 
-    selection_changed = pyqtSignal(int, int)   # (start_bit, length)
+    selection_changed = pyqtSignal(int, int)   # (first grid cell, cell count) of a drag
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._sel_start  = -1
+        self._sel_start  = -1          # drag range (grid indices) while the mouse is down
         self._sel_end    = -1
+        self._cells: set = set()       # committed selection, painted after a drag
         self._hover_bit  = -1
-        self._data_bytes = bytes(8)
-        self.setMinimumSize(COLS * CELL + 2, ROWS * CELL + 2)
-        self.setMaximumSize(COLS * CELL + 2, ROWS * CELL + 2)
+        self._rows = DEFAULT_ROWS
+        self._data_bytes = bytes(self._rows)
+        self._apply_size()
         self.setMouseTracking(True)
 
-    def set_data(self, data: bytes) -> None:
-        self._data_bytes = data.ljust(8, b"\x00")[:8]
+    def _apply_size(self) -> None:
+        self.setMinimumSize(COLS * CELL + 2, self._rows * CELL + 2)
+        self.setMaximumSize(COLS * CELL + 2, self._rows * CELL + 2)
+
+    @property
+    def rows(self) -> int:
+        return self._rows
+
+    def set_rows(self, rows: int) -> None:
+        """Size the grid to the message: 8 bytes for classic CAN, up to 64."""
+        rows = max(1, min(MAX_ROWS, int(rows)))
+        if rows == self._rows:
+            return
+        self._rows = rows
+        self._data_bytes = self._data_bytes.ljust(rows, b"\x00")[:rows]
+        self._cells = {c for c in self._cells if c < rows * COLS}
+        self._apply_size()
+        self.updateGeometry()
         self.update()
 
-    def set_selection(self, start_bit: int, length: int) -> None:
-        self._sel_start = start_bit
-        self._sel_end   = start_bit + length - 1
+    def set_data(self, data: bytes) -> None:
+        # A frame longer than the grid grows it; that is how an FD frame
+        # arriving at the preview widens the editor without a separate step.
+        if len(data) > self._rows:
+            self.set_rows(len(data))
+        self._data_bytes = data.ljust(self._rows, b"\x00")[:self._rows]
         self.update()
+
+    def set_cells(self, cells) -> None:
+        """Highlight exactly these grid cells and drop any drag range."""
+        self._cells = set(int(c) for c in cells)
+        self._sel_start = self._sel_end = -1
+        self.update()
+
+    @property
+    def cells(self) -> set:
+        return set(self._cells)
 
     def _bit_at(self, pos: QPoint) -> int:
         col = pos.x() // CELL
         row = pos.y() // CELL
-        if 0 <= col < COLS and 0 <= row < ROWS:
+        if 0 <= col < COLS and 0 <= row < self._rows:
             return row * COLS + col
         return -1
 
@@ -86,10 +117,12 @@ class _Grid(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        lo = min(self._sel_start, self._sel_end) if self._sel_start >= 0 else -1
-        hi = max(self._sel_start, self._sel_end) if self._sel_start >= 0 else -1
+        dragging = self._sel_start >= 0
+        lo = min(self._sel_start, self._sel_end) if dragging else -1
+        hi = max(self._sel_start, self._sel_end) if dragging else -1
 
-        for bit in range(TOTAL):
+        for bit in range(self._rows * COLS):
+            selected = (lo <= bit <= hi) if dragging else (bit in self._cells)
             row = bit // COLS
             col = bit %  COLS
             x   = col * CELL
@@ -101,7 +134,7 @@ class _Grid(QWidget):
             val    = bool(self._data_bytes[byte_i] & (1 << bit_i)) if byte_i < len(self._data_bytes) else False
 
             # Background
-            if lo <= bit <= hi:
+            if selected:
                 bg = QColor(COLORS["green"])
                 bg.setAlpha(180)
             elif bit == self._hover_bit:
@@ -113,7 +146,7 @@ class _Grid(QWidget):
             p.fillRect(x + 1, y + 1, CELL - 2, CELL - 2, QBrush(bg))
 
             # Bit value text
-            text_color = QColor(COLORS["bg"]) if lo <= bit <= hi else (
+            text_color = QColor(COLORS["bg"]) if selected else (
                 QColor(COLORS["green"]) if val else QColor(COLORS["dim"])
             )
             p.setPen(text_color)
@@ -128,7 +161,7 @@ class _Grid(QWidget):
         # Byte labels on left (row headers)
         p.setPen(QColor(COLORS["dim"]))
         p.setFont(QFont("Courier New", 7))
-        for row in range(ROWS):
+        for row in range(self._rows):
             p.drawText(-20, row * CELL, 18, CELL,
                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                        f"B{row}")
@@ -196,28 +229,39 @@ class BitGridWidget(QWidget):
     def set_data(self, data: bytes) -> None:
         self._grid.set_data(data)
 
-    def set_selection(self, start_bit: int, length: int) -> None:
-        self._start_bit = start_bit
-        self._length    = length
-        self._grid.set_selection(start_bit, length)
+    def set_rows(self, rows: int) -> None:
+        """Size the grid to the message length: 8 for classic CAN, up to 64."""
+        self._grid.set_rows(rows)
+
+    def set_selection(self, start_bit: int, length: int, little_endian=None) -> None:
+        """Show a DBC signal (start bit in DBC numbering) on the grid."""
+        if little_endian is not None:
+            self.chk_endian.blockSignals(True)
+            self.chk_endian.setChecked(bool(little_endian))
+            self.chk_endian.blockSignals(False)
+        self._start_bit = int(start_bit)
+        self._length    = int(length)
+        self._grid.set_cells(dbc_to_grid(self._start_bit, self._length,
+                                         self.chk_endian.isChecked()))
         self._update_label()
 
-    def _on_grid_sel(self, start_bit: int, length: int):
-        self._start_bit = start_bit
-        self._length    = length
-        self._update_label()
-        self.selection_changed.emit(
-            start_bit, length, self.chk_endian.isChecked()
-        )
+    def _on_grid_sel(self, first_cell: int, count: int):
+        little = self.chk_endian.isChecked()
+        start, length = grid_to_dbc(range(first_cell, first_cell + count), little)
+        self.set_selection(start, length)
+        self.selection_changed.emit(start, length, little)
 
-    def _on_endian_toggle(self, _checked: bool):
-        if self._length > 0:
-            self.selection_changed.emit(
-                self._start_bit, self._length, self.chk_endian.isChecked()
-            )
+    def _on_endian_toggle(self, checked: bool):
+        # Keep the highlighted cells; re-derive the DBC start bit for the new order.
+        cells = self._grid.cells
+        if not cells:
+            return
+        start, length = grid_to_dbc(cells, checked)
+        self.set_selection(start, length)
+        self.selection_changed.emit(start, length, checked)
 
     def _update_label(self):
+        order = "little-endian (LSB)" if self.chk_endian.isChecked() else "big-endian (MSB)"
         self.lbl_info.setText(
-            f"start_bit: {self._start_bit}  length: {self._length}  "
-            f"bits [{self._start_bit}…{self._start_bit + self._length - 1}]"
+            f"start_bit: {self._start_bit}  length: {self._length}  [{order}]"
         )

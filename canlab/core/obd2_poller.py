@@ -2,7 +2,7 @@
 import time
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from core.obd2_pids import PID_TABLE, decode_pid, supported_pids_from_mask
+from canlab.core.obd2_pids import PID_TABLE, decode_pid, supported_pids_from_mask
 
 # Physical ECU address: tx=0x7E0 → rx=0x7E8 (primary ECU)
 _TX_ID = 0x7E0
@@ -29,9 +29,15 @@ class OBD2Poller(QThread):
         self.wait(2000)
 
     def run(self):
-        from core.isotp import ISOTPSession
-        session = ISOTPSession(self._bus, tx_id=_TX_ID, rx_id=_RX_ID)
+        from canlab.core.isotp import ISOTPSession
+        from canlab.core import safety
+        safety.register_tx_worker(self)
+        try:
+            self._run(ISOTPSession(self._bus, tx_id=_TX_ID, rx_id=_RX_ID))
+        finally:
+            safety.unregister_tx_worker(self)
 
+    def _run(self, session):
         if self._discover:
             self._do_discover(session)
             return
@@ -41,13 +47,10 @@ class OBD2Poller(QThread):
                 if not self._running:
                     break
                 try:
-                    # Service payload only — ISOTPSession adds the PCI byte.
-                    # Passing a pre-built "02 01 <pid>" produced "03 02 01 <pid>"
-                    # on the wire, which no ECU answers.
-                    payload = session.send(bytes([0x01, pid]), timeout=0.5)
-                    if payload and len(payload) >= 3 and payload[0] == 0x41 and payload[1] == pid:
-                        data = payload[2:]
-                        value = decode_pid(pid, data)
+                    # Mode 01 request: service + PID. ISOTPSession adds the PCI.
+                    payload = session.request(bytes([0x01, pid]), timeout=0.5)
+                    if payload and len(payload) >= 2 and payload[0] == 0x41 and payload[1] == pid:
+                        value = decode_pid(pid, payload[2:])
                         if value is not None:
                             unit = PID_TABLE.get(pid, {}).get("unit", "")
                             self.pid_value.emit(pid, value, unit)
@@ -66,8 +69,7 @@ class OBD2Poller(QThread):
             for base in (0x00, 0x20, 0x40, 0x60, 0x80, 0xA0, 0xC0):
                 if not self._running:
                     break
-                # Service payload only — the session adds the PCI byte.
-                payload = session.send(bytes([0x01, base]), timeout=1.0)
+                payload = session.request(bytes([0x01, base]), timeout=1.0)
                 if not (payload and len(payload) >= 6
                         and payload[0] == 0x41 and payload[1] == base):
                     break

@@ -9,16 +9,17 @@ openpilot log format (simplified):
     address, busTime, dat (bytes), src (bus index).
 """
 from pathlib import Path
-from typing import Optional
-import numpy as np
 import pandas as pd
+import logging
+
+log = logging.getLogger(__name__)
 
 _CAPNP_AVAILABLE = False
 try:
     import capnp  # noqa: F401
     _CAPNP_AVAILABLE = True
 except ImportError:
-    pass
+    log.debug("suppressed exception", exc_info=True)
 
 
 def is_available() -> bool:
@@ -43,7 +44,6 @@ def parse_rlog(filepath: str) -> pd.DataFrame:
             "Run: pip install pycapnp --break-system-packages"
         )
 
-    import capnp  # noqa: F811
     path = Path(filepath)
 
     # openpilot logs are a concatenated stream of capnp-encoded Event messages.
@@ -61,20 +61,8 @@ def parse_rlog(filepath: str) -> pd.DataFrame:
     except Exception as e:
         raise RuntimeError(f"Failed to parse openpilot rlog: {e}") from e
 
-    if not rows:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(rows)
-    df = df.sort_values("Timestamp").reset_index(drop=True)
-
-    # Normalise byte columns B0..B7 (pad shorter payloads)
-    for i in range(8):
-        col = f"B{i}"
-        if col not in df.columns:
-            df[col] = np.nan
-
-    df["Delta"] = _compute_delta(df)
-    return df
+    from canlab.core.log_parser import _finish
+    return _finish(rows)
 
 
 def _parse_with_cereal(path: Path) -> list:
@@ -107,28 +95,13 @@ def _parse_with_cereal(path: Path) -> list:
                 if ts_base == 0.0:
                     ts_base = ts
                 for frame in event.can:
-                    dat = bytes(frame.dat)
-                    byte_dict = {f"B{i}": dat[i] if i < len(dat) else np.nan
-                                 for i in range(8)}
-                    rows.append({
-                        "Timestamp": ts - ts_base,
-                        "ID":        _normalize_id(frame.address),
-                        "Bus":       frame.src,
-                        "DLC":       len(dat),
-                        **byte_dict,
-                    })
+                    from canlab.core.log_parser import make_row
+                    dat = bytes(frame.dat)[:64]
+                    rows.append(make_row(ts - ts_base, frame.address,
+                                         int(frame.address) > 0x7FF, frame.src, dat))
             except Exception:
                 continue
 
     return rows
 
 
-def _compute_delta(df: pd.DataFrame) -> pd.Series:
-    deltas = pd.Series(index=df.index, dtype=float)
-    last_ts: dict = {}
-    for idx, row in df.iterrows():
-        cid = row["ID"]
-        ts  = row["Timestamp"]
-        deltas[idx] = ts - last_ts[cid] if cid in last_ts else 0.0
-        last_ts[cid] = ts
-    return deltas

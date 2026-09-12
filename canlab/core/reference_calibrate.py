@@ -24,7 +24,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from core.calibrate_refine import mask_sentinels, snap_calibration
+from canlab.core.calibrate_refine import mask_sentinels, snap_calibration
 
 BYTE_COLS = [f"B{i}" for i in range(8)]
 
@@ -35,7 +35,6 @@ _DEFAULT_WIDTHS = (8, 12, 16)
 
 def _byte_matrix(frames_for_id: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     """Return (timestamps, byte_matrix[N,8]) for one ID, NaN bytes -> 0."""
-    cols = [c for c in BYTE_COLS if c in frames_for_id.columns]
     ts = frames_for_id["Timestamp"].to_numpy(dtype=float)
     mat = np.zeros((len(frames_for_id), 8), dtype=np.float64)
     for i, c in enumerate(BYTE_COLS):

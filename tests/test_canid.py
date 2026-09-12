@@ -1,7 +1,7 @@
 """Regression tests for core.canid.normalize_id (the .lstrip('0x') bug, C1)."""
 import pytest
 
-from core.canid import normalize_id
+from canlab.core.canid import normalize_id
 
 
 @pytest.mark.parametrize("value,expected", [

@@ -6,8 +6,8 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 import pandas as pd
 
-from core.rest_api import _build_app
-import core.safety as safety
+from canlab.core.rest_api import _build_app
+import canlab.core.safety as safety
 
 
 def _state():
@@ -15,7 +15,7 @@ def _state():
     st.frames_df = pd.DataFrame([{"Timestamp": 0.0, "ID": "0A6", "Bus": 0, "DLC": 8,
                                   **{f"B{i}": i for i in range(8)}}])
     st.dbc_signals = []; st.ai_memory = []
-    st.is_connected = False; st.repo_url = ""; st.fingerprint = {}
+    st.is_connected = False
     st.can_bus = None
     return st
 
@@ -44,10 +44,39 @@ def test_valid_token_returns_data():
     assert r.json()[0]["ID"] == "0A6"
 
 
-def test_inject_blocked_when_disarmed():
+def _state_with_bus(bus):
+    st = _state()
+    st.can_bus = bus
+    return st
+
+
+def test_inject_503_when_no_bus():
+    safety.set_armed(True)
+    r = _client().post("/inject", headers={"X-API-Token": "secret-token"},
+                       json={"id": "200", "data": "01 02"})
+    assert r.status_code == 503        # no bus connected, distinct from the arm gate
     safety.set_armed(False)
-    c = _client()
+
+
+def test_inject_409_when_disarmed_with_bus():
+    from tests.doubles import RecordingBus
+    bus = RecordingBus()
+    safety.set_armed(False)
+    c = TestClient(_build_app(lambda: _state_with_bus(bus), token="secret-token"))
     r = c.post("/inject", headers={"X-API-Token": "secret-token"},
                json={"id": "200", "data": "01 02"})
-    # can_bus is None -> 503, and disarmed -> 409; either way not a success/200.
-    assert r.status_code in (409, 503)
+    assert r.status_code == 409 and not bus.sent
+
+
+def test_inject_sends_when_armed():
+    from tests.doubles import RecordingBus
+    bus = RecordingBus()
+    safety.set_armed(True)
+    try:
+        c = TestClient(_build_app(lambda: _state_with_bus(bus), token="secret-token"))
+        r = c.post("/inject", headers={"X-API-Token": "secret-token"},
+                   json={"id": "200", "data": "01 02"})
+        assert r.status_code == 200 and len(bus.sent) == 1
+        assert bus.sent[0].arbitration_id == 0x200
+    finally:
+        safety.set_armed(False)

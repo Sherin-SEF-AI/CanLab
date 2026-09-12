@@ -1,13 +1,14 @@
-import numpy as np
-import pandas as pd
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QTreeWidget, QTreeWidgetItem,
     QPushButton, QFileDialog, QLabel, QMessageBox,
 )
 from PyQt6.QtCore import Qt
-from theme import COLORS, mono_font
-from core.state import get_state
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+import logging
+
+log = logging.getLogger(__name__)
 
 pg.setConfigOption("background", COLORS["bg"])
 pg.setConfigOption("foreground", COLORS["text"])
@@ -24,8 +25,6 @@ class PlotTab(QWidget):
         self._color_idx    = 0
         # key -> (PlotItem, DataItem, color, label)
         self._plot_items: dict = {}
-        # key -> {"kind","can_id","byte","sig_name"} for live updates
-        self._plot_meta: dict = {}
         self._live_enabled = False
         self._build_ui()
         self._state.frames_updated.connect(self._refresh_tree)
@@ -133,8 +132,10 @@ class PlotTab(QWidget):
             parent.setData(0, Qt.ItemDataRole.UserRole, ("id", can_id, None))
             parent.setCheckState(0, Qt.CheckState.Unchecked)
             parent.setFont(0, mono_font())
+            # Filter once per ID, not once per byte column: this used to run
+            # eight full boolean masks over the whole capture for every ID.
+            id_df = df[df["ID"] == can_id]
             for col in BYTE_COLS:
-                id_df = df[df["ID"] == can_id]
                 if col not in id_df.columns or id_df[col].dropna().empty:
                     continue
                 child = QTreeWidgetItem([col])
@@ -142,10 +143,8 @@ class PlotTab(QWidget):
                 child.setCheckState(0, Qt.CheckState.Unchecked)
                 child.setFont(0, mono_font())
                 parent.addChild(child)
-            from core.canid import normalize_id
-            nid = normalize_id(can_id)
             dbc_sigs = [s for s in self._state.dbc_signals
-                        if normalize_id(s.get("message_id", "")) == nid]
+                        if s.get("message_id", "").upper() == can_id.upper()]
             for sig in dbc_sigs:
                 sname = sig.get("signal_name", "?")
                 child = QTreeWidgetItem([f"[DBC] {sname}"])
@@ -191,7 +190,10 @@ class PlotTab(QWidget):
         if not data:
             return
         kind, can_id, detail = data
-        key = f"{can_id}:{detail}"
+        if kind == "dbc":
+            key = f"{can_id}:dbc:{detail.get('signal_name', '?')}"
+        else:
+            key = f"{can_id}:{detail}"
         if item.checkState(0) == Qt.CheckState.Checked:
             self._add_signal(key, kind, can_id, detail)
         else:
@@ -219,11 +221,6 @@ class PlotTab(QWidget):
         self._color_idx += 1
         pen = pg.mkPen(color=color, width=2)
 
-        # sig_name is the decoded-signal key for DBC traces; live updates use it
-        # to pull fresh values. (Previously live update re-parsed the plot key,
-        # which for DBC signals was a stringified dict and never matched, so DBC
-        # traces silently stopped updating in LIVE mode.)
-        sig_name = None
         if kind == "byte" and detail:
             s = df[detail].dropna()
             if s.empty:
@@ -232,23 +229,17 @@ class PlotTab(QWidget):
             y = s.values.astype(float)
             label = f"{can_id} {detail}"
         elif kind == "dbc" and detail:
-            from core.dbc_manager import decode_frame
-            sig_name = detail.get("signal_name", "")
-            vals, times = [], []
-            for _, row in df.iterrows():
-                byte_data = bytes(
-                    int(row[f"B{i}"]) if pd.notna(row.get(f"B{i}")) else 0
-                    for i in range(8)
-                )
-                decoded = decode_frame([detail], can_id, byte_data)
-                if sig_name in decoded:
-                    vals.append(float(decoded[sig_name]))
-                    times.append(row["Timestamp"])
-            if not vals:
+            from canlab.core.dbc_manager import decode_series, dbc_identifier
+            series = decode_series([detail], can_id, df)
+            sname = dbc_identifier(detail.get("signal_name", ""))
+            if series.empty or sname not in series.columns:
                 return
-            t = np.array(times, dtype=float)
-            y = np.array(vals, dtype=float)
-            label = f"{can_id} {sig_name or '?'}"
+            s = series[sname].dropna()
+            if s.empty:
+                return
+            t = series.loc[s.index, "Timestamp"].to_numpy(dtype=float)
+            y = s.to_numpy(dtype=float)
+            label = f"{can_id} {detail.get('signal_name', '?')}"
         else:
             return
 
@@ -264,21 +255,15 @@ class PlotTab(QWidget):
         pi.autoRange()
 
         self._plot_items[key] = (pi, curve, color, label)
-        # Structured metadata for live updates, keyed the same as _plot_items.
-        self._plot_meta[key] = {"kind": kind, "can_id": can_id,
-                                "byte": detail if kind == "byte" else None,
-                                "sig_name": sig_name}
         self._rebuild_layout()
 
     def _remove_signal(self, key: str):
         if key in self._plot_items:
             del self._plot_items[key]
-            self._plot_meta.pop(key, None)
             self._rebuild_layout()
 
     def _clear_plot(self):
         self._plot_items.clear()
-        self._plot_meta.clear()
         self.glw.clear()
         self._color_idx = 0
         self.sig_tree.blockSignals(True)
@@ -318,45 +303,40 @@ class PlotTab(QWidget):
     def _live_update(self):
         if not self._live_enabled or not self._plot_items:
             return
-        db = self._state.dbc_db
+        from canlab.core.dbc_manager import get_db, dbc_identifier
+        try:
+            db = get_db(self._state)
+        except ValueError:
+            db = None
         for key, (pi, curve, color, label) in list(self._plot_items.items()):
-            meta = self._plot_meta.get(key)
-            if not meta:
+            parts = key.split(":", 1)
+            if len(parts) != 2:
                 continue
-            can_id = meta["can_id"]
+            can_id, detail = parts[0], parts[1]
             df = self._state.get_frames_for_id(can_id)
             if df.empty:
                 continue
             df = df.tail(500)
-
-            if meta["kind"] == "byte":
-                col = meta["byte"]
-                s = df[col].dropna() if col in df.columns else None
+            if detail.startswith("B") and detail[1:].isdigit():
+                s = df[detail].dropna() if detail in df.columns else None
                 if s is None or s.empty:
                     continue
                 t = df.loc[s.index, "Timestamp"].values.astype(float)
                 y = s.values.astype(float)
                 curve.setData(t, y)
                 pi.autoRange()
-            elif meta["kind"] == "dbc" and db is not None:
-                sig_name = meta["sig_name"]
-                t_vals, y_vals = [], []
-                try:
-                    msg_id_int = int(can_id, 16)
-                except (ValueError, TypeError):
+            elif db is not None and detail.startswith("dbc:"):
+                from canlab.core.dbc_manager import decode_series
+                series = decode_series(self._state.dbc_signals, can_id, df)
+                col = dbc_identifier(detail[4:])
+                if series.empty or col not in series.columns:
                     continue
-                for _, row in df.iterrows():
-                    try:
-                        raw = bytes(int(row.get(f"B{i}", 0) or 0) for i in range(8))
-                        decoded = db.decode_message(msg_id_int, raw)
-                        if sig_name in decoded:
-                            t_vals.append(float(row["Timestamp"]))
-                            y_vals.append(float(decoded[sig_name]))
-                    except Exception:
-                        pass
-                if t_vals:
-                    curve.setData(np.array(t_vals), np.array(y_vals))
-                    pi.autoRange()
+                s = series[col].dropna()
+                if s.empty:
+                    continue
+                curve.setData(series.loc[s.index, "Timestamp"].to_numpy(dtype=float),
+                              s.to_numpy(dtype=float))
+                pi.autoRange()
 
     # ── Mouse / export ────────────────────────────────────────────────────────
 
@@ -380,15 +360,3 @@ class PlotTab(QWidget):
             exporter.export(path)
         except Exception as e:
             QMessageBox.warning(self, "Screenshot", f"Could not save screenshot: {e}")
-
-    def add_event_markers(self, events: list[dict]):
-        for pi, curve, color, label in self._plot_items.values():
-            for evt in events:
-                ts = evt.get("timestamp", 0)
-                line = pg.InfiniteLine(
-                    pos=ts, angle=90, movable=False,
-                    pen=pg.mkPen(color=COLORS["amber"], width=1, style=Qt.PenStyle.DashLine),
-                    label=evt.get("event", ""),
-                    labelOpts={"color": COLORS["amber"], "position": 0.9},
-                )
-                pi.addItem(line)

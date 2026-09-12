@@ -14,7 +14,7 @@ Wire format (every message)::
 
 Typical use::
 
-    from core.doip import DoIPClient, discover
+    from canlab.core.doip import DoIPClient, discover
 
     for entity in discover(timeout=2.0):
         print(entity["ip"], entity["vin"], hex(entity["logical_address"]))
@@ -32,6 +32,9 @@ from __future__ import annotations
 import socket
 import struct
 from typing import NamedTuple, Optional
+import logging
+
+log = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
 # Protocol constants
@@ -338,6 +341,8 @@ class DoIPClient:
 
     def _routing_activation(self, activation_type: int) -> None:
         assert self._sock is not None
+        from canlab.core.safety import require_armed
+        require_armed()
         self._sock.sendall(
             encode_routing_activation_request(self.source_address, activation_type)
         )
@@ -368,6 +373,8 @@ class DoIPClient:
         """
         if self._sock is None or not self._activated:
             raise DoIPError("DoIPClient is not connected/activated; call connect() first")
+        from canlab.core.safety import require_armed
+        require_armed()
 
         self._sock.sendall(
             encode_diagnostic_message(
@@ -404,7 +411,7 @@ class DoIPClient:
             try:
                 self._sock.close()
             except OSError:
-                pass
+                log.debug("suppressed exception", exc_info=True)
             self._sock = None
         self._activated = False
 
@@ -441,12 +448,14 @@ def discover(timeout: float = 2.0, port: int = DEFAULT_PORT,
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     except OSError:
-        pass
+        log.debug("suppressed exception", exc_info=True)
     sock.settimeout(timeout)
 
     results: list[dict] = []
     seen: set[tuple[str, int]] = set()
     try:
+        from canlab.core.safety import require_armed
+        require_armed()
         sock.sendto(encode_vehicle_id_request(), (broadcast, port))
         import time
         deadline = time.monotonic() + timeout

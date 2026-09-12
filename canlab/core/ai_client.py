@@ -1,17 +1,23 @@
-import anthropic
 import pandas as pd
 from PyQt6.QtCore import QThread, pyqtSignal
 
 GROQ_DEFAULT_MODEL      = "llama-3.3-70b-versatile"
 ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-5"
+OPENAI_DEFAULT_MODEL    = "gpt-5"
 OLLAMA_DEFAULT_MODEL    = "llama3.1"
 
+DEFAULT_MODELS = {
+    "Anthropic": ANTHROPIC_DEFAULT_MODEL,
+    "OpenAI":    OPENAI_DEFAULT_MODEL,
+    "Groq":      GROQ_DEFAULT_MODEL,
+    "Ollama":    OLLAMA_DEFAULT_MODEL,
+}
 
-SYSTEM_PROMPT = """You are an expert automotive CAN bus reverse engineer specializing in Hyundai/Kia vehicles.
-Analyze CAN frame data and identify signals. The vehicle is a Hyundai Kona.
-Known Hyundai CAN characteristics: 500kbps bus speed, little-endian default,
-many signals use rolling counters in the upper nibble of byte 0,
-checksums often in byte 7. Reference hyundai_kia_generic.dbc patterns.
+
+SYSTEM_PROMPT = """You are an expert automotive CAN bus reverse engineer.
+Analyse the CAN frame data given and identify signals. The vehicle is unknown
+unless the user says otherwise: do not assume a manufacturer, and say so when
+the data is consistent with more than one interpretation.
 Format your response with clear sections:
 
 SIGNAL IDENTIFICATION
@@ -27,24 +33,10 @@ def build_prompt(
     id_hex: str,
     frames_df: pd.DataFrame,
     context: str = "",
-    event_correlations: list = None,
-    repo_context: dict = None,
     ml_insights: str = "",
 ) -> str:
     lines = [f"CAN ID: 0x{id_hex}  ({int(id_hex, 16)} decimal)"]
     lines.append(f"Frame count: {len(frames_df)}")
-
-    # Repo context block — gives Claude vehicle/project knowledge
-    if repo_context:
-        repo_name = repo_context.get("repo", "")
-        repo_desc = repo_context.get("description", "")
-        readme_snippet = repo_context.get("readme_snippet", "")
-        if repo_name:
-            lines.append(f"\nSource repository: {repo_context.get('owner','')}/{repo_name}")
-        if repo_desc:
-            lines.append(f"Repo description: {repo_desc}")
-        if readme_snippet:
-            lines.append(f"\nRepository notes (README excerpt):\n{readme_snippet}")
 
     if not frames_df.empty:
         total_time = frames_df["Timestamp"].iloc[-1] - frames_df["Timestamp"].iloc[0]
@@ -85,30 +77,10 @@ def build_prompt(
         lines.append(ml_insights.strip())
         lines.append("=== END ML PRE-ANALYSIS ===")
 
-    if event_correlations:
-        lines.append("\nCorrelated events (this ID changed near these timestamps):")
-        for evt in event_correlations:
-            lines.append(f"  - {evt}")
-
     if context.strip():
         lines.append(f"\nUser context: {context.strip()}")
 
     return "\n".join(lines)
-
-
-def _readme_snippet(readme: str, max_chars: int = 800) -> str:
-    """Return the most annotation-rich portion of a README."""
-    if not readme:
-        return ""
-    lines = readme.splitlines()
-    # Prefer lines with TS / timestamp markers
-    ts_lines = [l for l in lines if "ts" in l.lower() or "timestamp" in l.lower()
-                or any(c.isdigit() for c in l[:10])]
-    if ts_lines:
-        snippet = "\n".join(ts_lines[:40])
-    else:
-        snippet = "\n".join(lines[:40])
-    return snippet[:max_chars]
 
 
 class AIWorker(QThread):
@@ -122,12 +94,11 @@ class AIWorker(QThread):
         id_hex:     str,
         frames_df:  pd.DataFrame,
         context:    str = "",
-        event_correlations: list = None,
-        repo_context: dict = None,
         provider:   str = "Anthropic",
         model:      str = "",
         groq_key:   str = "",
         ml_insights: str = "",
+        openai_key: str = "",
         parent=None,
     ):
         super().__init__(parent)
@@ -135,48 +106,61 @@ class AIWorker(QThread):
         self.id_hex             = id_hex
         self.frames_df          = frames_df
         self.context            = context
-        self.event_correlations = event_correlations or []
-        self.repo_context       = repo_context
         self.provider           = provider
-        self.model              = model or {
-            "Groq":   GROQ_DEFAULT_MODEL,
-            "Ollama": OLLAMA_DEFAULT_MODEL,
-        }.get(provider, ANTHROPIC_DEFAULT_MODEL)
+        self.model              = model or DEFAULT_MODELS.get(provider, ANTHROPIC_DEFAULT_MODEL)
         self.groq_key           = groq_key
+        self.openai_key         = openai_key
         self.ml_insights        = ml_insights
         self._full_response     = ""
+        self._stopped           = False
+
+    def stop(self):
+        """Ask the worker to stop streaming (the request itself is not cancellable)."""
+        self._stopped = True
+        self.requestInterruption()
+        self.wait(3000)
 
     def run(self):
         if self.provider == "Groq":
             self._run_groq()
         elif self.provider == "Ollama":
             self._run_ollama()
+        elif self.provider == "OpenAI":
+            self._run_openai()
         else:
             self._run_anthropic()
 
+    def _system_prompt(self) -> str:
+        """The base prompt plus the selected profile's framing hint (if any)."""
+        try:
+            from canlab.core.vehicle_profile import active_profile
+            hint = active_profile().ai_hint
+        except Exception:
+            hint = ""
+        return f"{SYSTEM_PROMPT}\n\nVehicle profile: {hint}" if hint else SYSTEM_PROMPT
+
     def _build_context(self):
-        rc = None
-        if self.repo_context:
-            rc = dict(self.repo_context)
-            rc["readme_snippet"] = _readme_snippet(rc.get("readme", ""))
         return build_prompt(
-            self.id_hex, self.frames_df,
-            self.context, self.event_correlations,
-            repo_context=rc,
+            self.id_hex, self.frames_df, self.context,
             ml_insights=self.ml_insights,
         )
 
     def _run_anthropic(self):
+        # Imported here, not at module scope: Ollama and Groq users should not
+        # need the Anthropic SDK installed to run the app.
+        import anthropic
         try:
             client = anthropic.Anthropic(api_key=self.api_key)
             prompt = self._build_context()
             with client.messages.stream(
                 model=self.model,
-                max_tokens=1500,
-                system=SYSTEM_PROMPT,
+                max_tokens=4000,
+                system=self._system_prompt(),
                 messages=[{"role": "user", "content": prompt}],
             ) as stream:
                 for text in stream.text_stream:
+                    if self._stopped:
+                        break
                     self._full_response += text
                     self.chunk_received.emit(text)
             self.finished.emit(self._full_response)
@@ -186,6 +170,43 @@ class AIWorker(QThread):
             self.error.emit("Anthropic rate limit exceeded. Wait a moment and retry.")
         except Exception as e:
             self.error.emit(str(e))
+
+    def _run_openai(self):
+        """Stream from the OpenAI API (the ChatGPT models)."""
+        import openai
+        try:
+            client = openai.OpenAI(api_key=self.openai_key)
+            prompt = self._build_context()
+            # max_completion_tokens is the parameter every current model
+            # accepts; the reasoning models reject max_tokens.
+            stream = client.chat.completions.create(
+                model=self.model,
+                max_completion_tokens=4000,
+                messages=[
+                    {"role": "system", "content": self._system_prompt()},
+                    {"role": "user",   "content": prompt},
+                ],
+                stream=True,
+            )
+            for chunk in stream:
+                if self._stopped:
+                    break
+                if not chunk.choices:
+                    continue
+                text = chunk.choices[0].delta.content or ""
+                if text:
+                    self._full_response += text
+                    self.chunk_received.emit(text)
+            self.finished.emit(self._full_response)
+        except openai.AuthenticationError:
+            self.error.emit("Invalid OpenAI API key. Check Settings > API Keys.")
+        except openai.RateLimitError:
+            self.error.emit("OpenAI rate limit exceeded. Wait a moment and retry.")
+        except openai.NotFoundError:
+            self.error.emit(f"OpenAI does not know the model '{self.model}'. "
+                            "Pick another in Settings > API Keys.")
+        except Exception as e:
+            self.error.emit(f"OpenAI error: {e}")
 
     def _run_ollama(self):
         """Stream from a local Ollama server (fully offline, no API key)."""
@@ -198,7 +219,7 @@ class AIWorker(QThread):
                 json={
                     "model": self.model,
                     "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "system", "content": self._system_prompt()},
                         {"role": "user",   "content": prompt},
                     ],
                     "stream": True,
@@ -234,7 +255,7 @@ class AIWorker(QThread):
                 model=self.model,
                 max_tokens=1500,
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": self._system_prompt()},
                     {"role": "user",   "content": prompt},
                 ],
                 stream=True,

@@ -22,13 +22,13 @@ def _short_dlc_frames():
 
 
 def test_counter_checksum_detector_handles_nan():
-    from core.counter_checksum_detector import detect_counters_and_checksums
+    from canlab.core.counter_checksum_detector import detect_counters_and_checksums
     result = detect_counters_and_checksums(_short_dlc_frames())   # must not raise
     assert "0A6" in result
 
 
 def test_correlation_engine_handles_short_dlc():
-    from core.correlation_engine import correlate_id_pair
+    from canlab.core.correlation_engine import correlate_id_pair
     df = _short_dlc_frames()
     df2 = df.copy()
     df2["ID"] = "260"
@@ -39,7 +39,7 @@ def test_correlation_engine_handles_short_dlc():
 
 def test_isolation_forest_scoring_handles_nan():
     pytest.importorskip("sklearn")
-    from core.anomaly_detector import IsolationForestBaseline
+    from canlab.core.anomaly_detector import IsolationForestBaseline
     det = IsolationForestBaseline()
     det.fit(_short_dlc_frames())
     if det.is_fitted:

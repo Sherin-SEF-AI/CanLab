@@ -1,14 +1,15 @@
 """OBD-II Live Gauge Dashboard tab."""
 from PyQt6.QtWidgets import (
+    QScrollArea, QFrame,
     QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QPushButton, QLabel,
-    QListWidget, QListWidgetItem, QSpinBox, QGroupBox, QMessageBox,
+    QListWidget, QListWidgetItem, QSpinBox, QMessageBox,
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont
+from PyQt6.QtGui import QPainter, QPen, QColor, QFont
 
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.obd2_pids import PID_TABLE, DEFAULT_PIDS
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+from canlab.core.obd2_pids import PID_TABLE, DEFAULT_PIDS
 
 
 class _GaugeWidget(QWidget):
@@ -29,7 +30,6 @@ class _GaugeWidget(QWidget):
         self.update()
 
     def paintEvent(self, _event):
-        import math
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h  = self.width(), self.height()
@@ -80,7 +80,7 @@ class OBDDashboardTab(QWidget):
 
         # Left — controls
         left = QWidget()
-        left.setFixedWidth(200)
+        left.setMinimumWidth(200)
         ll = QVBoxLayout(left)
         ll.setContentsMargins(4, 4, 4, 4)
         ll.setSpacing(6)
@@ -132,7 +132,19 @@ class OBDDashboardTab(QWidget):
         ll.addWidget(self.btn_stop)
 
         ll.addStretch()
-        root.addWidget(left)
+
+        # See intelligence_tab: a tall column of controls in a plain widget
+        # sets the minimum height of the whole window. In a scroll area it can
+        # shrink, so the application fits a laptop screen.
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_scroll.setMinimumWidth(200)
+        left_scroll.setMaximumWidth(360)
+        root.addWidget(left_scroll)
 
         # Right — gauge grid
         self.gauge_area = QWidget()
@@ -147,7 +159,7 @@ class OBDDashboardTab(QWidget):
                 for item in self.pid_list.selectedItems()]
 
     def _start_polling(self):
-        bus = self._state.can_bus
+        bus = self._state.bus_view(self, range(0x7E8, 0x7F0))
         if bus is None:
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return
@@ -159,7 +171,7 @@ class OBDDashboardTab(QWidget):
         self._stop_polling()
         self._rebuild_gauges(pids)
 
-        from core.obd2_poller import OBD2Poller
+        from canlab.core.obd2_poller import OBD2Poller
         self._poller = OBD2Poller(bus=bus, pids=pids,
                                   interval_ms=self.rate_spin.value())
         self._poller.pid_value.connect(self._state.pid_value_updated)
@@ -175,12 +187,22 @@ class OBDDashboardTab(QWidget):
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
 
+    def cleanup(self):
+        for attr in ("_poller", "_discover_worker"):
+            w = getattr(self, attr, None)
+            if w is not None:
+                try:
+                    w.stop()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+
     def _discover_pids(self):
-        bus = self._state.can_bus
+        bus = self._state.bus_view(self, range(0x7E8, 0x7F0))
         if bus is None:
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return
-        from core.obd2_poller import OBD2Poller
+        from canlab.core.obd2_poller import OBD2Poller
         # Store on self: a local QThread is garbage-collected when this method
         # returns, crashing with "QThread: Destroyed while thread is running".
         self._discover_worker = OBD2Poller(bus=bus, pids=[], discover_only=True)

@@ -1,97 +1,119 @@
-"""Auto-generate DBC signal definitions from statistical analysis."""
-from core.signal_analyzer import analyze_id, _classify
-from core.state import get_state
+"""Draft DBC signal definitions from statistical analysis.
+
+These are *starting points* for the DBC Builder, not identifications: the
+byte-role classifier says which bytes look like counters, checksums or padding,
+and adjacent payload bytes are grouped into candidate signals. Names are
+generic — guessing OEM signal names from an ID is how a tool ends up confidently
+wrong. (The previous version read statistics keys the analyzer never produced,
+so every message came out as a single 8-bit signal at byte 0, and it carried a
+table of Hyundai names that disagreed with opendbc.)
+"""
+from __future__ import annotations
+
+import logging
+
+from canlab.core.signal_analyzer import analyze_id
+from canlab.core.state import get_state
+
+log = logging.getLogger(__name__)
+
+# A byte must vary at least this much to be worth proposing as a signal.
+MIN_RANGE = 2
 
 
-# Known Hyundai Kona message names keyed by hex ID
-_KNOWN_IDS = {
-    "018": ("MDPS12",    "Motor-Driven Power Steering torque"),
-    "02C": ("BRAKE11",   "Brake pressure and switch"),
-    "050": ("LKAS11",    "Lane Keep Assist"),
-    "0A6": ("WHL_SPD11", "Wheel speeds (x4)"),
-    "251": ("MDPS11",    "MDPS status"),
-    "260": ("SAS11",     "Steering angle"),
-    "316": ("TCS13",     "Traction control status"),
-    "544": ("CLU11",     "Cluster / speed"),
-    "593": ("TPMS11",    "Tyre pressure"),
-    "4F1": ("CLUSTER11", "Instrument cluster"),
-}
+def _byte_roles(frames, can_id: str) -> dict:
+    try:
+        from canlab.core.signal_classifier import classify_frame
+        return classify_frame(frames, can_id) or {}
+    except Exception:
+        log.debug("byte-role classification failed for %s", can_id, exc_info=True)
+        return {}
 
-_UNIT_MAP = {
-    "SENSOR":       "val",
-    "COUNTER":      "",
-    "STATUS_FLAG":  "",
-    "DIAGNOSTIC":   "",
-    "UNKNOWN":      "",
-}
+
+def _candidate_groups(stats: dict, roles: dict) -> list[list[int]]:
+    """Group adjacent payload bytes that vary into candidate signals."""
+    byte_stats = stats.get("bytes", {})
+    groups: list[list[int]] = []
+    current: list[int] = []
+    for idx in range(64):
+        col = f"B{idx}"
+        b = byte_stats.get(col)
+        if b is None:
+            break
+        role = (roles.get(col) or {}).get("role", "")
+        interesting = (role not in ("COUNTER", "CHECKSUM", "PADDING")
+                       and b.get("range", 0) >= MIN_RANGE)
+        if interesting:
+            current.append(idx)
+            if len(current) == 2:          # cap a run at 16 bits
+                groups.append(current)
+                current = []
+        else:
+            if current:
+                groups.append(current)
+                current = []
+    if current:
+        groups.append(current)
+    return groups
 
 
 def build_from_analyzer(state=None) -> list:
-    """
-    Iterate all loaded IDs, run signal_analyzer, and produce a list of signal
-    dicts compatible with state.dbc_signals.  Signals are NOT added to state
-    here — caller decides.
-    """
+    """Propose signal dicts for every loaded ID (the caller decides to add them)."""
     if state is None:
         state = get_state()
-
-    if state.frames_df.empty:
+    if len(state.store) == 0:
         return []
 
     signals = []
     for can_id in state.get_unique_ids():
         frames = state.get_frames_for_id(can_id)
-        stats  = analyze_id(frames)
-        sig_type = stats.get("suspected_type", "UNKNOWN")
+        if frames.empty:
+            continue
+        stats = analyze_id(frames)
+        roles = _byte_roles(frames, can_id)
+        msg_name = f"MSG_{can_id}"
+        msg_type = stats.get("suspected_type", "UNKNOWN")
 
-        msg_name, description = _KNOWN_IDS.get(
-            can_id.upper(), (f"MSG_{can_id}", f"Auto-detected {sig_type}")
-        )
+        for group in _candidate_groups(stats, roles):
+            length = 8 * len(group)
+            start = group[0] * 8
+            signals.append({
+                "message_id":   can_id,
+                "message_name": msg_name,
+                "signal_name":  f"{msg_name}_B{group[0]}",
+                "start_bit":    start,
+                "length":       length,
+                "byte_order":   "little",
+                "value_type":   "unsigned",
+                "scale":        1.0,
+                "offset":       0.0,
+                "min_val":      0,
+                "max_val":      (2 ** length) - 1,
+                "unit":         "",
+                "description":  (f"Auto-drafted from {msg_type} message "
+                                 f"0x{can_id}; scale/offset unverified"),
+            })
 
-        # Dominant byte (highest entropy) carries the primary signal
-        entropies = stats.get("byte_entropy", [0]*8)
-        dom_byte  = int(entropies.index(max(entropies))) if entropies else 0
-
-        # Estimate length from unique value range
-        byte_range = stats.get("byte_ranges", [])
-        if byte_range and dom_byte < len(byte_range):
-            lo, hi = byte_range[dom_byte]
-            raw_range = max(1, hi - lo)
-        else:
-            raw_range = 255
-
-        length = 8
-        if raw_range <= 1:
-            length = 1
-        elif raw_range <= 15:
-            length = 4
-        elif raw_range <= 255:
-            length = 8
-        elif raw_range <= 65535:
-            length = 16
-
-        freq = stats.get("frequency_hz", 0)
-        scale = 1.0
-        if "WHL_SPD" in msg_name or "SPD" in msg_name:
-            scale = 0.03125
-        elif "SAS" in msg_name or "MDPS" in msg_name:
-            scale = 0.1
-
-        sig = {
-            "message_id":   can_id,
-            "message_name": msg_name,
-            "signal_name":  f"{msg_name}_SIG{dom_byte}",
-            "start_bit":    dom_byte * 8,
-            "length":       length,
-            "byte_order":   "little",
-            "value_type":   "unsigned",
-            "scale":        scale,
-            "offset":       0.0,
-            "min_val":      0,
-            "max_val":      (2 ** length) - 1,
-            "unit":         _UNIT_MAP.get(sig_type, ""),
-            "description":  description,
-        }
-        signals.append(sig)
-
+        # Record the roles we did identify, so the counter/checksum bytes are
+        # visible in the builder rather than silently dropped.
+        for col, info in sorted(roles.items()):
+            role = info.get("role", "")
+            if role not in ("COUNTER", "CHECKSUM"):
+                continue
+            idx = int(col[1:])
+            signals.append({
+                "message_id":   can_id,
+                "message_name": msg_name,
+                "signal_name":  f"{msg_name}_{role}",
+                "start_bit":    idx * 8,
+                "length":       8,
+                "byte_order":   "little",
+                "value_type":   "unsigned",
+                "scale":        1.0,
+                "offset":       0.0,
+                "min_val":      0,
+                "max_val":      255,
+                "unit":         "",
+                "description":  f"Detected {role.lower()} byte",
+            })
     return signals

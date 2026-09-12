@@ -3,7 +3,7 @@ import struct
 
 import pytest
 
-from core.doip import (
+from canlab.core.doip import (
     DEFAULT_SOURCE_ADDRESS,
     HEADER_SIZE,
     INVERSE_VERSION,
@@ -11,7 +11,6 @@ from core.doip import (
     PT_DIAGNOSTIC_MESSAGE,
     PT_DIAGNOSTIC_MESSAGE_ACK,
     PT_ROUTING_ACTIVATION_REQUEST,
-    PT_ROUTING_ACTIVATION_RESPONSE,
     PT_VEHICLE_ANNOUNCEMENT,
     ROUTING_ACTIVATION_SUCCESS,
     DoIPError,

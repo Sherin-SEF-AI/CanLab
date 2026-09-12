@@ -13,17 +13,19 @@ cache and no connectivity. Nothing here requires the network at import time.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import requests
+import logging
+
+log = logging.getLogger(__name__)
 
 try:  # cantools is a hard dependency of the app, but stay import-safe for tests
     import cantools
 except Exception:  # pragma: no cover - only if cantools is missing
     cantools = None
 
-from core.canid import normalize_id
+from canlab.core.canid import normalize_id
 
 # ── Locations ───────────────────────────────────────────────────────────────────
 
@@ -150,7 +152,7 @@ def refresh_index(force: bool = False, token: str = "", progress=None) -> dict:
         try:
             INDEX_PATH.write_text(json.dumps({"version": _INDEX_VERSION, "dbcs": index}))
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
         _say(f"Indexed {len(index)} opendbc DBC files.")
         return index
 
@@ -255,17 +257,13 @@ _OFFLINE_INDEX = {
 }
 
 
-def scan(state, repo_context: dict = None) -> dict:
+def scan(state) -> dict:
     """
-    Compare state.dbc_signals against offline index + optional repo DBC content.
+    Compare state.dbc_signals against the offline signal-name index.
     Returns {signal_name -> match_info_dict}.
     """
     matches = {}
     index = dict(_OFFLINE_INDEX)
-
-    if repo_context:
-        readme = repo_context.get("readme", "")
-        _enrich_index_from_text(index, readme)
 
     for sig in state.dbc_signals:
         sname = sig.get("signal_name", "")
@@ -278,11 +276,3 @@ def scan(state, repo_context: dict = None) -> dict:
                 break
 
     return matches
-
-
-def _enrich_index_from_text(index: dict, text: str):
-    """Very simple: pull signal names from DBC-style SG_ lines in readme/DBC text."""
-    for m in re.finditer(r"SG_\s+(\w+)\s*:", text):
-        name = m.group(1)
-        if name not in index:
-            index[name] = {"file": "repo", "msg": "?", "id": "?"}

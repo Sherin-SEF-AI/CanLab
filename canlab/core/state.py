@@ -1,6 +1,7 @@
 from PyQt6.QtCore import QObject, pyqtSignal
 import pandas as pd
 
+from canlab.core.frame_store import FrameStore
 
 class AppState(QObject):
     id_selected       = pyqtSignal(str)
@@ -10,70 +11,49 @@ class AppState(QObject):
     can_connected     = pyqtSignal(bool)
     frames_updated    = pyqtSignal()
     source_added      = pyqtSignal(str, int)
-    repo_loaded       = pyqtSignal(dict)
 
-    # New signals for advanced features
     project_loaded      = pyqtSignal()
-    fingerprint_matched = pyqtSignal(dict)
     trigger_fired       = pyqtSignal(dict, object)   # rule, frame
-    uds_response        = pyqtSignal(int, bytes)     # arb_id, data
     replay_tick         = pyqtSignal(int, int)       # current, total
     bus_load_update     = pyqtSignal(float)          # 0.0–1.0
-    opendbc_matched     = pyqtSignal(dict)
-    anomaly_requested   = pyqtSignal(str, object)    # hex_id, frames_df
 
-    # ── New signals for 12-feature additions ──────────────────────────────────
+    # Signals below are the event bus plugins can connect to (see docs/PLUGINS.md).
     canfd_toggled        = pyqtSignal(bool)
     change_detected      = pyqtSignal(list)           # list of delta dicts
-    fuzz_progress        = pyqtSignal(int, int)        # done, total
-    multibus_frame       = pyqtSignal(str, object)     # bus_name, frame
     safety_cutout        = pyqtSignal(float, str)      # value_at_cutout, reason
     note_updated         = pyqtSignal(str)             # signal_key
 
-    # ── New signals for 8 production enhancements ─────────────────────────────
-    isotp_response       = pyqtSignal(int, bytes)      # arb_id, full assembled payload
     bus_health_update    = pyqtSignal(dict)             # health snapshot
-    test_step_completed  = pyqtSignal(int, bool, str)  # step_idx, ok, message
-    j1939_decoded        = pyqtSignal(int, dict)        # pgn, {spn: value}
     dbc_db_updated       = pyqtSignal()                 # cantools cache rebuilt
+    tx_armed_changed     = pyqtSignal(bool)             # ARM TX toggled
 
-    # ── OBD-II live gauges ────────────────────────────────────────────────────
     pid_value_updated    = pyqtSignal(int, float, str)  # pid, value, unit
 
-    # ── Signal Intelligence (ML) ──────────────────────────────────────────────
-    ml_analysis_ready    = pyqtSignal(str, dict)         # id, roles_dict
     anomaly_detected     = pyqtSignal(str, float)        # id, score
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # The cantools Database cached by core.dbc_manager.get_db is rebuilt
+        # lazily after any signal change.
+        self.dbc_updated.connect(self._invalidate_dbc_db)
+        from canlab.core import safety
+        safety.add_observer(self._on_armed_changed)
 
-        # Frames are stored as a base DataFrame plus a list of appended live
-        # chunks; `frames_df` (property below) concatenates them lazily and
-        # caches the result. This keeps live append() at O(chunk) instead of the
-        # O(n) full-DataFrame copy the old concat-per-batch did (which made long
-        # captures O(n²) and eventually froze the UI).
-        self._frames_base:   pd.DataFrame = pd.DataFrame()
-        self._frame_chunks:  list         = []
-        self._frames_cache:  pd.DataFrame = None
+        self._store = FrameStore()
         self.selected_id:      str          = ""
         self.sources:          list         = []
-        self.can_bus           = None
+        self.can_bus           = None      # the BusHub while connected (has .send)
+        self.bus_hub           = None      # core.bus_hub.BusHub
+        self._bus_views: dict  = {}        # owner id -> (hub, Subscription)
         self.is_connected:     bool         = False
         self.dbc_signals:      list         = []
         self.analyzed_ids:     dict         = {}
         self.live_frame_count: int          = 0
         self.frame_rate:       float        = 0.0
-        self.annotations:      dict         = {}
-
-        # GitHub repo context
-        self.repo_info:        dict         = {}
-        self.repo_readme:      str          = ""
-        self.repo_url:         str          = ""
 
         # Advanced feature state
         self.diff_baseline_df: pd.DataFrame = pd.DataFrame()
         self.periodicities:    dict         = {}   # id -> cycle_time_ms
-        self.fingerprint:      dict         = {}   # model, confidence, matched_ids
         self.ai_memory:        list         = []   # list of prior AI conclusions
         self.opendbc_matches:  dict         = {}   # sig_name -> opendbc path
         self.project_path:     str          = ""
@@ -85,17 +65,17 @@ class AppState(QObject):
 
         # ── New fields for 12-feature additions ───────────────────────────────
         self.canfd_enabled:     bool         = False
-        self.multibus_buses:    dict         = {}   # name -> Bus instance
-        self.change_baseline                 = None # ChangeRecorder snapshot
         self.notes_by_signal:   dict         = {}   # "{msg_id}/{sig_name}" -> str
+        # Marks on the capture timeline ("brake pressed", 12.4s to 14.1s),
+        # made live or against a loaded log, and ranked against every byte.
+        from canlab.core.annotations import AnnotationSet
+        self.annotations = AnnotationSet()
         self.fuzz_running:      bool         = False
         self.active_backend:    str          = "python-can"
+        # Framing conventions for injection/export/AI hints; "generic" asserts
+        # nothing about the vehicle.
+        self.vehicle_profile:   str          = "generic"
         self.panda_safety_model: str         = "SAFETY_NOOUTPUT"
-        self.community_profiles: list        = []
-        self.community_profiles_url: str     = (
-            "https://raw.githubusercontent.com/commaai/opendbc/master/"
-            "opendbc/can/hyundai_kona.dbc"
-        )
 
         # ── New fields for 8 production enhancements ──────────────────────────
         self.dbc_db              = None        # cached cantools.database.Database
@@ -114,81 +94,159 @@ class AppState(QObject):
         # Signal Intelligence
         self._embedding_index: dict = {}       # id -> np.ndarray, built by signal_intelligence_tab
 
-    # ── frames_df storage (lazy base + chunks) ────────────────────────────────
-
-    @property
-    def frames_df(self) -> pd.DataFrame:
-        if self._frames_cache is not None:
-            return self._frames_cache
-        if not self._frame_chunks:
-            self._frames_cache = self._frames_base
-        else:
-            parts = ([self._frames_base] if not self._frames_base.empty
-                     else []) + self._frame_chunks
-            self._frames_cache = (pd.concat(parts, ignore_index=True)
-                                  if parts else pd.DataFrame())
-        return self._frames_cache
-
-    @frames_df.setter
-    def frames_df(self, df: pd.DataFrame):
-        # Direct assignment (project load, transforms) replaces everything and
-        # collapses any pending live chunks.
-        self._frames_base  = df if df is not None else pd.DataFrame()
-        self._frame_chunks = []
-        self._frames_cache = self._frames_base
-
     def select_id(self, hex_id: str):
         self.selected_id = hex_id
         self.id_selected.emit(hex_id)
 
+    # ── frame storage ────────────────────────────────────────────────────
+    # frames_df stays the public contract (a canonical DataFrame); it is now
+    # materialised from FrameStore on demand and cached until frames change.
+
+    @property
+    def frames_df(self) -> pd.DataFrame:
+        return self._store.materialize()
+
+    @frames_df.setter
+    def frames_df(self, df: pd.DataFrame):
+        self._store.load_dataframe(df)
+
+    @property
+    def store(self) -> FrameStore:
+        return self._store
+
+    def frames_snapshot(self) -> pd.DataFrame:
+        """A frame safe to hand to a worker thread while capture continues."""
+        return self._store.snapshot()
+
+    def bus_view(self, owner, id_filter=None):
+        """A private receive queue on the live bus for ``owner`` (None if offline).
+
+        The returned object duck-types a python-can bus (send/recv), so workers
+        take it in place of the raw bus and never compete for frames.
+        """
+        hub = self.bus_hub
+        if hub is None:
+            return None
+        cached = self._bus_views.get(id(owner))
+        if cached is not None and cached[0] is hub and not cached[1].closed:
+            return cached[1]
+        sub = hub.subscribe(id_filter)
+        self._bus_views[id(owner)] = (hub, sub)
+        return sub
+
+    def drop_bus_views(self):
+        for _hub, sub in self._bus_views.values():
+            try:
+                sub.close()
+            except Exception:
+                pass
+        self._bus_views.clear()
+
+    def append_rows(self, rows: list):
+        """Append canonical live-capture rows (from BusHub.drain())."""
+        if not rows:
+            return
+        self._store.append_batch(rows)
+        self.frames_updated.emit()
+
     def load_frames(self, df: pd.DataFrame, source_name: str):
-        self.frames_df = df
-        count = len(df)
+        self._store.load_dataframe(df)
+        count = len(self._store)
         self.sources.append({"name": source_name, "count": count})
         self.frames_loaded.emit(count)
         self.source_added.emit(source_name, count)
         self.frames_updated.emit()
 
     def append_frames(self, new_df: pd.DataFrame):
-        if new_df is None or new_df.empty:
-            return
-        # O(chunk): just stash the chunk and invalidate the cache. The full
-        # DataFrame is rebuilt lazily on the next read (throttled by the UI).
-        self._frame_chunks.append(new_df)
-        self._frames_cache = None
+        self._store.extend_dataframe(new_df)
         self.frames_updated.emit()
 
-    def set_repo_context(self, info: dict, readme: str, url: str):
-        self.repo_info   = info
-        self.repo_readme = readme
-        self.repo_url    = url
-        self.repo_loaded.emit(info)
+    def _invalidate_dbc_db(self):
+        self.dbc_db = None
+
+    def _on_armed_changed(self, armed: bool):
+        self.tx_armed_changed.emit(bool(armed))
+
+    # ── DBC signal edits, with history ───────────────────────────────────
+    # Every mutation snapshots the list first. Undo restores the snapshot;
+    # redo re-applies what undo took back. Snapshots are whole-list copies,
+    # which is fine at the sizes a DBC reaches and makes correctness obvious.
+    DBC_HISTORY_LIMIT = 200
+
+    def _record_dbc(self) -> None:
+        import copy
+        hist = self.__dict__.setdefault("_dbc_history", [])
+        hist.append(copy.deepcopy(self.dbc_signals))
+        del hist[:-self.DBC_HISTORY_LIMIT]
+        self.__dict__["_dbc_future"] = []
+
+    def can_undo_dbc(self) -> bool:
+        return bool(self.__dict__.get("_dbc_history"))
+
+    def can_redo_dbc(self) -> bool:
+        return bool(self.__dict__.get("_dbc_future"))
+
+    def undo_dbc(self) -> bool:
+        import copy
+        hist = self.__dict__.get("_dbc_history", [])
+        if not hist:
+            return False
+        self.__dict__.setdefault("_dbc_future", []).append(
+            copy.deepcopy(self.dbc_signals))
+        self.dbc_signals = hist.pop()
+        self.dbc_updated.emit()
+        return True
+
+    def redo_dbc(self) -> bool:
+        import copy
+        fut = self.__dict__.get("_dbc_future", [])
+        if not fut:
+            return False
+        self.__dict__.setdefault("_dbc_history", []).append(
+            copy.deepcopy(self.dbc_signals))
+        self.dbc_signals = fut.pop()
+        self.dbc_updated.emit()
+        return True
 
     def add_dbc_signal(self, signal_def: dict):
+        self._record_dbc()
         self.dbc_signals.append(signal_def)
         self.dbc_updated.emit()
 
     def update_dbc_signal(self, index: int, signal_def: dict):
         if 0 <= index < len(self.dbc_signals):
+            self._record_dbc()
             self.dbc_signals[index] = signal_def
             self.dbc_updated.emit()
 
     def remove_dbc_signal(self, index: int):
         if 0 <= index < len(self.dbc_signals):
+            self._record_dbc()
             self.dbc_signals.pop(index)
             self.dbc_updated.emit()
 
-    def get_frames_for_id(self, hex_id: str) -> pd.DataFrame:
-        if self.frames_df.empty:
-            return pd.DataFrame()
-        from core.canid import normalize_id
-        return self.frames_df[self.frames_df["ID"] == normalize_id(hex_id)].copy()
+    def add_dbc_signals(self, signals: list) -> int:
+        """Append many as one undo step. An import of 300 signals must not
+        take 300 presses of undo to take back."""
+        signals = [s for s in signals if s]
+        if not signals:
+            return 0
+        self._record_dbc()
+        self.dbc_signals.extend(signals)
+        self.dbc_updated.emit()
+        return len(signals)
+
+    def replace_dbc_signals(self, signals: list) -> None:
+        """Bulk replace as one undo step: imports, auto-build, project load."""
+        self._record_dbc()
+        self.dbc_signals = list(signals)
+        self.dbc_updated.emit()
+
+    def get_frames_for_id(self, hex_id: str, tail: int | None = None) -> pd.DataFrame:
+        return self._store.frames_for_id(hex_id, tail=tail)
 
     def get_unique_ids(self) -> list:
-        if self.frames_df.empty:
-            return []
-        return sorted(self.frames_df["ID"].unique().tolist())
-
+        return self._store.unique_ids()
 
 _state = None
 

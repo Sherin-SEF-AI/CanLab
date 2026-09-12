@@ -1,7 +1,7 @@
 """Tests for the global bus-transmit ARM gate (C8)."""
 import pytest
 
-from core import safety
+from canlab.core import safety
 
 
 def setup_function(_):
@@ -57,8 +57,8 @@ def test_safety_scan_sends_nothing_while_disarmed():
     """
     import pytest
     pytest.importorskip("PyQt6")
-    from core.safety import set_armed
-    from core.safety_scanner import SafetyScanWorker
+    from canlab.core.safety import set_armed
+    from canlab.core.safety_scanner import SafetyScanWorker
 
     set_armed(False)
     bus = _RecordingBus()
@@ -76,8 +76,8 @@ def test_safety_scan_stops_when_disarmed_midway():
     """Disarming has to stop a sweep in flight, not just prevent the next one."""
     import pytest
     pytest.importorskip("PyQt6")
-    from core.safety import set_armed
-    from core.safety_scanner import SafetyScanWorker
+    from canlab.core.safety import set_armed
+    from canlab.core.safety_scanner import SafetyScanWorker
 
     set_armed(True)
     sent = []
@@ -101,8 +101,8 @@ def test_armed_sweep_reaches_the_bus():
     """And the gate must not break the feature when it is armed."""
     import pytest
     pytest.importorskip("PyQt6")
-    from core.safety import set_armed
-    from core.safety_scanner import SafetyScanWorker
+    from canlab.core.safety import set_armed
+    from canlab.core.safety_scanner import SafetyScanWorker
 
     set_armed(True)
     bus = _RecordingBus()

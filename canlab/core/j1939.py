@@ -12,7 +12,6 @@ J1939 uses 29-bit extended CAN IDs:
 For PDU2 (PF >= 240): PGN = (DP<<16) | (PF<<8) | PS
 For PDU1 (PF <  240): PGN = (DP<<16) | (PF<<8) [destination = PS byte]
 """
-from typing import Optional
 
 # ── PGN → (name, SPNs) ────────────────────────────────────────────────────────
 # SPN entry: (name, start_byte, length_bytes, scale, offset, unit)
@@ -264,7 +263,6 @@ def scan_for_j1939(df) -> list[dict]:
         {"id_hex", "priority", "pgn", "pgn_name", "sa", "sa_name", "frame_count"}
     sorted by pgn.
     """
-    import pandas as pd
     results = []
     seen    = set()
     for can_id in df["ID"].unique():

@@ -1,16 +1,19 @@
 """INJECTION tab — signal injection wizard, replay mode, trigger capture."""
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QPushButton, QLabel,
+    QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
     QComboBox, QDoubleSpinBox, QSpinBox, QCheckBox, QGroupBox, QSlider,
     QTableWidget, QTableWidgetItem, QHeaderView, QTabWidget, QFileDialog,
     QProgressBar, QLineEdit, QMessageBox, QTextEdit,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
 
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.canid import normalize_id
+from canlab.theme import COLORS, mono_font, desc_label
+from canlab.core.state import get_state
+from canlab.core.canid import normalize_id
+import logging
+
+log = logging.getLogger(__name__)
 
 
 class InjectionTab(QWidget):
@@ -19,13 +22,13 @@ class InjectionTab(QWidget):
         self._state           = get_state()
         self._inj_worker      = None
         self._replay_worker   = None
-        self._trigger_timer   = QTimer()
         self._trigger_log     = []
         self._build_ui()
         self._state.dbc_updated.connect(self._refresh_signal_list)
         self._state.can_connected.connect(self._on_can_status)
-        self._trigger_timer.setInterval(200)
-        self._trigger_timer.timeout.connect(self._poll_triggers)
+        # Triggers are evaluated once per frame inside the receive hub; this tab
+        # only renders the hits.
+        self._state.trigger_fired.connect(self._on_trigger_fired)
 
     # ── UI ────────────────────────────────────────────────────────────────────
 
@@ -153,6 +156,28 @@ class InjectionTab(QWidget):
         speed_row.addWidget(self.speed_spin)
         self.chk_replay_loop = QCheckBox("Loop")
         speed_row.addWidget(self.chk_replay_loop)
+
+        # Hold one signal at a chosen value while everything else replays as
+        # recorded: what does the module do when speed reads zero and nothing
+        # else changes? Needs the signal defined in the DBC.
+        ovr_row = QHBoxLayout()
+        self.chk_replay_override = QCheckBox("Override")
+        self.chk_replay_override.setToolTip(
+            "Re-encode frames carrying this signal with the value held, "
+            "everything else left as recorded.")
+        ovr_row.addWidget(self.chk_replay_override)
+        self.replay_override_sig = QComboBox()
+        self.replay_override_sig.setFont(mono_font(8))
+        self.replay_override_sig.setMinimumWidth(160)
+        ovr_row.addWidget(self.replay_override_sig, 1)
+        self.replay_override_val = QDoubleSpinBox()
+        self.replay_override_val.setRange(-1e9, 1e9)
+        self.replay_override_val.setDecimals(3)
+        self.replay_override_val.setFont(mono_font(8))
+        ovr_row.addWidget(self.replay_override_val)
+        lay.addLayout(ovr_row)
+        self._state.dbc_updated.connect(self._refresh_override_signals)
+        self._refresh_override_signals()
         speed_row.addStretch()
         lay.addLayout(speed_row)
 
@@ -292,7 +317,7 @@ class InjectionTab(QWidget):
     # ── Injection actions ─────────────────────────────────────────────────────
 
     def _get_bus(self):
-        return self._state.can_bus
+        return self._state.bus_view(self)
 
     def _get_selected_sig(self) -> dict | None:
         idx = self.sig_combo.currentIndex()
@@ -309,30 +334,34 @@ class InjectionTab(QWidget):
         if bus is None:
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return
-        from core.injection import pack_signal, hyundai_checksum
-        from core.safety import is_armed
-        if not is_armed():
-            QMessageBox.warning(self, "Disarmed",
-                                "Bus transmit is disarmed. Enable ARM TX first.")
-            return
+        from canlab.core.injection import annotate, pack_signal
         value = self.val_spin.value()
         data  = pack_signal(value, sig)
+        mid_str = sig.get("message_id", "0")
         try:
-            mid = int(normalize_id(sig.get("message_id", "0")), 16)
+            mid = int(mid_str, 16)
         except (ValueError, TypeError):
             mid = 0
-        if self.chk_checksum.isChecked() and len(data) > 0:
-            data[-1] = hyundai_checksum(bytes(data), mid)
-        extended = bool(sig.get("extended")) or mid > 0x7FF
+        annotate(data, mid, 0, apply_counter=False,
+                 apply_checksum=self.chk_checksum.isChecked())
         import can
+        from canlab.core.safety import gated_send, BusNotArmedError, BlockedIdError
+        # More than eight bytes is a CAN FD frame; mark it so, and ask for
+        # the faster data phase when the bus was opened with one.
+        fd = len(data) > 8 or bool(self._state.bus_hub and
+                                   getattr(self._state.bus_hub, "fd", False))
         msg = can.Message(arbitration_id=mid, data=bytes(data),
-                          is_extended_id=extended)
+                          is_extended_id=False, is_fd=fd,
+                          bitrate_switch=fd and len(data) > 8)
         try:
-            bus.send(msg)
+            gated_send(bus, msg)
             self.lbl_inj_status.setText(
                 f"Sent 0x{mid:03X}  [{' '.join(f'{b:02X}' for b in data)}]"
             )
             self.lbl_inj_status.setStyleSheet(f"color:{COLORS['green']}")
+        except (BusNotArmedError, BlockedIdError) as e:
+            self.lbl_inj_status.setText(str(e))
+            self.lbl_inj_status.setStyleSheet(f"color:{COLORS['error']}")
         except Exception as e:
             self.lbl_inj_status.setText(f"Error: {e}")
             self.lbl_inj_status.setStyleSheet(f"color:{COLORS['error']}")
@@ -348,7 +377,7 @@ class InjectionTab(QWidget):
         if bus is None:
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return
-        from core.injection import InjectionWorker
+        from canlab.core.injection import InjectionWorker
         value  = self.val_spin.value()
         period = self.period_spin.value()
         self._inj_worker = InjectionWorker(
@@ -367,6 +396,18 @@ class InjectionTab(QWidget):
         self.btn_stop_inj.setEnabled(True)
         self.lbl_inj_status.setStyleSheet(f"color:{COLORS['amber']}")
 
+    def cleanup(self):
+        """Stop every worker this tab owns (called on app close)."""
+        for attr in ("_inj_worker", "_replay_worker", "_scan_worker",
+                     "_fuzz_worker", "_seq_worker"):
+            w = getattr(self, attr, None)
+            if w is not None:
+                try:
+                    w.stop()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+
     def _stop_injection(self):
         if self._inj_worker:
             self._inj_worker.stop()
@@ -379,7 +420,7 @@ class InjectionTab(QWidget):
     # ── Replay actions ────────────────────────────────────────────────────────
 
     def _load_replay_log(self):
-        from core.log_parser import parse_log_file
+        from canlab.core.log_parser import parse_log_file
         path, _ = QFileDialog.getOpenFileName(
             self, "Open Log for Replay", "", "Log Files (*.csv *.log);;All (*)"
         )
@@ -393,6 +434,17 @@ class InjectionTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 
+    def _refresh_override_signals(self):
+        current = self.replay_override_sig.currentText()
+        self.replay_override_sig.blockSignals(True)
+        self.replay_override_sig.clear()
+        for s in self._state.dbc_signals:
+            self.replay_override_sig.addItem(s.get("signal_name", ""))
+        i = self.replay_override_sig.findText(current)
+        if i >= 0:
+            self.replay_override_sig.setCurrentIndex(i)
+        self.replay_override_sig.blockSignals(False)
+
     def _start_replay(self):
         if self._replay_df is None or self._replay_df.empty:
             QMessageBox.information(self, "No Log", "Load a log file first.")
@@ -401,12 +453,18 @@ class InjectionTab(QWidget):
         if bus is None:
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return
-        from core.replay import ReplayWorker
+        from canlab.core.replay import ReplayWorker
+        overrides = {}
+        if self.chk_replay_override.isChecked() and self.replay_override_sig.currentText():
+            overrides = {self.replay_override_sig.currentText():
+                         self.replay_override_val.value()}
         self._replay_worker = ReplayWorker(
             bus=bus,
             frames_df=self._replay_df,
             speed=self.speed_spin.value(),
             loop=self.chk_replay_loop.isChecked(),
+            overrides=overrides,
+            dbc_signals=list(self._state.dbc_signals),
         )
         self._replay_worker.tick.connect(self._on_replay_tick)
         self._replay_worker.loop_started.connect(
@@ -490,50 +548,26 @@ class InjectionTab(QWidget):
         if self._triggers_active:
             self.btn_trig_start.setText("Disable Triggers")
             self.btn_trig_start.setStyleSheet(f"color:{COLORS['error']}")
-            self._trigger_timer.start()
         else:
             self.btn_trig_start.setText("Enable Triggers")
             self.btn_trig_start.setStyleSheet("")
-            self._trigger_timer.stop()
-            try:
-                self._state.frames_updated.disconnect(self._check_live_triggers)
-            except Exception:
-                pass
 
-    def _check_live_triggers(self):
-        from core.trigger import check_triggers
-        df = self._state.frames_df
-        if df.empty or not self._state.triggers:
+    def _on_trigger_fired(self, rule: dict, msg):
+        """A hub-evaluated trigger matched a live frame."""
+        if not self._triggers_active:
             return
-        last = df.tail(10)
-        for _, row in last.iterrows():
-            try:
-                arb_id = int(str(row["ID"]), 16) if isinstance(row["ID"], str) else int(row["ID"])
-                data   = bytes(
-                    int(row[f"B{i}"]) if __import__("pandas").notna(row.get(f"B{i}")) else 0
-                    for i in range(8)
-                )
-            except Exception:
-                continue
-            fired = check_triggers(self._state.triggers, arb_id, data)
-            for rule in fired:
-                msg = f"[{row.get('Timestamp',0):.3f}]  {rule['label']}  — 0x{arb_id:03X}"
-                if not self._trigger_log or self._trigger_log[-1] != msg:
-                    self._trigger_log.append(msg)
-                    self._state.trigger_fired.emit(rule, row)
-                    self._refresh_trigger_log()
+        ts = getattr(msg, "timestamp", 0.0) or 0.0
+        arb = getattr(msg, "arbitration_id", 0)
+        line = f"[{ts:.3f}]  {rule.get('label', '?')}  — 0x{arb:03X}"
+        self._trigger_log.append(line)
+        if len(self._trigger_log) > 500:
+            del self._trigger_log[:-500]
+        self._refresh_trigger_log()
 
     def _refresh_trigger_log(self):
         self.trig_log_text.setPlainText(
             "\n".join(reversed(self._trigger_log[-100:]))
         )
-
-    def _poll_triggers(self):
-        # Driven by the 200 ms timer while triggers are active. (Previously a
-        # no-op, so the timer did nothing.)
-        self._check_live_triggers()
-
-    # ── Safety Scan sub-tab ───────────────────────────────────────────────────
 
     def _build_safety_tab(self) -> QWidget:
         w   = QWidget()
@@ -542,11 +576,10 @@ class InjectionTab(QWidget):
         lay.setSpacing(6)
 
         lay.addWidget(QLabel("ACTUATOR SAFETY BOUNDARY SCANNER", font=mono_font(9)))
-        lay.addWidget(QLabel(
-            "Sweep a signal from min→max in steps. Aborts if watchdog ID "
+        lay.addWidget(desc_label(
+            "Sweep a signal from min to max in steps. Aborts if watchdog ID "
             "disappears (safety controller cut-out detected).",
-            font=mono_font(8),
-        ))
+            8))
 
         cfg_grp = QGroupBox("SCAN CONFIGURATION")
         cg = QHBoxLayout(cfg_grp)
@@ -624,13 +657,6 @@ class InjectionTab(QWidget):
         if bus is None:
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return
-        from core.safety import is_armed
-        if not is_armed():
-            QMessageBox.warning(
-                self, "TX Disarmed",
-                "An actuator sweep transmits on the bus.\n\n"
-                "Enable ARM TX in the toolbar first.")
-            return
         idx = self.scan_sig_combo.currentIndex()
         if idx < 0:
             return
@@ -646,7 +672,7 @@ class InjectionTab(QWidget):
         min_val = float(sig.get("min_val", 0))
         max_val = float(sig.get("max_val", 255))
 
-        from core.safety_scanner import SafetyScanWorker
+        from canlab.core.safety_scanner import SafetyScanWorker
         self._scan_worker = SafetyScanWorker(
             bus=bus, sig=sig,
             min_val=min_val, max_val=max_val,
@@ -715,10 +741,9 @@ class InjectionTab(QWidget):
         lay.setSpacing(6)
 
         lay.addWidget(QLabel("FUZZ TESTING", font=mono_font(9)))
-        lay.addWidget(QLabel(
+        lay.addWidget(desc_label(
             "Inject random / boundary / mutation payloads to an unknown message ID.",
-            font=mono_font(8),
-        ))
+            8))
 
         cfg_grp = QGroupBox("FUZZ CONFIGURATION")
         cg = QHBoxLayout(cfg_grp)
@@ -788,7 +813,7 @@ class InjectionTab(QWidget):
             QMessageBox.warning(self, "Invalid ID", "Enter a valid hex CAN ID.")
             return
 
-        from core.fuzzer import FuzzWorker
+        from canlab.core.fuzzer import FuzzWorker
         self._fuzz_worker = FuzzWorker(
             bus=bus,
             target_id=target_id,
@@ -840,17 +865,15 @@ class InjectionTab(QWidget):
     # ── Test Sequence sub-tab ─────────────────────────────────────────────────
 
     def _build_sequence_tab(self) -> QWidget:
-        from PyQt6.QtWidgets import QSplitter
         w   = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(6)
 
-        lay.addWidget(QLabel(
+        lay.addWidget(desc_label(
             "Build a sequence of INJECT / WAIT / ASSERT / RECORD steps and run it "
             "against the live CAN bus.",
-            font=mono_font(8),
-        ))
+            8))
 
         # ── Step editor ───────────────────────────────────────────────────────
         editor_grp = QGroupBox("ADD STEP")
@@ -945,7 +968,7 @@ class InjectionTab(QWidget):
         return w
 
     def _seq_add_step(self):
-        from core.test_sequence import TestStep, StepType
+        from canlab.core.test_sequence import TestStep, StepType
         stype = StepType(self.seq_type.currentText())
         step  = TestStep(
             step_type    = stype,
@@ -994,14 +1017,14 @@ class InjectionTab(QWidget):
                 self.seq_table.setItem(i, ci, item)
 
     def _seq_run(self):
-        bus = self._state.can_bus
+        bus = self._get_bus()
         if bus is None:
             QMessageBox.warning(self, "No Bus", "Connect CAN first.")
             return
         if not self._seq_steps:
             QMessageBox.information(self, "Empty", "Add steps first.")
             return
-        from core.test_sequence import TestSequenceWorker
+        from canlab.core.test_sequence import TestSequenceWorker
         self._seq_worker = TestSequenceWorker(list(self._seq_steps), bus)
         self._seq_worker.step_started.connect(
             lambda idx: self.seq_log.append(f"→ Step {idx}: {self._seq_steps[idx].step_type.value}…")

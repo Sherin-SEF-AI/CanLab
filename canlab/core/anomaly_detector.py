@@ -14,6 +14,9 @@ Usage:
 
 import numpy as np
 import pandas as pd
+import logging
+
+log = logging.getLogger(__name__)
 
 BYTE_COLS = [f"B{i}" for i in range(8)]
 
@@ -132,7 +135,7 @@ def fit_baseline(frames_df: pd.DataFrame,
             det.fit(frames_df)
             return det
         except (ImportError, Exception):
-            pass
+            log.debug("suppressed exception", exc_info=True)
     det = ZScoreBaseline()
     det.fit(frames_df)
     return det

@@ -1,15 +1,16 @@
 """GATEWAY tab — bidirectional CAN MitM bridge with filter/modify rules."""
 from PyQt6.QtWidgets import (
+    QScrollArea, QFrame,
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QPushButton, QLabel,
     QLineEdit, QComboBox, QSpinBox, QGroupBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QTextEdit, QGridLayout, QCheckBox,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush, QFont
 
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.canid import normalize_id
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+from canlab.core.canid import normalize_id
 
 
 _DIR_OPTIONS    = ["A→B", "B→A", "Both"]
@@ -37,7 +38,7 @@ class GatewayTab(QWidget):
 
         # ── Left panel: config + rules ─────────────────────────────────────────
         left = QWidget()
-        left.setFixedWidth(340)
+        left.setMinimumWidth(340)
         ll = QVBoxLayout(left)
         ll.setContentsMargins(4, 4, 4, 4)
         ll.setSpacing(6)
@@ -158,7 +159,19 @@ class GatewayTab(QWidget):
         self.rules_table.cellClicked.connect(self._on_rules_table_click)
         ll.addWidget(self.rules_table)
 
-        splitter.addWidget(left)
+
+        # The control column is a tall stack of group boxes. Left as a plain
+        # widget its full height became the minimum height of the whole
+        # application window; in a scroll area it can shrink and scroll.
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_scroll.setMinimumWidth(340)
+        left_scroll.setMaximumWidth(520)
+        splitter.addWidget(left_scroll)
 
         # ── Right panel: live frame log ────────────────────────────────────────
         right = QWidget()
@@ -293,7 +306,7 @@ class GatewayTab(QWidget):
         }
 
     def _start(self):
-        from core.gateway import GatewayWorker
+        from canlab.core.gateway import GatewayWorker
         self._worker = GatewayWorker(
             bus_a_cfg=self._bus_cfg("a"),
             bus_b_cfg=self._bus_cfg("b"),
@@ -311,6 +324,9 @@ class GatewayTab(QWidget):
         ch_a  = self._bus_cfg("a")["channel"]
         ch_b  = self._bus_cfg("b")["channel"]
         self._log(f"<span style='color:{amber}'>Gateway started: {ch_a} ↔ {ch_b}</span>")
+
+    def cleanup(self):
+        self._stop()
 
     def _stop(self):
         if self._worker:

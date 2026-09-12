@@ -1,5 +1,6 @@
 import pandas as pd
 from PyQt6.QtWidgets import (
+    QScrollArea, QFrame,
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QListWidgetItem,
     QPushButton, QLabel, QLineEdit, QComboBox, QGridLayout, QTextEdit,
     QFileDialog, QMessageBox, QHeaderView, QTableWidget, QTableWidgetItem,
@@ -7,10 +8,13 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.canid import normalize_id
-from core.dbc_manager import signals_to_dbc_string, load_dbc, decode_frame, validate_signals
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+from canlab.core.canid import normalize_id
+from canlab.core.dbc_manager import (
+    signals_to_dbc_string, load_dbc, decode_frame, validate_signals, get_db,
+    frame_bytes_from_row,
+)
 
 BYTE_COLS = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
 
@@ -32,7 +36,7 @@ class DBCBuilderTab(QWidget):
 
         # Left: signal list
         left = QWidget()
-        left.setFixedWidth(220)
+        left.setMinimumWidth(220)
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(4, 4, 4, 4)
         left_lay.setSpacing(4)
@@ -50,6 +54,14 @@ class DBCBuilderTab(QWidget):
         left_lay.addWidget(self.sig_list)
 
         toolbar_btns = QHBoxLayout()
+        btn_undo = QPushButton("Undo")
+        btn_undo.setToolTip("Undo the last signal edit (Ctrl+Z)")
+        btn_undo.clicked.connect(self._undo)
+        btn_redo = QPushButton("Redo")
+        btn_redo.setToolTip("Redo (Ctrl+Shift+Z)")
+        btn_redo.clicked.connect(self._redo)
+        toolbar_btns.addWidget(btn_undo)
+        toolbar_btns.addWidget(btn_redo)
         btn_new = QPushButton("New")
         btn_new.clicked.connect(self._new_signal)
         btn_imp = QPushButton("Import")
@@ -108,7 +120,19 @@ class DBCBuilderTab(QWidget):
         btn_candbpp.clicked.connect(self._export_candbpp)
         left_lay.addWidget(btn_candbpp)
 
-        splitter.addWidget(left)
+
+        # See intelligence_tab: a tall column of controls in a plain widget
+        # sets the minimum height of the whole window. In a scroll area it can
+        # shrink, so the application fits a laptop screen.
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_scroll.setMinimumWidth(220)
+        left_scroll.setMaximumWidth(400)
+        splitter.addWidget(left_scroll)
 
         # Right: editor + preview
         right = QWidget()
@@ -207,7 +231,7 @@ class DBCBuilderTab(QWidget):
         right_lay.addWidget(self.status_label)
 
         # Bit editor panel
-        from tabs.widgets.bit_editor import BitGridWidget
+        from canlab.tabs.widgets.bit_editor import BitGridWidget
         self.bit_editor = BitGridWidget()
         self.bit_editor.selection_changed.connect(self._on_bit_selection)
         right_lay.addWidget(self.bit_editor)
@@ -270,6 +294,14 @@ class DBCBuilderTab(QWidget):
             "description":  self.f_desc.text(),
         }
 
+    def _undo(self):
+        self.status_label.setText("Undid the last signal edit."
+                                  if self._state.undo_dbc() else "Nothing to undo.")
+
+    def _redo(self):
+        self.status_label.setText("Redid the signal edit."
+                                  if self._state.redo_dbc() else "Nothing to redo.")
+
     def _new_signal(self):
         self._selected_idx = -1
         for w in [self.f_msg_id, self.f_msg_name, self.f_sig_name, self.f_unit,
@@ -329,10 +361,7 @@ class DBCBuilderTab(QWidget):
     def _populate_preview_with_sig(self, sig: dict, frames: pd.DataFrame):
         self.preview_table.setRowCount(len(frames))
         for row_idx, (_, row) in enumerate(frames.iterrows()):
-            byte_data = bytes(
-                int(row[f"B{i}"]) if pd.notna(row.get(f"B{i}")) else 0
-                for i in range(8)
-            )
+            byte_data = frame_bytes_from_row(row, 8)
             decoded = decode_frame([sig], sig["message_id"], byte_data)
             sname = sig.get("signal_name", "")
             val_str = str(round(float(decoded[sname]), 4)) if sname in decoded else "?"
@@ -370,8 +399,7 @@ class DBCBuilderTab(QWidget):
         if path:
             try:
                 sigs = load_dbc(path)
-                for sig in sigs:
-                    self._state.add_dbc_signal(sig)
+                self._state.add_dbc_signals(sigs)          # one undo step
                 self.status_label.setText(f"Imported {len(sigs)} signals")
                 self.status_label.setStyleSheet(f"color:{COLORS['green']}")
             except Exception as e:
@@ -405,17 +433,14 @@ class DBCBuilderTab(QWidget):
         self._state.remove_dbc_signal(idx)
 
     def _auto_build(self):
-        from core.auto_dbc import build_from_analyzer
+        from canlab.core.auto_dbc import build_from_analyzer
         if self._state.frames_df.empty:
             QMessageBox.information(self, "No Data", "Load a CAN log first.")
             return
         signals = build_from_analyzer(self._state)
         existing_ids = {s.get("message_id") for s in self._state.dbc_signals}
-        added = 0
-        for sig in signals:
-            if sig["message_id"] not in existing_ids:
-                self._state.add_dbc_signal(sig)
-                added += 1
+        fresh = [s for s in signals if s["message_id"] not in existing_ids]
+        added = self._state.add_dbc_signals(fresh)          # one undo step
         self.status_label.setText(f"Auto-built: added {added} signals")
         self.status_label.setStyleSheet(f"color:{COLORS['green']}")
 
@@ -423,17 +448,16 @@ class DBCBuilderTab(QWidget):
         return f"{sig.get('message_id','?')}/{sig.get('signal_name','?')}"
 
     def _update_bit_editor(self, sig: dict):
+        # An FD message is longer than eight bytes; the grid follows it.
+        self.bit_editor.set_rows(max(8, int(sig.get("msg_length") or 8)))
         mid = sig.get("message_id", "")
         frames = self._state.get_frames_for_id(mid)
         if not frames.empty:
-            last = frames.iloc[-1]
-            data = bytes(
-                int(last.get(f"B{i}", 0) or 0) for i in range(8)
-            )
-            self.bit_editor.set_data(data)
+            self.bit_editor.set_data(frame_bytes_from_row(frames.iloc[-1], 8))
         start = int(sig.get("start_bit", 0))
         length = int(sig.get("length", 8))
-        self.bit_editor.set_selection(start, length)
+        little = str(sig.get("byte_order", "little")).lower() != "big"
+        self.bit_editor.set_selection(start, length, little)
 
     def _on_bit_selection(self, start_bit: int, length: int, little_endian: bool):
         self.f_start_bit.setText(str(start_bit))
@@ -450,9 +474,11 @@ class DBCBuilderTab(QWidget):
         if not path:
             return
         try:
-            from core.dbc_manager import export_opendbc
-            from core.openpilot_export import HYUNDAI_MSG_META
-            dbc_str = export_opendbc(self._state.dbc_signals, HYUNDAI_MSG_META)
+            from canlab.core.dbc_manager import export_opendbc
+            from canlab.core.vehicle_profile import active_profile, message_meta
+            ids = {s.get("message_id", "") for s in self._state.dbc_signals}
+            meta = message_meta(active_profile(self._state), ids)
+            dbc_str = export_opendbc(self._state.dbc_signals, meta)
             with open(path, "w") as f:
                 f.write(dbc_str)
             self.status_label.setText(f"openpilot DBC exported: {path}")
@@ -470,7 +496,7 @@ class DBCBuilderTab(QWidget):
         if not path:
             return
         try:
-            from core.lua_exporter import signals_to_lua_dissector
+            from canlab.core.lua_exporter import signals_to_lua_dissector
             lua_str = signals_to_lua_dissector(self._state.dbc_signals)
             with open(path, "w") as f:
                 f.write(lua_str)
@@ -480,14 +506,11 @@ class DBCBuilderTab(QWidget):
             QMessageBox.critical(self, "Export Error", str(e))
 
     def _cross_ref(self):
-        from core.opendbc_matcher import scan
+        from canlab.core.opendbc_matcher import scan
         if not self._state.dbc_signals:
             QMessageBox.information(self, "Empty", "No signals to cross-reference.")
             return
-        repo_ctx = None
-        if self._state.repo_info:
-            repo_ctx = {**self._state.repo_info, "readme": self._state.repo_readme}
-        matches = scan(self._state, repo_ctx)
+        matches = scan(self._state)
         self._state.opendbc_matches = matches
         if matches:
             lines = [f"{k} → {v['file']} (msg:{v['msg']})" for k, v in matches.items()]
@@ -503,16 +526,13 @@ class DBCBuilderTab(QWidget):
         if not path:
             return
         try:
-            from core.can_matrix_parser import parse_can_matrix
+            from canlab.core.can_matrix_parser import parse_can_matrix
             signals = parse_can_matrix(path)
             if not signals:
                 QMessageBox.warning(self, "Empty", "No signals found in the file.")
                 return
-            for sig in signals:
-                self._state.add_dbc_signal(sig)
-            # Rebuild cantools cache
-            from core.dbc_manager import build_db_from_signals
-            build_db_from_signals(self._state.dbc_signals)
+            self._state.add_dbc_signals(signals)           # one undo step
+            get_db(self._state)   # validate the merged set now, not on first decode
             self.status_label.setText(
                 f"Imported {len(signals)} signal(s) from CAN matrix."
             )
@@ -528,15 +548,13 @@ class DBCBuilderTab(QWidget):
         if not path:
             return
         try:
-            from core.arxml_import import parse_arxml
+            from canlab.core.arxml_import import parse_arxml
             signals = parse_arxml(path)
             if not signals:
                 QMessageBox.warning(self, "Empty", "No signals found in ARXML.")
                 return
-            for sig in signals:
-                self._state.add_dbc_signal(sig)
-            from core.dbc_manager import build_db_from_signals
-            build_db_from_signals(self._state.dbc_signals)
+            self._state.add_dbc_signals(signals)           # one undo step
+            get_db(self._state)
             self.status_label.setText(f"Imported {len(signals)} signal(s) from ARXML.")
             self.status_label.setStyleSheet(f"color:{COLORS['green']}")
         except Exception as e:
@@ -553,7 +571,7 @@ class DBCBuilderTab(QWidget):
         if not path:
             return
         try:
-            from core.arxml_export import to_arxml_string
+            from canlab.core.arxml_export import to_arxml_string
             arxml = to_arxml_string(self._state.dbc_signals)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(arxml)
@@ -572,8 +590,14 @@ class DBCBuilderTab(QWidget):
         if not path:
             return
         try:
-            from core.candbpp_export import to_candbpp_string
-            dbc_str = to_candbpp_string(self._state.dbc_signals)
+            from canlab.core.candbpp_export import to_candbpp_string
+            from canlab.core.periodicity import compute_periodicity
+            # Cycle times come from the capture, so GenMsgCycleTime is real
+            # rather than always zero.
+            periods = compute_periodicity(self._state.frames_df) or {}
+            meta = {mid: {"cycle_time_ms": int(round(ms))}
+                    for mid, ms in periods.items()}
+            dbc_str = to_candbpp_string(self._state.dbc_signals, meta)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(dbc_str)
             self.status_label.setText(f"CANdb++ exported: {path}")

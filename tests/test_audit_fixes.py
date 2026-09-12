@@ -34,8 +34,8 @@ class _RecordingBus:
         return self._replies.pop(0) if self._replies else None
 
 
-def test_isotp_single_frame_is_pci_less():
-    from core.isotp import ISOTPSession
+def test_isotp_single_frame_is_pci_less(armed):
+    from canlab.core.isotp import ISOTPSession
     bus = _RecordingBus()
     ISOTPSession(bus, 0x7E0, 0x7E8).send(bytes([0x01, 0x0C]), timeout=0.001)
     # Correct SF: PCI 0x02, then service payload 01 0C, padded to 8.
@@ -45,7 +45,7 @@ def test_isotp_single_frame_is_pci_less():
 
 
 def test_isotp_frames_always_8_bytes():
-    from core.isotp import ISOTPSession
+    from canlab.core.isotp import ISOTPSession
     bus = _RecordingBus()
     ISOTPSession(bus, 0x7E0, 0x7E8).send(bytes([0x22, 0xF1, 0x90]), timeout=0.001)
     assert all(len(f) == 8 for f in bus.sent)
@@ -53,9 +53,9 @@ def test_isotp_frames_always_8_bytes():
 
 # ── OBD-II poller sends a PCI-less service request ────────────────────────────
 
-def test_obd2_poller_request_is_pci_less():
-    from core.obd2_poller import OBD2Poller
-    from core.isotp import ISOTPSession
+def test_obd2_poller_request_is_pci_less(armed):
+    from canlab.core.obd2_poller import OBD2Poller  # noqa: F401
+    from canlab.core.isotp import ISOTPSession
     bus = _RecordingBus()
     session = ISOTPSession(bus, 0x7E0, 0x7E8)
     session.send(bytes([0x01, 0x0C]), timeout=0.001)   # what the poller now sends
@@ -65,7 +65,7 @@ def test_obd2_poller_request_is_pci_less():
 # ── UDS DTC decoding: 4-byte records, correct code text ───────────────────────
 
 def test_decode_dtc_code_text():
-    from core.uds import decode_dtc
+    from canlab.core.uds import decode_dtc
     # 0x01 -> P0..., first digit 0, then 01; mid 0x43 -> P0143
     assert decode_dtc(0x01, 0x43, 0x00) == "P0143"
     # High bits 11 -> U prefix
@@ -74,7 +74,7 @@ def test_decode_dtc_code_text():
 
 def test_obd2_multibyte_pid_decodes_full_width():
     # RPM (0x0C) is two bytes; a single-byte decode would be 4x wrong.
-    from core.obd2_pids import decode_pid
+    from canlab.core.obd2_pids import decode_pid
     # (A<<8|B)/4 with A=0x1A,B=0xF8 -> 1726 rpm
     assert decode_pid(0x0C, bytes([0x1A, 0xF8])) == pytest.approx(1726.0)
 
@@ -82,7 +82,7 @@ def test_obd2_multibyte_pid_decodes_full_width():
 # ── REST API JSON is NaN-safe ─────────────────────────────────────────────────
 
 def test_rest_json_safe_replaces_nan():
-    from core.rest_api import _json_safe
+    from canlab.core.rest_api import _json_safe
     import json
     recs = [{"B0": 1, "B1": float("nan"), "B2": np.int64(7),
              "Timestamp": np.float64(1.5)}]
@@ -96,8 +96,8 @@ def test_rest_json_safe_replaces_nan():
 # ── Replay honours recorded DLC ───────────────────────────────────────────────
 
 def test_replay_honours_dlc(monkeypatch):
-    from core import replay as replay_mod
-    from core.safety import set_armed
+    from canlab.core import replay as replay_mod
+    from canlab.core.safety import set_armed
     set_armed(True)
     try:
         sent = []
@@ -122,7 +122,7 @@ def test_replay_honours_dlc(monkeypatch):
 
 def test_dbc_roundtrip_extended_and_length():
     import cantools
-    from core.dbc_manager import signals_to_dbc_string
+    from canlab.core.dbc_manager import signals_to_dbc_string
     sigs = [{
         "message_id": "18FEF100", "message_name": "EEC1", "msg_length": 3,
         "extended": True, "signal_name": "RPM", "start_bit": 0, "length": 16,
@@ -138,8 +138,8 @@ def test_dbc_roundtrip_extended_and_length():
 
 
 def test_dbc_decode_big_endian_signed():
-    from core.injection import pack_signal
-    from core.dbc_manager import decode_frame
+    from canlab.core.injection import pack_signal
+    from canlab.core.dbc_manager import decode_frame
     sig = {
         "message_id": "200", "signal_name": "Temp", "start_bit": 7,
         "length": 16, "byte_order": "big", "value_type": "signed",
@@ -154,7 +154,7 @@ def test_dbc_decode_big_endian_signed():
 # ── AppState lazy frame storage ───────────────────────────────────────────────
 
 def test_appstate_append_is_lazy_and_correct():
-    from core.state import AppState
+    from canlab.core.state import AppState
     s = AppState()
     s.load_frames(pd.DataFrame({"ID": ["0A6"], "Timestamp": [0.0], "B0": [1]}), "src")
     for i in range(5):
@@ -172,7 +172,7 @@ def test_appstate_append_is_lazy_and_correct():
 # ── Vectorized correlation align matches the reference ────────────────────────
 
 def test_vectorized_align_matches_reference():
-    from core.correlation_engine import _align
+    from canlab.core.correlation_engine import _align
 
     def ref(s1, t1, s2, t2, max_dt=0.1):
         v1, v2, j = [], [], 0
@@ -197,8 +197,8 @@ def test_vectorized_align_matches_reference():
 # ── ARM TX re-check stops replay mid-run ──────────────────────────────────────
 
 def test_replay_stops_when_disarmed_midrun():
-    from core import replay as replay_mod
-    from core.safety import set_armed
+    from canlab.core import replay as replay_mod
+    from canlab.core.safety import set_armed
     set_armed(True)
     sent = []
 
@@ -231,7 +231,7 @@ def test_savvycan_trailing_comma_and_hex_bytes(tmp_path):
     filled with the Extended flag) — which then crashed int(id, 16) in the UI.
     And hex bytes ("0A"/"FF") were read as decimal / NaN. Both must parse right.
     """
-    from core.log_parser import parse_log_file
+    from canlab.core.log_parser import parse_log_file
     p = tmp_path / "savvy.csv"
     p.write_text(
         "Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8\n"
@@ -252,7 +252,7 @@ def test_savvycan_trailing_comma_and_hex_bytes(tmp_path):
 
 def test_savvycan_decimal_sample_still_parses(tmp_path):
     # The bundled decimal-byte sample format (no trailing comma) must keep working.
-    from core.log_parser import parse_log_file
+    from canlab.core.log_parser import parse_log_file
     p = tmp_path / "dec.csv"
     p.write_text(
         "Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8\n"
@@ -267,7 +267,7 @@ def test_savvycan_decimal_sample_still_parses(tmp_path):
 # ── candump FD frames are parsed, not mangled ─────────────────────────────────
 
 def test_candump_fd_detection_and_parse(tmp_path):
-    from core.log_parser import parse_log_file
+    from canlab.core.log_parser import parse_log_file
     p = tmp_path / "fd.log"
     p.write_text(
         "(1000.000000) can0 123##1001122334455667788990011\n"

@@ -30,6 +30,10 @@ Thumbs.db
 
 # Logs and data
 *.log
+# ...but test fixtures are inputs, not output. candump_mixed.log was
+# swallowed by the rule above, so the parser test that reads it could
+# never pass on a fresh clone.
+!tests/fixtures/*.log
 *.blf
 
 # Keyring / secrets
@@ -46,3 +50,7 @@ htmlcov/
 # Nested third-party repo (CSS Electronics skills) — keep out of this repo
 can-bus-reverse-engineering-skills/
 can-bus-reverse-engineering-skills
+
+# Demo build intermediates (frames, per-scene audio); the MP4/SRT are committed.
+docs/demo/build/
+docs/demo/build-realdata/

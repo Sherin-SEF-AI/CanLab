@@ -1,15 +1,18 @@
 """DIAGNOSTICS tab — UDS/OBD-II scanner, DTC reader, bus-load gauge, bus health."""
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QPushButton, QLabel,
+    QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QProgressBar,
     QTextEdit, QTabWidget, QComboBox, QSpinBox, QLineEdit, QFileDialog,
-    QDoubleSpinBox, QCheckBox, QMessageBox,
+    QCheckBox, QMessageBox,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QColor, QBrush
 
-from theme import COLORS, mono_font
-from core.state import get_state
+from canlab.theme import COLORS, mono_font, desc_label
+from canlab.core.state import get_state
+import logging
+
+log = logging.getLogger(__name__)
 
 
 class DiagnosticsTab(QWidget):
@@ -24,6 +27,12 @@ class DiagnosticsTab(QWidget):
         self._build_ui()
         self._state.can_connected.connect(self._on_can_status)
         self._state.bus_load_update.connect(self._on_bus_load)
+        # Passive "RX" log of diagnostic traffic. It reads its own subscription,
+        # so it never competes with a running scanner for responses.
+        self._rx_log_owner = object()
+        self._rx_log_timer = QTimer()
+        self._rx_log_timer.setInterval(500)
+        self._rx_log_timer.timeout.connect(self._drain_rx_log)
 
     def _build_ui(self):
         outer = QHBoxLayout(self)
@@ -35,7 +44,13 @@ class DiagnosticsTab(QWidget):
         tabs.addTab(self._build_svc_tab(),    "UDS SERVICES")
         tabs.addTab(self._build_secacc_tab(), "SECURITY ACCESS")
         tabs.addTab(self._build_load_tab(),   "BUS LOAD")
+        from canlab.tabs.widgets.xcp_panel import XCPPanel
+        from canlab.tabs.widgets.doip_panel import DoIPPanel
+        self.xcp_panel = XCPPanel()
+        self.doip_panel = DoIPPanel()
         tabs.addTab(self._build_health_tab(), "BUS HEALTH")
+        tabs.addTab(self.xcp_panel,  "XCP")
+        tabs.addTab(self.doip_panel, "DoIP")
         outer.addWidget(tabs)
 
     # ── OBD-II tab ────────────────────────────────────────────────────────────
@@ -90,7 +105,6 @@ class DiagnosticsTab(QWidget):
         self.uds_log.setReadOnly(True)
         self.uds_log.setFont(mono_font(8))
         lay.addWidget(self.uds_log)
-        self._state.uds_response.connect(self._on_uds_response)
         return w
 
     # ── Security Access tab ───────────────────────────────────────────────────
@@ -101,11 +115,10 @@ class DiagnosticsTab(QWidget):
         lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(6)
 
-        lay.addWidget(QLabel(
-            "UDS Security Access (service 0x27) — seed-key brute-force, "
+        lay.addWidget(desc_label(
+            "UDS Security Access (service 0x27): seed-key brute-force, "
             "built-in algorithms, and pluggable Python scripts.",
-            font=mono_font(8),
-        ))
+            8))
 
         # ── Config ────────────────────────────────────────────────────────────
         cfg_grp = QGroupBox("CONFIGURATION")
@@ -232,7 +245,7 @@ class DiagnosticsTab(QWidget):
             self.sa_script_edit.setText(path)
 
     def _sa_start(self):
-        bus = self._state.can_bus
+        bus = self._get_bus()
         if bus is None:
             self.sa_log.append("ERROR: CAN bus not connected.")
             return
@@ -243,7 +256,7 @@ class DiagnosticsTab(QWidget):
             self.sa_log.append("ERROR: invalid ECU address.")
             return
 
-        from core.security_access import SecurityAccessWorker
+        from canlab.core.security_access import SecurityAccessWorker
         self._sa_worker = SecurityAccessWorker(
             bus          = bus,
             ecu_addr     = ecu_addr,
@@ -318,7 +331,7 @@ class DiagnosticsTab(QWidget):
         self.sa_bf_progress.setValue(current)
 
     def _sa_show_history(self):
-        from core.security_access import load_history
+        from canlab.core.security_access import load_history
         history = load_history()
         if not history:
             self.sa_log.append("No session history yet.")
@@ -388,21 +401,46 @@ class DiagnosticsTab(QWidget):
         if connected:
             self.lbl_diag_status.setText("CAN: connected")
             self.lbl_diag_status.setStyleSheet(f"color:{COLORS['green']}")
+            self._rx_log_timer.start()
         else:
             self.lbl_diag_status.setText("CAN: disconnected")
             self.lbl_diag_status.setStyleSheet(f"color:{COLORS['error']}")
+            self._rx_log_timer.stop()
+            self._health_timer.stop()
 
     # ── UDS / OBD actions ─────────────────────────────────────────────────────
 
+    # Diagnostic responses: 11-bit 0x7E8-0x7EF and 29-bit 0x18DAF1xx.
+    _RESPONSE_FILTER = staticmethod(
+        lambda arb: 0x7E0 <= arb <= 0x7EF or (arb & 0xFFFF0000) == 0x18DA0000)
+
     def _get_bus(self):
-        return self._state.can_bus
+        return self._state.bus_view(self, self._RESPONSE_FILTER)
+
+    def cleanup(self):
+        """Stop every worker/timer this tab owns (called on app close)."""
+        self._health_timer.stop()
+        self._rx_log_timer.stop()
+        for panel in ("xcp_panel", "doip_panel"):
+            p = getattr(self, panel, None)
+            if p is not None:
+                p.cleanup()
+        for attr in ("_uds_worker", "_dtc_worker", "_deep_worker", "_svc_worker",
+                     "_sa_worker"):
+            w = getattr(self, attr, None)
+            if w is not None:
+                try:
+                    w.stop()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
 
     def _scan_pids(self):
         bus = self._get_bus()
         if bus is None:
             self.uds_log.append("ERROR: CAN bus not connected.")
             return
-        from core.uds import UDSScanner
+        from canlab.core.uds import UDSScanner
         self._uds_worker = UDSScanner(bus, mode="PID")
         self._uds_worker.pid_result.connect(self._on_pid_result)
         self._uds_worker.status.connect(lambda s: self.uds_log.append(s))
@@ -427,7 +465,7 @@ class DiagnosticsTab(QWidget):
         if bus is None:
             self.uds_log.append("ERROR: CAN bus not connected.")
             return
-        from core.uds import UDSScanner
+        from canlab.core.uds import UDSScanner
         # Store on self: a local QThread is garbage-collected the moment this
         # method returns, aborting with "QThread: Destroyed while thread is
         # still running".
@@ -446,40 +484,35 @@ class DiagnosticsTab(QWidget):
 
     def _clear_dtc(self):
         import can
-        from core.safety import is_armed
         bus = self._get_bus()
         if bus is None:
             self.uds_log.append("ERROR: CAN bus not connected.")
             return
-        # ClearDiagnosticInformation (0x14) writes to the bus and clears ECU
-        # fault memory — it must respect the global ARM-TX gate like every other
-        # transmit, and be confirmed, rather than firing on a single click.
-        if not is_armed():
-            QMessageBox.warning(self, "Disarmed",
-                                "Clear DTC transmits to the bus. Enable ARM TX first.")
-            return
-        confirm = QMessageBox.question(
-            self, "Clear DTCs?",
-            "This sends UDS ClearDiagnosticInformation (0x14) and erases stored "
-            "fault codes on responding ECUs. Only do this on a bench setup. "
-            "Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if confirm != QMessageBox.StandardButton.Yes:
-            return
+        from canlab.core.safety import gated_send, BusNotArmedError, BlockedIdError
         try:
             data = bytes([0x04, 0x14, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00])
             msg  = can.Message(arbitration_id=0x7DF, data=data, is_extended_id=False)
-            bus.send(msg)
+            gated_send(bus, msg)
             self.uds_log.append("Sent: Clear DTC (14 FF FF FF)")
             self.dtc_text.setPlainText("Cleared.")
+        except (BusNotArmedError, BlockedIdError) as e:
+            self.uds_log.append(str(e))
         except Exception as e:
             self.uds_log.append(f"ERROR: {e}")
 
     def _on_uds_response(self, arb_id: int, data: bytes):
         hex_data = " ".join(f"{b:02X}" for b in data)
         self.uds_log.append(f"RX 0x{arb_id:03X}: {hex_data}")
+
+    def _drain_rx_log(self, limit: int = 50):
+        sub = self._state.bus_view(self._rx_log_owner, self._RESPONSE_FILTER)
+        if sub is None:
+            return
+        for _ in range(limit):
+            msg = sub.recv(timeout=0)
+            if msg is None:
+                return
+            self._on_uds_response(msg.arbitration_id, bytes(msg.data))
 
     # ── UDS Deep Scan tab ─────────────────────────────────────────────────────
 
@@ -531,7 +564,7 @@ class DiagnosticsTab(QWidget):
         if bus is None:
             self.deep_log.append("ERROR: CAN bus not connected.")
             return
-        from core.uds import UDSScanner
+        from canlab.core.uds import UDSScanner
         self._deep_worker = UDSScanner(bus, mode="DEEP")
         self._deep_worker.ecu_result.connect(self._on_ecu_result)
         self._deep_worker.status.connect(lambda s: (self.deep_status.setText(s), self.deep_log.append(s)))
@@ -613,7 +646,7 @@ class DiagnosticsTab(QWidget):
         if bus is None:
             self.svc_status.setText("ERROR: CAN bus not connected.")
             return
-        from core.uds import UDSScanner, UDS_SERVICES
+        from canlab.core.uds import UDSScanner
         unsafe = self.svc_unsafe.isChecked()
         if unsafe:
             ok = QMessageBox.warning(
@@ -646,7 +679,7 @@ class DiagnosticsTab(QWidget):
         self.svc_status.setText("Service scan complete.")
 
     def _on_svc_result(self, ecu_addr: int, svc_id: int, supported: bool, resp_data: bytes):
-        from core.uds import UDS_SERVICES
+        from canlab.core.uds import UDS_SERVICES
         row = self.svc_table.rowCount()
         self.svc_table.insertRow(row)
         svc_name  = UDS_SERVICES.get(svc_id, f"0x{svc_id:02X}")
@@ -669,11 +702,10 @@ class DiagnosticsTab(QWidget):
         lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(6)
 
-        lay.addWidget(QLabel(
+        lay.addWidget(desc_label(
             "Live CAN bus health: error frames, bus-off events, load statistics, "
             "and IDs that go silent.",
-            font=mono_font(8),
-        ))
+            8))
 
         ctl = QHBoxLayout()
         self.btn_health_start = QPushButton("▶  Start Monitoring")
@@ -730,39 +762,26 @@ class DiagnosticsTab(QWidget):
         return w
 
     def _health_start(self):
-        from core.bus_health import BusHealthMeter
-        self._health_meter = BusHealthMeter()
+        if self._state.bus_hub is None:
+            self.health_silent.setPlainText("Connect a CAN bus first.")
+            return
         self._health_timer.start()
         self.btn_health_start.setEnabled(False)
         self.btn_health_start.setText("Monitoring…")
-        self._state.bus_health_update.connect(self._on_health_update)
 
     def _health_reset(self):
-        if self._health_meter:
-            self._health_meter.reset()
+        hub = self._state.bus_hub
+        if hub is not None:
+            hub.health_meter.reset()
         self._health_history.clear()
 
     def _health_tick(self):
-        if self._health_meter is None:
+        # The receive hub feeds its own health meter from the single rx thread,
+        # so this only reads a snapshot — it must never call recv() itself.
+        hub = self._state.bus_hub
+        if hub is None:
             return
-        # Feed live frames from live CAN worker if connected
-        bus = self._state.can_bus
-        if bus:
-            import time
-            now = time.monotonic()
-            # Non-blocking check
-            frame = None
-            try:
-                frame = bus.recv(timeout=0.0)
-            except Exception:
-                pass
-            if frame:
-                is_err = getattr(frame, "is_error_frame", False)
-                can_id = f"{frame.arbitration_id:03X}"
-                self._health_meter.add_frame(
-                    getattr(frame, "dlc", 8), now, can_id, is_err
-                )
-        snap = self._health_meter.snapshot()
+        snap = hub.health_snapshot()
         self._state.bus_health = snap
         self._state.bus_health_update.emit(snap)
 

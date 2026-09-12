@@ -4,11 +4,11 @@ Builds on signals_to_dbc_string() and appends BA_DEF_ / BA_DEF_DEF_ / BA_
 attribute blocks that CANdb++ (and most modern DBC parsers including cantools)
 expect for cycle-time and init-value metadata.
 
-msg_meta shape (same as HYUNDAI_MSG_META in openpilot_export.py, extended):
+msg_meta shape (as built by canlab.core.vehicle_profile.message_meta, extended):
   {hex_id_str: {"cycle_time_ms": int, "has_counter": bool, "has_checksum": bool}}
 """
 
-from core.dbc_manager import signals_to_dbc_string
+from canlab.core.dbc_manager import signals_to_dbc_string
 
 
 def to_candbpp_string(signal_defs: list[dict],

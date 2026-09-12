@@ -2,7 +2,7 @@
 import numpy as np
 import pandas as pd
 
-from core.reference_calibrate import calibrate_against_reference, best_signal
+from canlab.core.reference_calibrate import calibrate_against_reference, best_signal
 
 
 def _synth(scale=0.1, big_endian=False, start_byte=2, n=300):

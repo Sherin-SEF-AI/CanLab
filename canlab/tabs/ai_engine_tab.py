@@ -1,18 +1,21 @@
 import re
 import pandas as pd
-import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (
+    QScrollArea, QFrame,
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QListWidgetItem,
-    QPushButton, QLabel, QTextEdit, QProgressBar, QGroupBox, QLineEdit,
-    QTabWidget,
+    QPushButton, QLabel, QTextEdit, QProgressBar, QLineEdit,
+    QTabWidget, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QBrush
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.ai_client import AIWorker
-from ui.animations import SpinnerWidget, ButtonPulse, TypewriterCursor, flash_widget
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+from canlab.core.ai_client import AIWorker, ANTHROPIC_DEFAULT_MODEL
+from canlab.ui.animations import SpinnerWidget, ButtonPulse, TypewriterCursor, flash_widget
+import logging
+
+log = logging.getLogger(__name__)
 
 BYTE_COLS = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
 SPARKLINE_COLORS = ["#00ff88","#ffb300","#00aaff","#ff6b6b","#cc88ff",
@@ -25,12 +28,12 @@ class AIEngineTab(QWidget):
         self._state      = get_state()
         self._api_key    = ""
         self._groq_key   = ""
+        self._openai_key = ""
         self._provider   = "Anthropic"
-        self._model      = "claude-sonnet-4-6"
+        self._model      = ANTHROPIC_DEFAULT_MODEL
         self._queue:     list  = []
         self._worker     = None
         self._current_id = ""
-        self._event_correlations: list = []
         self._nl_worker  = None
         self._btn_pulse  = None   # ButtonPulse — set after _build_ui
         self._tw_cursor  = None   # TypewriterCursor — set after _build_ui
@@ -39,23 +42,26 @@ class AIEngineTab(QWidget):
         self._btn_pulse = ButtonPulse(self.btn_analyze)
         self._tw_cursor = TypewriterCursor(self.response_text)
         self._state.id_selected.connect(self._load_id)
-        self._state.repo_loaded.connect(self._on_repo_loaded)
-        self._state.anomaly_requested.connect(self._on_anomaly_requested)
         # Load persisted memory
-        from core.ai_memory import load_memory
+        from canlab.core.ai_memory import load_memory
         self._state.ai_memory = load_memory()
 
     def set_api_key(self, key: str):
         self._api_key = key
 
     def set_ai_config(self, provider: str, model: str,
-                      groq_key: str = "", api_key: str = ""):
+                      groq_key: str = "", api_key: str = "", openai_key: str = ""):
         self._provider = provider
         self._model    = model
         self._groq_key = groq_key
+        self._openai_key = openai_key
         if api_key:
             self._api_key = api_key
         self._update_provider_ui()
+
+    def _active_key(self) -> str:
+        return {"Groq": self._groq_key, "OpenAI": self._openai_key,
+                "Ollama": ""}.get(self._provider, self._api_key)
 
     def _update_provider_ui(self):
         provider = self._provider
@@ -67,6 +73,7 @@ class AIEngineTab(QWidget):
             f"border:1px solid {color}; border-radius:3px; padding:1px 4px;"
         )
         self.btn_analyze.setText(f"Analyze with {provider}")
+        self.btn_nl_ask.setText(f"Ask {provider}")
         self.lbl_response_header.setText(f"{provider.upper()} RESPONSE")
 
     def _build_ui(self):
@@ -78,18 +85,12 @@ class AIEngineTab(QWidget):
 
         # ── Left: Queue ───────────────────────────────────────────────────────
         left = QWidget()
-        left.setFixedWidth(210)
+        left.setMinimumWidth(210)
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(4, 4, 4, 4)
         left_lay.setSpacing(4)
 
-        self.lbl_repo_badge = QLabel("No repo loaded")
-        self.lbl_repo_badge.setFont(mono_font(8))
-        self.lbl_repo_badge.setObjectName("label_dim")
-        self.lbl_repo_badge.setWordWrap(True)
-        left_lay.addWidget(self.lbl_repo_badge)
-
-        self.lbl_provider_badge = QLabel("AI: Anthropic / claude-sonnet-4-6")
+        self.lbl_provider_badge = QLabel(f"AI: Anthropic / {ANTHROPIC_DEFAULT_MODEL}")
         self.lbl_provider_badge.setFont(mono_font(7))
         self.lbl_provider_badge.setStyleSheet(
             f"color:{COLORS['amber']}; background:{COLORS['panel_bg']}; "
@@ -135,7 +136,19 @@ class AIEngineTab(QWidget):
         left_lay.addWidget(self.lbl_memory)
         self._refresh_memory_label()
 
-        splitter.addWidget(left)
+
+        # See intelligence_tab: a tall column of controls in a plain widget
+        # sets the minimum height of the whole window. In a scroll area it can
+        # shrink, so the application fits a laptop screen.
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_scroll.setMinimumWidth(210)
+        left_scroll.setMaximumWidth(380)
+        splitter.addWidget(left_scroll)
 
         # ── Right: Analysis ───────────────────────────────────────────────────
         right = QWidget()
@@ -168,16 +181,6 @@ class AIEngineTab(QWidget):
         self.lbl_stats.setObjectName("label_dim")
         self.lbl_stats.setFont(mono_font(8))
         ws_lay.addWidget(self.lbl_stats)
-
-        self.repo_grp = QGroupBox("REPO CONTEXT")
-        repo_lay = QVBoxLayout(self.repo_grp)
-        repo_lay.setContentsMargins(4, 4, 4, 4)
-        self.lbl_repo_info = QLabel("No GitHub repo loaded.")
-        self.lbl_repo_info.setFont(mono_font(8))
-        self.lbl_repo_info.setObjectName("label_dim")
-        self.lbl_repo_info.setWordWrap(True)
-        repo_lay.addWidget(self.lbl_repo_info)
-        ws_lay.addWidget(self.repo_grp)
 
         self.raw_preview = QTextEdit()
         self.raw_preview.setReadOnly(True)
@@ -217,12 +220,6 @@ class AIEngineTab(QWidget):
         self._spinner.hide()
         analyze_row.addWidget(self._spinner)
         ws_lay.addLayout(analyze_row)
-
-        self.lbl_events = QLabel("")
-        self.lbl_events.setObjectName("label_amber")
-        self.lbl_events.setFont(mono_font(8))
-        self.lbl_events.setWordWrap(True)
-        ws_lay.addWidget(self.lbl_events)
 
         right_splitter.addWidget(workspace)
 
@@ -282,7 +279,7 @@ class AIEngineTab(QWidget):
         self.nl_input.returnPressed.connect(self._run_nl_query)
         nl_lay.addWidget(self.nl_input)
 
-        self.btn_nl_ask = QPushButton("Ask Claude")
+        self.btn_nl_ask = QPushButton("Ask")
         self.btn_nl_ask.setObjectName("btn_amber")
         self.btn_nl_ask.clicked.connect(self._run_nl_query)
         nl_lay.addWidget(self.btn_nl_ask)
@@ -324,24 +321,6 @@ class AIEngineTab(QWidget):
         splitter.setSizes([210, 790])
         layout.addWidget(splitter)
 
-    # ── Repo context ──────────────────────────────────────────────────────────
-
-    def _on_repo_loaded(self, info: dict):
-        owner = info.get("owner", "")
-        repo  = info.get("repo", "")
-        desc  = info.get("description", "")
-        name  = f"{owner}/{repo}" if owner else repo
-        self.lbl_repo_badge.setText(f"REPO: {name}")
-        self.lbl_repo_badge.setStyleSheet(f"color:{COLORS['green']}")
-        readme = self._state.repo_readme
-        from core.event_correlator import parse_annotations
-        n_events = len(parse_annotations(readme))
-        self.lbl_repo_info.setText(
-            f"{name}  —  {desc}\n"
-            f"README: {'yes' if readme else 'no'}  |  Events: {n_events}"
-        )
-        self.lbl_repo_info.setStyleSheet(f"color:{COLORS['green']}")
-
     # ── Queue management ──────────────────────────────────────────────────────
 
     def queue_id(self, hex_id: str):
@@ -361,7 +340,7 @@ class AIEngineTab(QWidget):
     def _add_all_unknown(self):
         if self._state.frames_df.empty:
             return
-        from core.signal_analyzer import analyze_id
+        from canlab.core.signal_analyzer import analyze_id
         for can_id in self._state.get_unique_ids():
             frames = self._state.get_frames_for_id(can_id)
             stats  = analyze_id(frames)
@@ -432,25 +411,6 @@ class AIEngineTab(QWidget):
             t = t - t[0]
             y = s.values.astype(float) + i * 30
             self.sparkline_widget.plot(t, y, pen=pg.mkPen(color=color, width=1))
-        ann = self._state.annotations
-        if ann:
-            corr = [lbl for lbl, ids in ann.items() if hex_id in ids]
-            if corr:
-                self._event_correlations = corr
-                self.lbl_events.setText("Events: " + " | ".join(corr[:4]))
-                self.context_input.setPlainText("; ".join(corr[:3]))
-                return
-        self._event_correlations = []
-        self.lbl_events.setText("")
-
-    # ── Anomaly ───────────────────────────────────────────────────────────────
-
-    def _on_anomaly_requested(self, hex_id: str, frames_df):
-        self._load_id(hex_id)
-        self.context_input.setPlainText(
-            "Anomalous frames detected — please explain what might cause this."
-        )
-        self._run_analysis()
 
     # ── Analysis ──────────────────────────────────────────────────────────────
 
@@ -458,7 +418,7 @@ class AIEngineTab(QWidget):
         """Run lightweight ML analysis synchronously and return a summary string."""
         lines = []
         try:
-            from core.signal_classifier import classify_frame, classify_message_type
+            from canlab.core.signal_classifier import classify_frame, classify_message_type
             roles    = classify_frame(frames, self._current_id)
             msg_type = classify_message_type(frames)
             if roles:
@@ -481,10 +441,10 @@ class AIEngineTab(QWidget):
                     f"({msg_type.get('class','?')})"
                 )
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
         try:
-            from core.checksum_guesser import guess_all_bytes
+            from canlab.core.checksum_guesser import guess_all_bytes
             cs = guess_all_bytes(frames, self._current_id)
             for byte_idx, matches in cs.items():
                 if matches:
@@ -495,12 +455,12 @@ class AIEngineTab(QWidget):
                             f"of remaining bytes (confidence={top['confidence']:.0%})"
                         )
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
         try:
             idx = getattr(self._state, "_embedding_index", {})
             if idx and self._current_id in idx:
-                from core.signal_embedding import find_similar
+                from canlab.core.signal_embedding import find_similar
                 similar = find_similar(self._current_id, idx, top_k=3)
                 if similar:
                     sim_str = ", ".join(
@@ -508,7 +468,7 @@ class AIEngineTab(QWidget):
                     )
                     lines.append(f"Similar IDs in this log: {sim_str}")
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
         return "\n".join(lines)
 
@@ -532,7 +492,7 @@ class AIEngineTab(QWidget):
             if from_queue:
                 self._advance_queue(self._current_id)
             return
-        active_key = self._groq_key if self._provider == "Groq" else self._api_key
+        active_key = self._active_key()
         # Ollama is a local server — no API key required.
         if self._provider != "Ollama" and not active_key:
             self.response_text.setPlainText(
@@ -545,18 +505,13 @@ class AIEngineTab(QWidget):
         context = self.context_input.toPlainText()
 
         # Inject memory context
-        from core.ai_memory import get_memory_context
+        from canlab.core.ai_memory import get_memory_context
         mem_ctx = get_memory_context(self._state.ai_memory)
         if mem_ctx:
             context = mem_ctx + "\n\n" + context
 
         # Build ML pre-analysis to supercharge the prompt
         ml_insights = self._build_ml_insights(frames)
-
-        repo_ctx = None
-        if self._state.repo_info:
-            repo_ctx = dict(self._state.repo_info)
-            repo_ctx["readme"] = self._state.repo_readme
 
         self.response_text.setPlainText("")
         self.btn_analyze.setEnabled(False)
@@ -572,11 +527,10 @@ class AIEngineTab(QWidget):
             id_hex=self._current_id,
             frames_df=frames,
             context=context,
-            event_correlations=self._event_correlations,
-            repo_context=repo_ctx,
             provider=self._provider,
             model=self._model,
             groq_key=self._groq_key,
+            openai_key=self._openai_key,
             ml_insights=ml_insights,
         )
         self._worker.chunk_received.connect(self._on_chunk)
@@ -639,7 +593,7 @@ class AIEngineTab(QWidget):
             self._save_to_memory_silent(conclusion)
 
     def _save_to_memory_silent(self, conclusion: str):
-        from core.ai_memory import add_entry
+        from canlab.core.ai_memory import add_entry
         self._state.ai_memory = add_entry(
             self._state.ai_memory, self._current_id, conclusion
         )
@@ -647,7 +601,7 @@ class AIEngineTab(QWidget):
         self._refresh_memory_view()
 
     def _clear_memory(self):
-        from core.ai_memory import save_memory
+        from canlab.core.ai_memory import save_memory
         self._state.ai_memory = []
         save_memory([])
         self._refresh_memory_label()
@@ -679,7 +633,7 @@ class AIEngineTab(QWidget):
         question = self.nl_input.text().strip()
         if not question:
             return
-        active_key = self._groq_key if self._provider == "Groq" else self._api_key
+        active_key = self._active_key()
         if self._provider != "Ollama" and not active_key:
             self.nl_response.setPlainText(
                 f"ERROR: No {self._provider} API key configured."
@@ -691,8 +645,8 @@ class AIEngineTab(QWidget):
         self.btn_nl_ask.setEnabled(False)
 
         # Build a synthetic "frame" showing unique IDs + their analysis + memory
-        from core.ai_memory import get_memory_context
-        from core.signal_analyzer import analyze_id
+        from canlab.core.ai_memory import get_memory_context
+        from canlab.core.signal_analyzer import analyze_id
 
         summary_lines = [f"User question: {question}\n", "=== CAN Data Summary ==="]
         for can_id in self._state.get_unique_ids()[:20]:
@@ -707,29 +661,18 @@ class AIEngineTab(QWidget):
         if mem_ctx:
             summary_lines.append(mem_ctx)
 
-        if self._state.annotations:
-            summary_lines.append("\n=== Annotated Events ===")
-            for event, ids in list(self._state.annotations.items())[:10]:
-                summary_lines.append(f"{event}: IDs {ids}")
-
         context_text = "\n".join(summary_lines)
 
         # Reuse AIWorker with a dummy id_hex
-        repo_ctx = None
-        if self._state.repo_info:
-            repo_ctx = dict(self._state.repo_info)
-            repo_ctx["readme"] = self._state.repo_readme
-
         self._nl_worker = AIWorker(
             api_key=self._api_key,
             id_hex="NL_QUERY",
             frames_df=pd.DataFrame(),
             context=context_text,
-            event_correlations=[],
-            repo_context=repo_ctx,
             provider=self._provider,
             model=self._model,
             groq_key=self._groq_key,
+            openai_key=self._openai_key,
         )
         self._nl_worker.chunk_received.connect(
             lambda t: self.nl_response.insertPlainText(t)
@@ -764,8 +707,14 @@ class AIEngineTab(QWidget):
     def _accept_to_dbc(self):
         response = self.response_text.toPlainText()
         sig = self._parse_dbc_from_response(response)
-        if sig:
-            self._state.add_dbc_signal(sig)
+        if sig is None:
+            QMessageBox.information(
+                self, "Nothing to accept",
+                "The response does not state a start bit and length for this "
+                "signal, so there is nothing to add. Define it in the DBC "
+                "Builder, or ask the model for a RECOMMENDED DBC ENTRY.")
+            return
+        self._state.add_dbc_signal(sig)
 
     def _accept_name(self):
         response = self.response_text.toPlainText()
@@ -793,6 +742,14 @@ class AIEngineTab(QWidget):
         return m.group(1) if m else f"Signal_{self._current_id}"
 
     def _parse_dbc_from_response(self, text: str) -> dict | None:
+        """Extract a signal definition from the model's prose.
+
+        Returns None when the response does not actually give a bit position:
+        this used to fall back to "8 bits at bit 0", so every Accept produced a
+        signal whether or not the model had identified one.
+        """
+        if not self._current_id:
+            return None
         sig = {
             "message_id":   self._current_id,
             "message_name": f"MSG_{self._current_id}",
@@ -808,13 +765,17 @@ class AIEngineTab(QWidget):
             "unit":         "",
             "description":  f"AI-analyzed ID 0x{self._current_id}",
         }
+        found = 0
         for field, pat in [
             ("start_bit", r"start.?bit[:\s]+(\d+)"),
-            ("length",    r"length[:\s]+(\d+)"),
+            ("length",    r"(?:length|bit.?length|size)[:\s]+(\d+)"),
         ]:
             m = re.search(pat, text, re.IGNORECASE)
             if m:
                 sig[field] = int(m.group(1))
+                found += 1
+        if found < 2:
+            return None
         for field, pat in [
             ("scale",  r"scale[:\s]+([\d.]+)"),
             ("offset", r"offset[:\s]+([\d.eE+-]+)"),

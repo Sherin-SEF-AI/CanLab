@@ -21,7 +21,7 @@
 </header>
 <div class="wrap">
   <div class="layout">
-    <aside class="toc"><h2>On this page</h2><nav><a href="#log-formats">Log formats</a><a href="#where-things-live">Where things live</a><a href="#settings">Settings</a><a href="#testing">Testing</a><a href="#limitations">Limitations</a><a href="#getting-help">Getting help</a><a href="#credits">Credits</a></nav></aside>
+    <aside class="toc"><h2>On this page</h2><nav><a href="#log-formats">Log formats</a><a href="#where-things-live">Where things live</a><a href="#settings">Settings</a><a href="#validated-against-real-captures">Validated against real captures</a><a href="#testing">Testing</a><a href="#limitations">Limitations</a><a href="#getting-help">Getting help</a><a href="#credits">Credits</a></nav></aside>
     <main id="main">
 
 <h1>Reference</h1>
@@ -37,17 +37,38 @@
 <div class="table-scroll"><table><thead><tr><th>Path</th><th>What</th></tr></thead><tbody><tr><td><code>~/.canlab/plugins/</code></td><td>Plugins you have installed.</td></tr><tr><td><code>~/.canlab/opendbc_cache/</code></td><td>Cached opendbc index, so matching works offline after the first fetch.</td></tr><tr><td><code>~/.canlab/memory.json</code></td><td>AI engine memory across sessions.</td></tr><tr><td><code>canlab/sample_data/</code></td><td>The bundled sample capture, its generator, and an example seed-key script.</td></tr><tr><td><code>docs/AUDIT_FIXES.md</code></td><td>The full list of defects fixed in the deep-audit pass, each with a regression test.</td></tr></tbody></table></div>
 
 <h2 id="settings">Settings</h2>
-<p>Eight panels: API KEYS, CAN INTERFACE, GITHUB, CACHE, REST API, BACKEND,
-   MULTI-BUS and PLUGINS. The ones you will actually touch are CAN INTERFACE
-   (interface, channel, bitrate, CAN FD), API KEYS if you want the AI features,
-   and PLUGINS to approve anything you have installed.</p>
+<p>Nine panels: API KEYS, CAN ADAPTERS, VEHICLE, REST API, MCP, BACKEND,
+   MULTI-BUS, PLUGINS and frame cap. The ones you will actually touch are CAN
+   ADAPTERS (add, detect and test your hardware), API KEYS if you want the AI
+   features, MCP to connect an assistant, and PLUGINS to approve anything you
+   have installed. Everything persists across restarts.</p>
+
+<h2 id="validated-against-real-captures">Validated against real captures</h2>
+<p>Separately from the unit suite, the whole application is run end to end over
+   real vehicle recordings, because synthetic data agrees with whatever the
+   code assumes. Two corpora, ninety checks.</p>
+<div class="table-scroll"><table><thead><tr><th>Corpus</th><th>What it is</th><th>Checks</th></tr></thead><tbody><tr><td>SavvyCAN examples</td><td>12,974 frames, 180 IDs, 11-bit, one bus</td><td>36</td></tr><tr><td>CANedge recordings and python-can format files</td><td>2 to 154,896 frames, 29-bit J1939, dual-bus, native MDF4, CAN FD and error frames</td><td>54</td></tr></tbody></table></div>
+<p>The second corpus is other people's hardware output, none of it produced
+   here: five CANedge logger recordings in native MDF4 from CSS Electronics,
+   including a 145,000-frame J1939 log that is 29-bit end to end and a
+   23-minute two-channel recording, plus Vector BLF and ASC written by
+   python-can's own writers covering CAN FD, 64-byte FD, error frames and a
+   comma-decimal locale. One real log is then written out in all five formats
+   and read back by every parser, which all have to agree about the same
+   traffic.</p>
+<p>It found two defects the older corpus could not reach: the openpilot DBC
+   exporter wrote a bare 29-bit frame id, so every J1939 capture exported a
+   file cantools refuses, and the sniffer aged a loaded capture against
+   wall-clock time so every row expired the moment a file opened. Both are
+   fixed and pinned by tests. A narrated recording of the run is in the
+   repository as <code>docs/canlab-realdata-validation.mp4</code>.</p>
 
 <h2 id="testing">Testing</h2>
 <p>The suite runs headless:</p>
-<pre><code>python -m pytest tests/ -q        # 154 passed, 1 skipped</code></pre>
-<p>The skip is the MDF4 importer, which needs the optional
-   <code>asammdf</code>. If the MCP SDK is not installed either, that is a
-   second skip.</p>
+<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 448 passed</code></pre>
+<p>Tests that need an optional dependency skip cleanly when it is absent: the
+   MDF4 importer without <code>asammdf</code>, the transport tests without the
+   MCP SDK, the Lua dissector without a Lua runtime.</p>
 <p>It covers the log parsers against fixtures in the real formats, DBC encode
    and decode round trips through cantools, the ARM TX gate on every transmit
    path including that disarming mid-run stops a worker, ISO-TP and UDS wire

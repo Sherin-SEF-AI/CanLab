@@ -28,6 +28,9 @@ from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
+import logging
+
+log = logging.getLogger(__name__)
 
 # ── UDS constants ─────────────────────────────────────────────────────────────
 
@@ -138,7 +141,9 @@ class SecurityAccessWorker(QThread):
         self._script_path  = script_path
         self._custom_expr  = custom_expr.strip()
         self._bf_key_len   = bf_key_len
-        self._bf_delay_ms  = bf_delay_ms
+        # Floor the delay: an unthrottled key loop trips the ECU attempt
+        # counter almost immediately and locks the module out.
+        self._bf_delay_ms  = max(20, int(bf_delay_ms))
         self._running      = True
 
     def stop(self):
@@ -149,17 +154,14 @@ class SecurityAccessWorker(QThread):
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _isotp_send(self, data: bytes, timeout: float = 1.0) -> Optional[bytes]:
-        """Send a PCI-less service payload; return the PCI-less response payload.
-
-        ``data`` must NOT carry an ISO-TP length byte or padding — ISOTPSession
-        builds those. Likewise the returned payload starts at the response SID.
-        """
         if not self._running:
             return None
         try:
-            from core.isotp import ISOTPSession
+            from canlab.core.isotp import ISOTPSession
             session = ISOTPSession(self._bus, self._ecu_addr, self._ecu_addr + 0x08)
-            return session.send(data, timeout=timeout)
+            # request() waits out NRC 0x78 (response pending), which seed and
+            # key replies legitimately use while the ECU computes.
+            return session.request(data, timeout=timeout)
         except Exception as e:
             self.error.emit(str(e))
             return None
@@ -167,7 +169,7 @@ class SecurityAccessWorker(QThread):
     def _open_session(self) -> bool:
         self.step_done.emit(f"Opening {SESSION_NAMES.get(self._session_type,'?')} session (0x{self._session_type:02X})…")
         resp = self._isotp_send(bytes([SVC_SESSION, self._session_type]))
-        if resp and len(resp) >= 2 and resp[0] == 0x50:
+        if resp and len(resp) >= 1 and resp[0] == 0x50:
             self.step_done.emit(f"  Session opened: 0x{resp[0]:02X}")
             return True
         if resp:
@@ -177,7 +179,7 @@ class SecurityAccessWorker(QThread):
         return False
 
     def _send_tester_present(self):
-        self._isotp_send(bytes([SVC_TP, 0x00]), timeout=0.3)
+        self._isotp_send(bytes([SVC_TP, 0x80]), timeout=0.3)
 
     def _request_seed(self) -> Optional[bytes]:
         subfunc = self._access_level | 0x01 if (self._access_level & 1 == 0) else self._access_level
@@ -197,7 +199,7 @@ class SecurityAccessWorker(QThread):
                 self.lockout_detected.emit(self._ecu_addr)
             return None
         if resp[0] == 0x67:
-            seed = bytes(resp[2:])
+            seed = bytes(resp[1:])
             self.step_done.emit(f"  Seed received: {seed.hex().upper()}")
             self.seed_received.emit(self._ecu_addr, self._access_level, seed)
             if all(b == 0 for b in seed):
@@ -220,16 +222,16 @@ class SecurityAccessWorker(QThread):
         if resp[0] == 0x67:
             return True, 0
         if resp[0] == 0x7F:
-            nrc = resp[2] if len(resp) > 2 else 0
-            return False, nrc
+            return False, resp[2] if len(resp) > 2 else 0
         return False, 0
 
     # ── Modes ─────────────────────────────────────────────────────────────────
 
     def run(self):
+        from canlab.core import safety
+        safety.register_tx_worker(self)
         try:
             if not self._open_session():
-                self.finished.emit()
                 return
             time.sleep(0.1)
 
@@ -242,6 +244,7 @@ class SecurityAccessWorker(QThread):
         except Exception as e:
             self.error.emit(str(e))
         finally:
+            safety.unregister_tx_worker(self)
             self.finished.emit()
 
     def _run_auto(self):
@@ -439,4 +442,4 @@ def _record_success(ecu: int, level: int, session: int, seed: bytes, key: bytes,
     try:
         append_history(entry)
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)

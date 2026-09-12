@@ -1,5 +1,5 @@
 """Tests for J1939 DM1 active-DTC decoding (backlog)."""
-from core.j1939 import decode_dm1, decode_pgn
+from canlab.core.j1939 import decode_dm1, decode_pgn
 
 
 def _dm1_with_dtc(spn, fmi, oc, cm=0, lamp=0x40):

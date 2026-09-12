@@ -5,7 +5,7 @@ ID-set overlap scoring ranks the right vehicle first.
 """
 import pytest
 
-from core import opendbc_matcher
+from canlab.core import opendbc_matcher
 
 
 # A small hand-built index standing in for the parsed opendbc DBCs.

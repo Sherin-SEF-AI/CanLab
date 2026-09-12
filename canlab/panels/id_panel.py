@@ -3,10 +3,9 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QMenu, QSplitter,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QBrush, QFont
-import pandas as pd
-from theme import COLORS, mono_font
-from core.state import get_state
+from PyQt6.QtGui import QColor, QBrush
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
 
 
 class IDPanel(QWidget):
@@ -15,7 +14,12 @@ class IDPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(220)
+        # Resizable rather than fixed: a fixed width cannot give room back on
+        # a small screen. The minimum still keeps the ID and count columns
+        # readable.
+        self.setMinimumWidth(150)
+        self.setMaximumWidth(420)
+        self.resize(220, self.height())
         self._state = get_state()
         self._build_ui()
         self._connect_signals()
@@ -67,7 +71,13 @@ class IDPanel(QWidget):
 
     def _connect_signals(self):
         self._state.source_added.connect(self._add_source)
-        self._state.frames_updated.connect(self._refresh_ids)
+        # Rebuilding the tree on every batch was the most expensive listener in
+        # the app; coalesce, and only rebuild when the ID set actually changes.
+        from canlab.ui.throttle import Coalescer
+        self._refresh_coalescer = Coalescer(self._refresh_ids, 250, self)
+        self._tree_signature = None
+        self._id_items: dict = {}
+        self._state.frames_updated.connect(self._refresh_coalescer.poke)
         self._state.signal_analyzed.connect(self._mark_analyzed)
         self.id_tree.itemClicked.connect(self._on_item_clicked)
 
@@ -77,43 +87,46 @@ class IDPanel(QWidget):
         self.source_list.addItem(item)
 
     def _refresh_ids(self):
-        df = self._state.frames_df
-        if df.empty:
+        stats = self._state.store.id_stats()
+        if not stats:
             return
-        self.id_tree.clear()
-        buses = df["Bus"].unique() if "Bus" in df.columns else ["0"]
-        total_time = df["Timestamp"].iloc[-1] - df["Timestamp"].iloc[0] if len(df) > 1 else 1
+        signature = tuple(sorted((cid, st.bus) for cid, st in stats.items()))
+        if signature != self._tree_signature:
+            self._rebuild_tree(stats)
+            self._tree_signature = signature
+        # Structure unchanged: update the counts/rates in place.
+        for can_id, st in stats.items():
+            item = self._id_items.get(can_id)
+            if item is None:
+                continue
+            freq = st.frequency
+            item.setText(1, f"{freq:.1f}")
+            item.setText(2, str(st.count))
+            item.setForeground(0, QBrush(QColor(
+                COLORS["green"] if freq > 50 else
+                COLORS["text"] if freq >= 1 else COLORS["dim"])))
 
-        for bus in sorted(buses, key=str):
+    def _rebuild_tree(self, stats: dict):
+        self.id_tree.clear()
+        self._id_items = {}
+        by_bus: dict = {}
+        for can_id, st in stats.items():
+            by_bus.setdefault(st.bus, []).append(can_id)
+        for bus in sorted(by_bus, key=str):
             bus_item = QTreeWidgetItem([f"BUS {bus}", "", ""])
             bus_item.setForeground(0, QBrush(QColor(COLORS["dim"])))
             bus_item.setFont(0, mono_font(8))
             self.id_tree.addTopLevelItem(bus_item)
-
-            bus_df = df[df["Bus"] == bus] if "Bus" in df.columns else df
-            for can_id in sorted(bus_df["ID"].unique()):
-                id_frames = bus_df[bus_df["ID"] == can_id]
-                count = len(id_frames)
-                freq  = count / total_time if total_time > 0 else 0
-
-                child = QTreeWidgetItem([
-                    can_id,
-                    f"{freq:.1f}",
-                    str(count),
-                ])
+            for can_id in sorted(by_bus[bus]):
+                child = QTreeWidgetItem([can_id, "", ""])
                 child.setFont(0, mono_font())
                 child.setData(0, Qt.ItemDataRole.UserRole, can_id)
-                child.setToolTip(0, f"ID: 0x{can_id}  ({int(can_id,16)})")
-
-                if freq > 50:
-                    child.setForeground(0, QBrush(QColor(COLORS["green"])))
-                elif freq >= 1:
-                    child.setForeground(0, QBrush(QColor(COLORS["text"])))
-                else:
-                    child.setForeground(0, QBrush(QColor(COLORS["dim"])))
-
+                try:
+                    child.setToolTip(0, f"ID: 0x{can_id}  ({int(can_id, 16)})")
+                except ValueError:
+                    child.setToolTip(0, f"ID: 0x{can_id}")
                 bus_item.addChild(child)
-
+                self._id_items[can_id] = child
             bus_item.setExpanded(True)
 
     def _on_item_clicked(self, item: QTreeWidgetItem, col: int):

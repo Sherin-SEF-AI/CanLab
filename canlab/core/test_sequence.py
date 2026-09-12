@@ -15,11 +15,14 @@ TestSequenceWorker(QThread) executes the sequence and emits:
 """
 from __future__ import annotations
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
+import logging
+
+log = logging.getLogger(__name__)
 
 
 class StepType(str, Enum):
@@ -74,8 +77,17 @@ class TestSequenceWorker(QThread):
 
     def stop(self):
         self._running = False
+        self.wait(2000)
 
     def run(self):
+        from canlab.core import safety
+        safety.register_tx_worker(self)
+        try:
+            self._run()
+        finally:
+            safety.unregister_tx_worker(self)
+
+    def _run(self):
         passed = True
         for idx, step in enumerate(self._steps):
             if not self._running:
@@ -106,8 +118,7 @@ class TestSequenceWorker(QThread):
         if step.step_type == StepType.INJECT:
             try:
                 import can
-                from core.safety import require_armed
-                require_armed()
+                from canlab.core.safety import gated_send
                 data = bytearray(8)
                 data[step.byte_idx] = step.value & 0xFF
                 msg = can.Message(
@@ -115,7 +126,7 @@ class TestSequenceWorker(QThread):
                     data=bytes(data),
                     is_extended_id=False,
                 )
-                self._bus.send(msg)
+                gated_send(self._bus, msg)
                 return True, (f"{prefix}{label}: sent 0x{step.msg_id} "
                               f"B{step.byte_idx}=0x{step.value:02X}")
             except Exception as e:
@@ -142,9 +153,10 @@ class TestSequenceWorker(QThread):
             deadline = time.monotonic() + 0.5
             while time.monotonic() < deadline:
                 frame = self._bus.recv(timeout=0.05)
-                if frame and f"{frame.arbitration_id:03X}" == msg_id.upper():
+                from canlab.core.canid import normalize_id
+                if frame and normalize_id(frame.arbitration_id) == normalize_id(msg_id):
                     if len(frame.data) > byte_idx:
                         return float(frame.data[byte_idx])
         except Exception:
-            pass
+            log.warning("suppressed exception", exc_info=True)
         return None

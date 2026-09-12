@@ -76,16 +76,21 @@ export GROQ_API_KEY="gsk_..."</code></pre>
 <h2 id="hardware-interfaces">Hardware interfaces</h2>
 <p>Live capture goes through
    <a href="https://python-can.readthedocs.io">python-can</a>, so anything it
-   supports works: <code>socketcan</code>, <code>pcan</code>,
-   <code>kvaser</code>, <code>serial</code>, <code>slcan</code>,
-   <code>virtual</code> and others. Pick the interface and channel in
-   <strong>Settings &rarr; CAN INTERFACE</strong>.</p>
+   supports works: <code>socketcan</code>, <code>slcan</code>,
+   <code>gs_usb</code>, <code>pcan</code>, <code>kvaser</code>,
+   <code>vector</code>, <code>virtual</code> and the rest, plus
+   <code>gvret</code>, which CanLab adds itself for SavvyCAN's hardware. Add
+   adapters in <strong>Settings &rarr; CAN ADAPTERS</strong>, which can detect
+   what is plugged in and test it without transmitting, then pick one from the
+   toolbar. See <a href="integrations.html#hardware-adapters">hardware
+   adapters</a>.</p>
 <p>On Linux you can practise with no hardware at all using a virtual bus:</p>
 <pre><code>sudo modprobe vcan
 sudo ip link add dev vcan0 type vcan
 sudo ip link set up vcan0
 cangen vcan0 -g 5          # optional: generate traffic</code></pre>
-<p>Then connect to interface <code>socketcan</code>, channel <code>vcan0</code>.
+<p>Then add an adapter on <code>socketcan</code> / <code>vcan0</code> and press
+   Connect.
    The <a href="tabs.html#gateway">gateway</a> is the one feature that needs
    two hardware channels.</p>
 

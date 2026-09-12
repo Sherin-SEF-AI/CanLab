@@ -16,9 +16,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
 
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.canid import normalize_id
+from canlab.theme import COLORS, mono_font, desc_label
+from canlab.core.state import get_state
+from canlab.core.canid import normalize_id
 
 
 class AutoRETab(QWidget):
@@ -36,6 +36,7 @@ class AutoRETab(QWidget):
         tabs.addTab(self._build_entropy_tab(),     "ENTROPY BOUNDARIES")
         tabs.addTab(self._build_correlation_tab(), "CORRELATION")
         tabs.addTab(self._build_guesser_tab(),     "CHECKSUM GUESSER")
+        tabs.addTab(self._build_flags_tab(),       "FLAGS & ENUMS")
         outer.addWidget(tabs)
 
     # ── 1. Counter / Checksum Detector ────────────────────────────────────────
@@ -47,11 +48,10 @@ class AutoRETab(QWidget):
         lay.setSpacing(6)
 
         hdr = QHBoxLayout()
-        hdr.addWidget(QLabel(
+        hdr.addWidget(desc_label(
             "Automatically detect counter bytes (rolling +1 pattern) and "
             "checksum bytes (reproducible from other bytes).",
-            font=mono_font(8),
-        ))
+            8))
         hdr.addStretch()
         self.btn_run_ctr = QPushButton("Run Detection")
         self.btn_run_ctr.setObjectName("btn_green")
@@ -84,10 +84,10 @@ class AutoRETab(QWidget):
         self.btn_run_ctr.setEnabled(False)
         self.lbl_ctr_status.setText("Analysing…")
 
-        # Run the (heavy, iterrows-based) detection off the GUI thread so the
-        # window stays responsive and the "Analysing…" label can repaint.
-        from core.counter_checksum_detector import detect_counters_and_checksums
-        from ui.compute_worker import ComputeWorker
+        # Run detection off the GUI thread so the window stays responsive and
+        # the "Analysing…" label can repaint.
+        from canlab.core.counter_checksum_detector import detect_counters_and_checksums
+        from canlab.ui.compute_worker import ComputeWorker
         self._ctr_worker = ComputeWorker(detect_counters_and_checksums, df)
         self._ctr_worker.done.connect(self._on_counter_checksum_done)
         self._ctr_worker.failed.connect(self._on_counter_checksum_failed)
@@ -103,7 +103,9 @@ class AutoRETab(QWidget):
         for can_id, data in results.items():
             for ctr in data["counters"]:
                 rows.append((can_id, ctr["col"], "COUNTER",
-                             f"wrap={ctr['wrap']} ({ctr['type']})",
+                             (f"wrap={ctr['wrap']} ({ctr['type']})"
+                              if ctr.get("wrap")
+                              else f"no wrap seen ({ctr['type']})"),
                              ctr["confidence"]))
             for chk in data["checksums"]:
                 rows.append((can_id, chk["col"], "CHECKSUM",
@@ -138,11 +140,10 @@ class AutoRETab(QWidget):
         lay.setSpacing(6)
 
         hdr = QHBoxLayout()
-        hdr.addWidget(QLabel(
-            "Per-bit entropy analysis — contiguous high-entropy bit runs "
+        hdr.addWidget(desc_label(
+            "Per-bit entropy analysis: contiguous high-entropy bit runs "
             "suggest signal boundaries. Click a row to view bit-level chart.",
-            font=mono_font(8),
-        ))
+            8))
         hdr.addStretch()
         self.btn_run_entropy = QPushButton("Run Analysis")
         self.btn_run_entropy.setObjectName("btn_green")
@@ -194,8 +195,8 @@ class AutoRETab(QWidget):
         self.btn_run_entropy.setEnabled(False)
         self.lbl_entropy_status.setText("Computing bit entropies…")
 
-        from core.entropy_boundary import suggest_signals, detect_signal_boundaries
-        from ui.compute_worker import ComputeWorker
+        from canlab.core.entropy_boundary import suggest_signals, detect_signal_boundaries
+        from canlab.ui.compute_worker import ComputeWorker
 
         def _compute(frames):
             return detect_signal_boundaries(frames), suggest_signals(frames)
@@ -251,7 +252,7 @@ class AutoRETab(QWidget):
         if df.empty or can_id not in df["ID"].values:
             return
 
-        from core.entropy_boundary import _bit_entropy
+        from canlab.core.entropy_boundary import _bit_entropy
         frames = df[df["ID"] == can_id]
         ent = _bit_entropy(frames)
         x = list(range(64))
@@ -267,11 +268,10 @@ class AutoRETab(QWidget):
         lay.setSpacing(6)
 
         hdr = QHBoxLayout()
-        hdr.addWidget(QLabel(
+        hdr.addWidget(desc_label(
             "Combined dependency score: Pearson + Spearman rank + Mutual Information. "
             "Catches linear, monotonic, and bitfield correlations. High score = change together.",
-            font=mono_font(8),
-        ))
+            8))
         hdr.addStretch()
         self.btn_run_corr = QPushButton("Run Correlation")
         self.btn_run_corr.setObjectName("btn_green")
@@ -321,8 +321,8 @@ class AutoRETab(QWidget):
         self.btn_run_corr.setEnabled(False)
         self.lbl_corr_status.setText("Computing correlation matrix…")
 
-        from core.signal_analyzer import compute_timing_dependency_matrix
-        from ui.compute_worker import ComputeWorker
+        from canlab.core.signal_analyzer import compute_timing_dependency_matrix
+        from canlab.ui.compute_worker import ComputeWorker
         self._corr_worker = ComputeWorker(compute_timing_dependency_matrix, df)
         self._corr_worker.done.connect(self._on_correlation_done)
         self._corr_worker.failed.connect(self._on_correlation_failed)
@@ -373,17 +373,124 @@ class AutoRETab(QWidget):
 
     # ── 4. Checksum Guesser ───────────────────────────────────────────────────
 
+    def _build_flags_tab(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(6, 6, 6, 6)
+        hdr = QHBoxLayout()
+        hdr.addWidget(desc_label(
+            "Per-byte analysis cannot see a turn indicator, which is one bit, "
+            "or a gear selector, which is four sparse values. This finds "
+            "switches and small packed fields, and bytes that only ever take a "
+            "few values and hold them, so they can be defined as flags and "
+            "value tables instead of numbers."))
+        hdr.addStretch()
+        self.btn_run_flags = QPushButton("Find Flags & Enums")
+        self.btn_run_flags.setObjectName("btn_green")
+        self.btn_run_flags.clicked.connect(self._run_flags)
+        hdr.addWidget(self.btn_run_flags)
+        lay.addLayout(hdr)
+
+        self.flags_table = QTableWidget(0, 6)
+        self.flags_table.setHorizontalHeaderLabels(
+            ["ID", "Kind", "Where", "Changes / States", "Confidence", "Detail"])
+        self.flags_table.setFont(mono_font())
+        self.flags_table.verticalHeader().setVisible(False)
+        self.flags_table.verticalHeader().setDefaultSectionSize(20)
+        self.flags_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch)
+        self.flags_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.flags_table.setToolTip("Double-click a row to add it to the DBC.")
+        self.flags_table.doubleClicked.connect(self._add_flag_signal)
+        lay.addWidget(self.flags_table)
+
+        self.lbl_flags_status = QLabel("Load frames, then click Find Flags & Enums.")
+        self.lbl_flags_status.setFont(mono_font(8))
+        self.lbl_flags_status.setObjectName("label_dim")
+        lay.addWidget(self.lbl_flags_status)
+        return w
+
+    def _run_flags(self):
+        df = self._state.frames_df
+        if df.empty:
+            QMessageBox.information(self, "No Data", "Load a CAN log first.")
+            return
+        self.btn_run_flags.setEnabled(False)
+        self.lbl_flags_status.setText("Analysing…")
+        from canlab.ui.compute_worker import ComputeWorker
+
+        def work(frames):
+            from canlab.core.bit_flags import detect_flags
+            from canlab.core.value_tables import infer_enums
+            return detect_flags(frames), infer_enums(frames)
+
+        self._flags_worker = ComputeWorker(work, df)
+        self._flags_worker.done.connect(self._on_flags_done)
+        self._flags_worker.failed.connect(
+            lambda e: (self.lbl_flags_status.setText(f"Error: {e}"),
+                       self.btn_run_flags.setEnabled(True)))
+        self._flags_worker.start()
+
+    def _on_flags_done(self, result):
+        flags, enums = result
+        rows = []
+        for cid, items in sorted(flags.items()):
+            for f in items:
+                kind = "flag" if f.width == 1 else f"{f.width}-bit field"
+                rows.append((cid, kind, f"B{f.byte} bit {f.bit}"
+                             + (f"..{f.bit + f.width - 1}" if f.width > 1 else ""),
+                             f"{f.toggles} changes, {len(f.states)} states",
+                             f.confidence, f.label, ("flag", f)))
+        for cid, items in sorted(enums.items()):
+            for e in items:
+                vals = ", ".join(str(s.value) for s in e.states[:6])
+                rows.append((cid, "enum", f"B{e.byte}",
+                             f"{len(e.states)} states: {vals}", e.confidence,
+                             f"{e.frames} frames", ("enum", e)))
+        rows.sort(key=lambda r: (-r[4], r[0]))
+        self._flag_rows = rows
+        self.flags_table.setRowCount(len(rows))
+        for r, row in enumerate(rows):
+            for c, val in enumerate(row[:6]):
+                txt = f"{val:.0%}" if c == 4 else str(val)
+                item = QTableWidgetItem(txt)
+                item.setFont(mono_font())
+                if c == 1:
+                    colour = {"flag": COLORS["green"], "enum": COLORS["amber"]}.get(
+                        val if val in ("flag", "enum") else "flag", COLORS["green"])
+                    item.setForeground(QBrush(QColor(colour)))
+                self.flags_table.setItem(r, c, item)
+        nf = sum(len(v) for v in flags.values())
+        ne = sum(len(v) for v in enums.values())
+        self.lbl_flags_status.setText(
+            f"Found {nf} flag(s)/field(s) and {ne} enumerated byte(s) across "
+            f"{len(set(flags) | set(enums))} message(s).")
+        self.btn_run_flags.setEnabled(True)
+
+    def _add_flag_signal(self, index):
+        rows = getattr(self, "_flag_rows", [])
+        if not (0 <= index.row() < len(rows)):
+            return
+        kind, obj = rows[index.row()][6]
+        if kind == "flag":
+            from canlab.core.bit_flags import flag_to_signal
+            sig = flag_to_signal(obj)
+        else:
+            from canlab.core.value_tables import enum_to_signal
+            sig = enum_to_signal(obj)
+        self._state.add_dbc_signal(sig)
+        self.lbl_flags_status.setText(f"Added {sig['signal_name']} to the DBC.")
+
     def _build_guesser_tab(self) -> QWidget:
         w   = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(6)
 
-        lay.addWidget(QLabel(
+        lay.addWidget(desc_label(
             "Select a message ID and a candidate checksum byte. "
-            "Tries XOR8, SUM8, CRC8-SAE, CRC8-AUTOSAR, Hyundai-XOR, and more.",
-            font=mono_font(8),
-        ))
+            "Tries XOR, sums, CRC-8 (J1850/AUTOSAR) and the OEM variants.",
+            8))
 
         cfg_grp = QGroupBox("CONFIGURATION")
         cg = QHBoxLayout(cfg_grp)
@@ -451,7 +558,7 @@ class AutoRETab(QWidget):
             self.lbl_guesser_status.setText("Need at least 5 frames for this ID.")
             return
 
-        from core.checksum_guesser import guess_checksum
+        from canlab.core.checksum_guesser import guess_checksum
         results = guess_checksum(frames, byte_idx, can_id)
 
         self.guesser_table.setRowCount(len(results))

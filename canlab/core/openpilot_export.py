@@ -17,21 +17,26 @@ def to_opendbc_string(signal_defs: list, msg_meta: Optional[dict] = None) -> str
     Produce a DBC string in opendbc / comma.ai convention.
 
     msg_meta: {msg_id_hex -> {"checksum_byte": int, "counter_nibble": int}}
-    Hyundai/Kia convention: counter in upper nibble of byte 0, checksum in byte 7.
+    ``msg_meta`` is normally built by
+    :func:`canlab.core.vehicle_profile.message_meta` from the selected profile.
     """
     if msg_meta is None:
         msg_meta = {}
 
-    # Group signals by message
+    # Group signals by message. The key is the DBC frame id, which carries
+    # 0x80000000 for a 29-bit message: without it cantools and opendbc both
+    # refuse the file, because a bare 0x9F11202 is not a valid standard id.
+    # Every BO_, CM_ and VAL_ line has to use the same number.
+    from canlab.core.dbc_manager import dbc_frame_id, frame_id_int
     messages: dict[int, dict] = {}
     for sig in signal_defs:
         try:
-            mid = int(sig.get("message_id", "0"), 16)
+            mid = dbc_frame_id(sig)
         except (ValueError, TypeError):
             mid = 0
         if mid not in messages:
             messages[mid] = {
-                "name":    sig.get("message_name", f"MSG_{mid:03X}"),
+                "name":    sig.get("message_name", f"MSG_{frame_id_int(sig):03X}"),
                 "signals": [],
                 "length":  int(sig.get("msg_length", 8)),
             }
@@ -116,17 +121,3 @@ def to_opendbc_string(signal_defs: list, msg_meta: Optional[dict] = None) -> str
         lines.append("")
 
     return "\n".join(lines)
-
-
-# Default Hyundai/Kia meta for known message IDs
-HYUNDAI_MSG_META = {
-    "018": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-    "02C": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-    "050": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-    "0A6": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-    "251": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-    "260": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-    "316": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-    "544": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-    "593": {"has_counter": True, "counter_byte": 0, "has_checksum": True, "checksum_byte": 7},
-}

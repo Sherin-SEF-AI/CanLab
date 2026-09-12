@@ -12,20 +12,20 @@ All heavy computation runs in QThread workers so the UI stays responsive.
 """
 
 import pandas as pd
-import numpy as np
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QTabWidget,
-    QListWidget, QListWidgetItem, QPushButton, QLabel, QTextEdit,
-    QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar,
-    QDoubleSpinBox, QSpinBox, QSlider, QCheckBox, QLineEdit,
+    QListWidget, QListWidgetItem, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar,
+    QDoubleSpinBox, QSpinBox, QCheckBox, QLineEdit,
     QGroupBox, QAbstractItemView,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt6.QtGui import QColor, QBrush, QFont
+from PyQt6.QtGui import QColor, QBrush
 
-from theme import COLORS, mono_font
-from core.state import get_state
-from core.signal_classifier import ROLE_COLORS
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+import logging
+
+log = logging.getLogger(__name__)
 
 
 # ── Background workers ────────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ class ClassifyWorker(QThread):
 
     def run(self):
         try:
-            from core.signal_classifier import classify_frame, classify_message_type
+            from canlab.core.signal_classifier import classify_frame, classify_message_type
             roles    = classify_frame(self._frames, self._id)
             msg_type = classify_message_type(self._frames)
             self.result_ready.emit(self._id, roles, msg_type)
@@ -62,7 +62,7 @@ class ChecksumWorker(QThread):
 
     def run(self):
         try:
-            from core.checksum_guesser import guess_all_bytes
+            from canlab.core.checksum_guesser import guess_all_bytes
             results = guess_all_bytes(self._frames, self._id)
             self.result_ready.emit(self._id, results)
         except Exception as e:
@@ -86,7 +86,7 @@ class CorrelationWorker(QThread):
 
     def run(self):
         try:
-            from core.correlation_engine import run_correlation_sweep
+            from canlab.core.correlation_engine import run_correlation_sweep
             results = run_correlation_sweep(
                 self._frames,
                 min_r=self._min_r,
@@ -114,7 +114,7 @@ class ChangeWorker(QThread):
 
     def run(self):
         try:
-            from core.signal_classifier import find_changes_at_timestamp
+            from canlab.core.signal_classifier import find_changes_at_timestamp
             results = find_changes_at_timestamp(
                 self._frames, self._ts,
                 window_before_s=self._before,
@@ -138,7 +138,7 @@ class AnomalyFitWorker(QThread):
 
     def run(self):
         try:
-            from core.anomaly_detector import fit_baseline
+            from canlab.core.anomaly_detector import fit_baseline
             det  = fit_baseline(self._frames, self._use_iforest)
             name = type(det).__name__
             self.finished.emit(det, name)
@@ -158,7 +158,7 @@ class AnomalyScoreWorker(QThread):
 
     def run(self):
         try:
-            from core.anomaly_detector import score_dataframe
+            from canlab.core.anomaly_detector import score_dataframe
             self.result_ready.emit(score_dataframe(self._frames, self._baseline))
         except Exception as e:
             self.error.emit(str(e))
@@ -175,7 +175,7 @@ class EmbeddingWorker(QThread):
 
     def run(self):
         try:
-            from core.signal_embedding import build_index
+            from canlab.core.signal_embedding import build_index
             self.finished.emit(build_index(self._frames))
         except Exception as e:
             self.error.emit(str(e))
@@ -187,7 +187,8 @@ class SignalIntelligenceTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._state          = get_state()
-        self._workers: list  = []      # keep refs to prevent GC
+        from canlab.ui.worker_pool import WorkerPool
+        self._pool           = WorkerPool()
         self._anomaly_det    = None    # fitted baseline
         self._embedding_idx: dict = {}
 
@@ -308,7 +309,7 @@ class SignalIntelligenceTab(QWidget):
 
         note = QLabel(
             "Requires ≥50 frames per ID.  Algorithms: XOR8, SUM8, SUM8_INV, "
-            "XOR_NIBBLES, NIBBLE_SUM, CRC8_SAE, CRC8_AUTOSAR, HYUNDAI_XOR, HYUNDAI_FULL"
+            "nibble sums, CRC-8 (J1850/AUTOSAR) and the OEM variants"
         )
         note.setFont(mono_font(7))
         note.setObjectName("label_dim")
@@ -615,13 +616,13 @@ class SignalIntelligenceTab(QWidget):
         if frames.empty:
             QTimer.singleShot(0, self._process_next_batch)
             return
-        from core.signal_classifier import classify_frame, classify_message_type
+        from canlab.core.signal_classifier import classify_frame, classify_message_type
         try:
             roles    = classify_frame(frames, can_id)
             msg_type = classify_message_type(frames)
             self._on_classify_done(can_id, roles, msg_type)
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
         QTimer.singleShot(20, self._process_next_batch)
 
     def _run_classify(self):
@@ -635,8 +636,8 @@ class SignalIntelligenceTab(QWidget):
         w = ClassifyWorker(can_id, frames, self)
         w.result_ready.connect(self._on_classify_done)
         w.error.connect(lambda e: self.lbl_status.setText(f"Error: {e}"))
+        self._pool.add(w)
         w.start()
-        self._workers.append(w)
 
     def _on_classify_done(self, can_id: str, roles: dict, msg_type: dict):
         self.roles_table.setRowCount(0)
@@ -669,12 +670,12 @@ class SignalIntelligenceTab(QWidget):
         # Update state embedding index entry
         if self._embedding_idx:
             try:
-                from core.signal_embedding import extract_features
+                from canlab.core.signal_embedding import extract_features
                 frames = self._state.get_frames_for_id(can_id)
                 self._embedding_idx[can_id] = extract_features(frames)
                 self._state._embedding_index = self._embedding_idx
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
 
     def _export_roles_to_context(self):
         """Write byte role summary to AI Engine tab's context box."""
@@ -698,7 +699,7 @@ class SignalIntelligenceTab(QWidget):
                     sep = "\n\n" if cur else ""
                     mw.ai_tab.context_input.setPlainText(cur + sep + summary)
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
             self.lbl_status.setText("Roles exported to AI Engine context.")
 
     # ── CHECKSUM RE actions ───────────────────────────────────────────────────
@@ -714,8 +715,8 @@ class SignalIntelligenceTab(QWidget):
         w = ChecksumWorker(can_id, frames, self)
         w.result_ready.connect(self._on_checksum_done)
         w.error.connect(lambda e: self.lbl_status.setText(f"Error: {e}"))
+        self._pool.add(w)
         w.start()
-        self._workers.append(w)
 
     def _on_checksum_done(self, can_id: str, results: dict):
         self.cs_table.setRowCount(0)
@@ -780,8 +781,8 @@ class SignalIntelligenceTab(QWidget):
             self.btn_corr_run.setEnabled(True),
             self.corr_progress.setVisible(False),
         ))
+        self._pool.add(w)
         w.start()
-        self._workers.append(w)
 
     def _on_correlation_done(self, results: list):
         self.corr_table.setRowCount(0)
@@ -831,8 +832,8 @@ class SignalIntelligenceTab(QWidget):
         )
         w.result_ready.connect(self._on_change_done)
         w.error.connect(lambda e: self.lbl_chg_status.setText(f"Error: {e}"))
+        self._pool.add(w)
         w.start()
-        self._workers.append(w)
 
     def _on_change_done(self, results: list):
         self.chg_table.setRowCount(0)
@@ -879,8 +880,8 @@ class SignalIntelligenceTab(QWidget):
             self.lbl_anomaly_baseline.setText(f"Error: {e}"),
             self.btn_fit.setEnabled(True),
         ))
+        self._pool.add(w)
         w.start()
-        self._workers.append(w)
 
     def _on_baseline_fitted(self, det, name: str):
         self._anomaly_det = det
@@ -903,8 +904,8 @@ class SignalIntelligenceTab(QWidget):
             self.lbl_anomaly_status.setText(f"Error: {e}"),
             self.btn_score.setEnabled(True),
         ))
+        self._pool.add(w)
         w.start()
-        self._workers.append(w)
 
     def _on_score_done(self, scored_df: pd.DataFrame):
         threshold = self.anom_threshold.value()
@@ -952,7 +953,7 @@ class SignalIntelligenceTab(QWidget):
             try:
                 self._state.anomaly_detected.emit(top_id, top_score)
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
 
     # ── SIMILARITY actions ────────────────────────────────────────────────────
 
@@ -963,16 +964,16 @@ class SignalIntelligenceTab(QWidget):
         w = EmbeddingWorker(self._state.frames_df, self)
         w.finished.connect(self._on_index_built)
         w.error.connect(lambda e: self.lbl_sim_status.setText(f"Error: {e}"))
+        self._pool.add(w)
         w.start()
-        self._workers.append(w)
 
     def _build_embedding_index_silent(self):
         if self._state.frames_df.empty:
             return
         w = EmbeddingWorker(self._state.frames_df, self)
         w.finished.connect(self._on_index_built)
+        self._pool.add(w)
         w.start()
-        self._workers.append(w)
 
     def _on_index_built(self, index: dict):
         self._embedding_idx = index
@@ -989,7 +990,7 @@ class SignalIntelligenceTab(QWidget):
             self.lbl_sim_status.setText("Building index first, then re-click Find Similar.")
             return
 
-        from core.signal_embedding import find_similar
+        from canlab.core.signal_embedding import find_similar
         results = find_similar(can_id, self._embedding_idx, top_k=self.sim_topk.value())
 
         self.sim_table.setRowCount(0)
@@ -1014,7 +1015,7 @@ class SignalIntelligenceTab(QWidget):
             # Frequency class
             try:
                 df2 = self._state.frames_df[self._state.frames_df["ID"] == sim_id]
-                from core.periodicity import compute_periodicity, classify_period
+                from canlab.core.periodicity import compute_periodicity, classify_period
                 per_map = compute_periodicity(df2)
                 freq_class = classify_period(per_map.get(sim_id, 0)) if per_map else "?"
             except Exception:
@@ -1045,3 +1046,7 @@ def _make_table(headers: list[str]) -> QTableWidget:
     t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     t.setAlternatingRowColors(True)
     return t
+
+
+    def cleanup(self):
+        self._pool.stop_all()

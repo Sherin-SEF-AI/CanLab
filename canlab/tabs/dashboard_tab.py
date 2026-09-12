@@ -2,16 +2,22 @@
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QPushButton, QLabel,
+    QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
     QTabWidget, QGroupBox, QComboBox,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont
+# These two stay eager, deliberately. Matplotlib renders text through its own
+# ft2font extension, and if that is first loaded *after* the plugins Qt pulls in
+# while the main window is built, every draw containing text fails with
+# "FT_Render_Glyph ... raster overflow" at any font size, while a draw with no
+# text succeeds. Importing them here, during module import, wins that race.
+# Deferring them to save startup time looks tempting and breaks the heatmap.
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
-from theme import COLORS, mono_font
-from core.state import get_state
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
 
 BYTE_COLS = [f"B{i}" for i in range(8)]
 
@@ -76,7 +82,6 @@ class SpeedGaugeWidget(QWidget):
         self.update()
 
     def paintEvent(self, event):
-        import math
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
@@ -114,6 +119,7 @@ class DashboardTab(QWidget):
         self._live_timer.setInterval(250)
         self._live_timer.timeout.connect(self._update_live_overlays)
         self._state.frames_loaded.connect(self._on_frames_loaded)
+        self._state.dbc_updated.connect(self._on_dbc_updated)
         self._state.frames_updated.connect(self._on_frames_updated)
 
     # ── UI ────────────────────────────────────────────────────────────────────
@@ -319,19 +325,29 @@ class DashboardTab(QWidget):
         return w
 
     def _refresh_overlay_combos(self):
-        ids = self._state.get_unique_ids()
-        for combo in [self.overlay_steer_combo, self.overlay_speed_combo]:
+        """Offer the decoded DBC signals — the gauges show whatever the user
+        maps to them, instead of decoding two hard-coded message layouts."""
+        signals = self._state.dbc_signals
+        for combo, keywords in ((self.overlay_steer_combo, ("angle", "steer", "sas")),
+                                (self.overlay_speed_combo, ("speed", "spd", "velocity"))):
+            previous = combo.currentData()
             combo.clear()
-            combo.addItem("(none)", "")
-            for can_id in ids:
-                combo.addItem(f"0x{can_id}", can_id)
-        # Auto-select known IDs
-        steer_idx = self.overlay_steer_combo.findData("260")
-        if steer_idx >= 0:
-            self.overlay_steer_combo.setCurrentIndex(steer_idx)
-        speed_idx = self.overlay_speed_combo.findData("544")
-        if speed_idx >= 0:
-            self.overlay_speed_combo.setCurrentIndex(speed_idx)
+            combo.addItem("(none)", None)
+            for sig in signals:
+                mid = sig.get("message_id", "")
+                name = sig.get("signal_name", "?")
+                combo.addItem(f"0x{mid}  {name}", (mid, name))
+            if previous is not None:
+                idx = combo.findData(previous)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+                    continue
+            # Otherwise pre-select a plausibly named signal, if there is one.
+            for i in range(1, combo.count()):
+                label = combo.itemText(i).lower()
+                if any(k in label for k in keywords):
+                    combo.setCurrentIndex(i)
+                    break
 
     def _toggle_overlay_live(self):
         self._overlay_live = not self._overlay_live
@@ -343,42 +359,46 @@ class DashboardTab(QWidget):
             self._live_timer.stop()
 
     def _update_live_overlays(self):
-        df = self._state.frames_df
-        if df.empty:
-            return
+        angle = self._decode_overlay(self.overlay_steer_combo.currentData())
+        if angle is not None:
+            self.steering_widget.set_angle(angle)
+            self.lbl_steer_val.setText(f"{angle:.1f}°")
 
-        # Steering
-        steer_id = self.overlay_steer_combo.currentData()
-        if steer_id:
-            grp = df[df["ID"] == steer_id]
-            if not grp.empty:
-                last = grp.iloc[-1]
-                # SAS11: B0 + B1 = 11-bit signed angle, scale 0.1 deg
-                b0 = int(last.get("B0", 0) or 0)
-                b1 = int(last.get("B1", 0) or 0)
-                raw = (b0 | ((b1 & 0x07) << 8))
-                if raw > 1023:
-                    raw -= 2048
-                angle = raw * 0.1
-                self.steering_widget.set_angle(angle)
-                self.lbl_steer_val.setText(f"{angle:.1f}°")
+        speed = self._decode_overlay(self.overlay_speed_combo.currentData())
+        if speed is not None:
+            self.speed_gauge.set_value(speed)
+            self.lbl_speed_val.setText(f"{speed:.1f} km/h")
 
-        # Speed
-        speed_id = self.overlay_speed_combo.currentData()
-        if speed_id:
-            grp = df[df["ID"] == speed_id]
-            if not grp.empty:
-                last = grp.iloc[-1]
-                b2 = int(last.get("B2", 0) or 0)
-                b3 = int(last.get("B3", 0) or 0)
-                speed = ((b2 | (b3 << 8)) & 0x1FFF) * 0.03125
-                self.speed_gauge.set_value(speed)
-                self.lbl_speed_val.setText(f"{speed:.1f} km/h")
+    def _decode_overlay(self, selection):
+        """Decode the chosen DBC signal from the most recent matching frame."""
+        if not selection:
+            return None
+        mid, name = selection
+        last = self._state.store.last_frame(mid)
+        if last is None:
+            return None
+        from canlab.core.dbc_manager import (dbc_identifier, decode_frame,
+                                             frame_bytes_from_row)
+        decoded = decode_frame(self._state.dbc_signals, mid,
+                               frame_bytes_from_row(last, int(last.get("DLC", 8) or 8)))
+        value = decoded.get(dbc_identifier(name))
+        return float(value) if isinstance(value, (int, float)) else None
 
     # ── State handlers ────────────────────────────────────────────────────────
 
     def _on_frames_loaded(self, count: int):
         self._refresh_overlay_combos()
 
+    def _on_dbc_updated(self):
+        self._refresh_overlay_combos()
+
     def _on_frames_updated(self):
         pass
+
+
+def _byte(row: dict, name: str) -> int:
+    """One payload byte from a store row (absent/NaN reads as 0)."""
+    v = row.get(name)
+    if v is None or v != v:
+        return 0
+    return int(v)

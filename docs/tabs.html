@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tabs · CanLab</title>
-<meta name="description" content="What each of the 15 tabs does and when you would reach for it.">
+<meta name="description" content="What each of the 16 tabs does and when you would reach for it.">
 <link rel="icon" href="assets/favicon.ico" sizes="16x16 24x24 32x32 48x48 64x64">
 <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
@@ -21,10 +21,10 @@
 </header>
 <div class="wrap">
   <div class="layout">
-    <aside class="toc"><h2>On this page</h2><nav><a href="#frames">FRAMES</a><a href="#signals">SIGNALS</a><a href="#plot">PLOT</a><a href="#ai-engine">AI ENGINE</a><a href="#dbc-builder">DBC BUILDER</a><a href="#code-gen">CODE GEN</a><a href="#intelligence">INTELLIGENCE</a><a href="#injection">INJECTION</a><a href="#diagnostics">DIAGNOSTICS</a><a href="#dashboard">DASHBOARD</a><a href="#auto-re">AUTO-RE</a><a href="#timeline">TIMELINE</a><a href="#obd-ii">OBD-II</a><a href="#ml-intel">ML INTEL</a><a href="#gateway">GATEWAY</a></nav></aside>
+    <aside class="toc"><h2>On this page</h2><nav><a href="#frames">FRAMES</a><a href="#sniffer">SNIFFER</a><a href="#signals">SIGNALS</a><a href="#plot">PLOT</a><a href="#ai-engine">AI ENGINE</a><a href="#dbc-builder">DBC BUILDER</a><a href="#code-gen">CODE GEN</a><a href="#intelligence">INTELLIGENCE</a><a href="#injection">INJECTION</a><a href="#diagnostics">DIAGNOSTICS</a><a href="#dashboard">DASHBOARD</a><a href="#auto-re">AUTO-RE</a><a href="#timeline">TIMELINE</a><a href="#obd-ii">OBD-II</a><a href="#ml-intel">ML INTEL</a><a href="#gateway">GATEWAY</a></nav></aside>
     <main id="main">
 
-<h1>The 15 tabs</h1>
+<h1>The 16 tabs</h1>
 <p class="lede">Roughly in the order you would use them. Tabs marked with a
    star in the application are the analysis-heavy ones.</p>
 
@@ -37,6 +37,24 @@
    updating while you read, without stopping capture. <strong>Follow</strong>
    keeps it scrolled to the newest frame. Double-click a row for the full frame
    detail.</p>
+
+<h2 id="sniffer">SNIFFER</h2>
+<p>One row per message instead of one per frame, which is the shape of the
+   question you actually ask at the bench: I pressed the button, what changed.
+   Each byte is coloured by what it just did, <strong>green</strong> when it
+   rose and <strong>red</strong> when it fell, fading back after a second.
+   Bytes that have never moved sit dim, so the active ones stand out.</p>
+<p><strong>Notch</strong> is the reason to use this rather than FRAMES. It
+   records every bit currently in motion and ignores it from then on. Press it
+   a few times while the vehicle idles and the wheel-speed counters, the
+   checksums and the sensor jitter all go quiet; the bit that lights up next is
+   the one you caused. Un-notch forgets the mask. There is also a bit view, an
+   option to keep silent IDs on screen rather than letting them expire after
+   five seconds, and one to blank notched bits entirely.</p>
+<p>Modelled on SavvyCAN's sniffer window and on <code>cansniffer</code>. It
+   works on a live bus and on a loaded capture; on a file there is no "now", so
+   nothing expires. Rendering 180 IDs costs about 40 ms, and the table updates
+   in place rather than rebuilding.</p>
 
 <h2 id="signals">SIGNALS</h2>
 <p>One row per message rather than per frame: frame count, rate, payload
@@ -55,7 +73,7 @@
 
 <h2 id="ai-engine">AI ENGINE</h2>
 <p>Optional, and off until you configure a provider. Sends one message ID's
-   statistics to Anthropic, Groq or a local Ollama model and asks for an
+   statistics to Anthropic, OpenAI, Groq or a local Ollama model and asks for an
    interpretation. What makes it more useful than pasting hex into a chat
    window is that the offline findings go with the question: the byte roles,
    the detected checksum, the message period. Memory persists across sessions.

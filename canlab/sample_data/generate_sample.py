@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a realistic Hyundai Kona CAN sample dataset."""
+"""Generate the bundled sample capture (SavvyCAN CSV format, synthetic Hyundai-style traffic)."""
 import csv
 import math
 import random
@@ -85,7 +85,8 @@ for msg_id, info in MESSAGES.items():
 
 rows.sort(key=lambda r: r["ts"])
 
-output = "sample_kona_drive.csv"
+from pathlib import Path
+output = str(Path(__file__).with_name("sample_kona_drive.csv"))
 with open(output, "w", newline="") as f:
     writer = csv.writer(f)
     writer.writerow(["Time Stamp", "ID", "Extended", "Dir", "Bus", "LEN",
@@ -93,11 +94,12 @@ with open(output, "w", newline="") as f:
     for r in rows:
         ts_us = int(r["ts"] * 1_000_000)
         d = r["data"]
+        # SavvyCAN writes the ID as 8 hex digits and every data byte as 2 hex digits.
         writer.writerow([
             ts_us,
-            format(r["id"], "03X"),
+            format(r["id"], "08X"),
             "false", "Rx", r["bus"], r["dlc"],
-            d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7],
+            *[format(b, "02X") for b in d],
         ])
 
 print(f"Generated {len(rows)} frames → {output}")

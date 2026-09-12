@@ -1,13 +1,11 @@
 """Reusable animation widgets and helpers for CANLAB."""
-import math
 from PyQt6.QtWidgets import QWidget, QLabel
 from PyQt6.QtCore import (
-    Qt, QTimer, QPropertyAnimation, QEasingCurve,
-    pyqtProperty, QRectF,
+    Qt, QTimer, QRectF,
 )
-from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QFont
+from PyQt6.QtGui import QPainter, QPen, QColor, QBrush
 
-from theme import COLORS
+from canlab.theme import COLORS
 
 
 # ── Rotating arc spinner ──────────────────────────────────────────────────────
@@ -137,7 +135,7 @@ class ButtonPulse:
     _STEPS = [
         f"QPushButton {{ color:{COLORS['amber']}; border:1px solid {COLORS['amber']}; background:{COLORS['panel_bg']}; }}",
         f"QPushButton {{ color:{COLORS['amber']}; border:2px solid {COLORS['amber']}; background:#2a1800; }}",
-        f"QPushButton {{ color:#ffffff;            border:2px solid #ffdd88;          background:#3a2200; }}",
+        "QPushButton { color:#ffffff;            border:2px solid #ffdd88;          background:#3a2200; }",
         f"QPushButton {{ color:{COLORS['amber']}; border:2px solid {COLORS['amber']}; background:#2a1800; }}",
     ]
 
@@ -167,7 +165,6 @@ class ButtonPulse:
 def flash_widget(widget: QWidget, color: str = COLORS["green"], duration_ms: int = 300):
     """Briefly set a widget's background to `color` then fade back."""
     orig = widget.styleSheet()
-    base_bg = COLORS["panel_bg"]
     widget.setStyleSheet(orig + f"; background: {color}22;")
     QTimer.singleShot(duration_ms, lambda: widget.setStyleSheet(orig))
 

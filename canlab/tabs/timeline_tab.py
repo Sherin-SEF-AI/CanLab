@@ -8,20 +8,33 @@ Sub-tabs:
                  signal spike seeks the video to that moment.
                  An offset slider aligns video t=0 with log t=0.
 """
-import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
+    QMessageBox,
     QListWidget, QListWidgetItem, QSplitter, QAbstractItemView,
     QTabWidget, QFileDialog, QSlider, QDoubleSpinBox,
 )
 from PyQt6.QtCore import Qt, QUrl, QTimer
 from PyQt6.QtGui import QColor
-from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PyQt6.QtMultimediaWidgets import QVideoWidget
+# Video sync is one sub-tab. Qt Multimedia links against the system audio
+# stack, so on a machine without it (a CI runner, a headless box, a minimal
+# container) importing it raises and, because this module is imported at
+# startup, took the whole application down. Treat it as optional: the sub-tab
+# says why it is unavailable and everything else works.
+try:
+    from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
+    from PyQt6.QtMultimediaWidgets import QVideoWidget
+    MULTIMEDIA_ERROR = ""
+except ImportError as exc:                       # pragma: no cover
+    QAudioOutput = QMediaPlayer = QVideoWidget = None
+    MULTIMEDIA_ERROR = str(exc)
 
-from theme import COLORS, mono_font
-from core.state import get_state
+from canlab.theme import COLORS, mono_font
+from canlab.core.state import get_state
+import logging
+
+log = logging.getLogger(__name__)
 
 BYTE_COLS = [f"B{i}" for i in range(8)]
 MAX_ROWS  = 8
@@ -156,10 +169,23 @@ class TimelineTab(QWidget):
         lay.addLayout(toolbar)
 
         # ── Video widget ──
-        self._video_widget = QVideoWidget()
-        self._video_widget.setStyleSheet("background:#000;")
-        self._video_widget.setMinimumHeight(320)
-        lay.addWidget(self._video_widget, stretch=3)
+        if QVideoWidget is None:
+            self._video_widget = None
+            unavailable = QLabel(
+                "Video sync needs Qt Multimedia, which could not be loaded:\n"
+                f"{MULTIMEDIA_ERROR}\n\n"
+                "Everything else on this tab works. On Debian or Ubuntu the "
+                "missing piece is usually libpulse0.")
+            unavailable.setWordWrap(True)
+            unavailable.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            unavailable.setObjectName("label_dim")
+            unavailable.setMinimumHeight(320)
+            lay.addWidget(unavailable, stretch=3)
+        else:
+            self._video_widget = QVideoWidget()
+            self._video_widget.setStyleSheet("background:#000;")
+            self._video_widget.setMinimumHeight(320)
+            lay.addWidget(self._video_widget, stretch=3)
 
         # ── Video scrubber ──
         self._vid_scrubber = QSlider(Qt.Orientation.Horizontal)
@@ -289,24 +315,19 @@ class TimelineTab(QWidget):
                     f"0x{mid} {name}")
 
         if kind == "dbc":
-            from core.dbc_manager import decode_frame
-            from core.canid import normalize_id
-            nmid   = normalize_id(mid)
-            sigs   = [s for s in self._state.dbc_signals
-                      if normalize_id(s.get("message_id", "")) == nmid]
+            from canlab.core.dbc_manager import decode_series, dbc_identifier
             frames = df[df["ID"] == mid].sort_values("Timestamp")
-            if frames.empty or not sigs:
+            if frames.empty:
                 return None, None, name
-            t_vals, y_vals = [], []
-            for _, row in frames.iterrows():
-                data    = bytes(int(row.get(f"B{i}", 0) or 0) for i in range(8))
-                decoded = decode_frame(sigs, mid, data)
-                if name in decoded:
-                    t_vals.append(float(row["Timestamp"]))
-                    y_vals.append(float(decoded[name]))
-            if not t_vals:
+            series = decode_series(self._state.dbc_signals, mid, frames)
+            col = dbc_identifier(name)
+            if series.empty or col not in series.columns:
                 return None, None, name
-            return np.array(t_vals), np.array(y_vals), f"0x{mid} {name}"
+            s = series[col].dropna()
+            if s.empty:
+                return None, None, name
+            return (series.loc[s.index, "Timestamp"].to_numpy(dtype=float),
+                    s.to_numpy(dtype=float), f"0x{mid} {name}")
 
         return None, None, name
 
@@ -322,7 +343,7 @@ class TimelineTab(QWidget):
                 line.setValue(t)
             self._seek_video_to_log_time(t)
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Video player
@@ -334,6 +355,13 @@ class TimelineTab(QWidget):
             "Video Files (*.mp4 *.avi *.mkv *.mov *.webm *.m4v);;All Files (*)"
         )
         if not path:
+            return
+
+        if QMediaPlayer is None:
+            QMessageBox.information(
+                self, "Video unavailable",
+                "Qt Multimedia could not be loaded, so video sync is off:\n"
+                f"{MULTIMEDIA_ERROR}")
             return
 
         if self._player is None:

@@ -6,6 +6,9 @@ external analysis (pandas, Grafana/InfluxDB via CSV, or Parquet for big logs).
 from __future__ import annotations
 
 import pandas as pd
+import logging
+
+log = logging.getLogger(__name__)
 
 BYTE_COLS = [f"B{i}" for i in range(8)]
 
@@ -19,41 +22,30 @@ def decode_timeseries(frames_df: pd.DataFrame, dbc_signals: list[dict]) -> pd.Da
     if frames_df.empty or not dbc_signals:
         return pd.DataFrame()
 
-    import cantools
-    from core.dbc_manager import signals_to_dbc_string
-    from core.canid import normalize_id
+    from canlab.core.dbc_manager import build_database, decode_series
+    from canlab.core.canid import normalize_id
 
-    try:
-        db = cantools.database.load_string(
-            signals_to_dbc_string(dbc_signals), database_format="dbc")
-    except Exception:
-        return pd.DataFrame()
+    db = build_database(dbc_signals)          # raises ValueError on bad definitions
+    known = {m.frame_id for m in db.messages}
 
-    by_frame_id = {}
-    for msg in db.messages:
-        by_frame_id[msg.frame_id] = msg
-
-    records = []
-    for _, row in frames_df.iterrows():
+    parts = []
+    for can_id, grp in frames_df.groupby("ID", sort=False):
         try:
-            fid = int(normalize_id(row["ID"]), 16)
+            fid = int(normalize_id(can_id), 16)
         except (ValueError, TypeError):
             continue
-        msg = by_frame_id.get(fid)
-        rec = {"Timestamp": float(row.get("Timestamp", 0.0)), "ID": row["ID"]}
-        if msg is not None:
-            n = msg.length
-            data = bytes(int(row[f"B{i}"]) if pd.notna(row.get(f"B{i}")) else 0
-                         for i in range(min(n, 8)))
-            try:
-                decoded = db.decode_message(fid, data)
-                for k, v in decoded.items():
-                    rec[str(k)] = float(v) if isinstance(v, (int, float)) else v
-            except Exception:
-                pass
-        records.append(rec)
-
-    return pd.DataFrame(records)
+        if fid in known:
+            dec = decode_series(dbc_signals, can_id, grp)
+            if dec.empty:
+                dec = pd.DataFrame({"Timestamp": grp["Timestamp"].to_numpy(dtype=float)})
+        else:
+            dec = pd.DataFrame({"Timestamp": grp["Timestamp"].to_numpy(dtype=float)})
+        dec.insert(1, "ID", str(can_id))
+        parts.append(dec)
+    if not parts:
+        return pd.DataFrame()
+    out = pd.concat(parts, ignore_index=True)
+    return out.sort_values("Timestamp", kind="stable").reset_index(drop=True)
 
 
 def export_timeseries(frames_df: pd.DataFrame, dbc_signals: list[dict],

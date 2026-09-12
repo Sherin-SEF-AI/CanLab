@@ -2,9 +2,11 @@
 import io
 import json
 import zipfile
-from pathlib import Path
 
 import pandas as pd
+
+# Bumped when the archive layout changes; readers accept anything they know.
+PROJECT_FORMAT_VERSION = 2
 
 
 def save_project(state, path: str):
@@ -19,14 +21,13 @@ def save_project(state, path: str):
         zf.writestr("memory.json",  json.dumps(state.ai_memory,   indent=2))
         zf.writestr("triggers.json",json.dumps(state.triggers,    indent=2))
         zf.writestr("notes.json",   json.dumps(getattr(state, "notes_by_signal", {}), indent=2))
+        ann = getattr(state, "annotations", None)
+        zf.writestr("annotations.json", ann.to_json() if ann is not None else "[]")
 
         meta = {
-            "repo_url":    state.repo_url,
-            "repo_info":   state.repo_info,
-            "repo_readme": state.repo_readme,
-            "annotations": state.annotations,
+            "format_version": PROJECT_FORMAT_VERSION,
             "periodicities": {k: float(v) for k, v in state.periodicities.items()},
-            "fingerprint": state.fingerprint,
+            "vehicle_profile": getattr(state, "vehicle_profile", "generic"),
         }
         zf.writestr("meta.json", json.dumps(meta, indent=2))
 
@@ -46,7 +47,7 @@ def load_project(state, path: str):
             df = pd.read_csv(io.StringIO(zf.read("frames.csv").decode()),
                              dtype={"ID": str})
             if "ID" in df.columns:
-                from core.canid import normalize_id
+                from canlab.core.canid import normalize_id
                 df["ID"] = df["ID"].apply(normalize_id)
             state.frames_df = df
         else:
@@ -55,25 +56,31 @@ def load_project(state, path: str):
         if "signals.json" in names:
             state.dbc_signals = json.loads(zf.read("signals.json"))
         if "memory.json" in names:
-            state.ai_memory   = json.loads(zf.read("memory.json"))
+            # Merge rather than replace: loading a project used to overwrite the
+            # global AI memory, which the next save then wrote back to disk.
+            from canlab.core.ai_memory import merge_entries
+            state.ai_memory = merge_entries(state.ai_memory,
+                                            json.loads(zf.read("memory.json")))
         if "triggers.json" in names:
             state.triggers    = json.loads(zf.read("triggers.json"))
         if "notes.json" in names:
             state.notes_by_signal = json.loads(zf.read("notes.json"))
+        if "annotations.json" in names:
+            from canlab.core.annotations import AnnotationSet
+            state.annotations = AnnotationSet.from_json(zf.read("annotations.json").decode())
 
         if "meta.json" in names:
+            # Older archives also carried repo_*/annotations/fingerprint keys
+            # (features since removed); they are ignored.
             meta = json.loads(zf.read("meta.json"))
-            state.repo_url    = meta.get("repo_url", "")
-            state.repo_info   = meta.get("repo_info", {})
-            state.repo_readme = meta.get("repo_readme", "")
-            state.annotations = meta.get("annotations", {})
+            state.vehicle_profile = meta.get("vehicle_profile",
+                                              getattr(state, "vehicle_profile", "generic"))
             state.periodicities = {}
             for k, v in meta.get("periodicities", {}).items():
                 try:
                     state.periodicities[k] = float(v)
                 except (ValueError, TypeError):
                     pass   # skip corrupt entries rather than aborting the load
-            state.fingerprint = meta.get("fingerprint", {})
 
     state.project_path = path
 
@@ -83,6 +90,4 @@ def load_project(state, path: str):
         state.frames_updated.emit()
     if state.dbc_signals:
         state.dbc_updated.emit()
-    if state.repo_info:
-        state.repo_loaded.emit(state.repo_info)
     state.project_loaded.emit()

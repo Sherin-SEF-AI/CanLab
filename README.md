@@ -4,50 +4,59 @@
 
 # CanLab
 
-**A desktop (PyQt6) tool for reverse-engineering CAN bus data.**
+**A desktop workstation for reverse-engineering a CAN bus.**
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python)](https://www.python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green?style=flat-square)](https://pypi.org/project/PyQt6/)
+[![Tests](https://img.shields.io/badge/tests-448%20passing-brightgreen?style=flat-square)](#testing)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
-Load a capture, inspect frames and signals, run offline analysis to find
-counters, checksums and signal boundaries, optionally get AI help interpreting
-an ID, and build and export a DBC. It also includes diagnostics (UDS, ISO-TP,
-J1939, OBD-II) and, for isolated bench use only, injection, replay, fuzzing and
-a man-in-the-middle gateway.
+Load a capture, work out which bytes carry what, write the signal definitions
+down, check them against real frames, and export a DBC that other tools can
+read. It also speaks the diagnostic protocols (UDS, ISO-TP, J1939, OBD-II, XCP,
+DoIP), and, for isolated bench use only, can inject, replay, fuzz and bridge.
 
-> **Status:** actively developed, single-author project. It runs and is covered
-> by an automated test suite (see [Testing](#testing)), but treat it as
-> **alpha**: some features need optional dependencies, some analysis methods are
-> heuristics (see [Limitations](#limitations)), and it has not been validated
-> across a wide range of real vehicles.
+> **Status:** beta. Single-author project, actively developed. It runs, and the
+> behaviour described here is covered by an automated suite of 448 tests (see
+> [Testing](#testing)). But the analysis methods are heuristics that suggest
+> candidates rather than identify signals, some features need optional
+> dependencies, and it has not been validated across a wide range of real
+> vehicles. Read [Limitations](#limitations) before relying on a result.
+
+**Contents:** [Safety](#safety) · [Install](#install-and-run) · [Demo](#demo) ·
+[Workflow](#a-typical-session) · [Tabs](#what-it-does-16-tabs) ·
+[Log formats](#supported-log-formats) ·
+[Analysis](#analysis-offline-no-api-key) ·
+[Vehicle profiles](#vehicle-profiles) · [Diagnostics](#diagnostics) ·
+[DBC](#dbc-ecosystem) · [Integrations](#integrations) ·
+[Architecture](#how-it-fits-together) · [Real data](#validated-against-real-captures) · [Testing](#testing) ·
+[Limitations](#limitations)
 
 ---
 
 ## Safety
 
-> The **INJECTION** and **GATEWAY** features transmit frames onto a bus.
-> **Use them only on isolated bench setups:** a benchtop ECU, `vcan0`, or
-> dedicated lab hardware. Injecting or forwarding frames on a live vehicle bus
-> can interfere with braking, steering and airbag systems.
+> CanLab can transmit on a CAN bus. **Use it only on isolated bench setups:** a
+> benchtop ECU, `vcan0`, or dedicated lab hardware. Injecting or forwarding
+> frames on a live vehicle bus can interfere with braking, steering and airbag
+> systems.
 >
-> Built-in guards:
+> Four guards are built in:
 >
-> - A safety warning you have to accept on first launch. The acceptance is
->   remembered, so it appears once.
-> - A global **ARM TX** toolbar toggle, **disarmed by default**. These paths
->   refuse to transmit until you arm it, and re-check on every frame, so
->   disarming stops a run that is already going: signal injection, replay, the
->   fuzzer, trigger-driven sends, scripted test sequences, the actuator sweep,
->   gateway forwarding, UDS Clear DTC, and the REST `/inject` endpoint.
-> - The UDS service scan probes only read-only services unless you tick
->   "Include destructive services" and confirm.
+> 1. A safety warning you have to accept on first launch. The acceptance is
+>    remembered, so it appears once.
+> 2. A global **ARM TX** toolbar toggle, **disarmed by default**. Nothing leaves
+>    the tool until you arm it: not injection, replay, fuzzing or gateway
+>    forwarding, and not diagnostic requests either (UDS, OBD-II, XCP, DoIP).
+>    Every transmit path goes through one function, and a test asserts that each
+>    of them stays silent while disarmed.
+> 3. Disarming stops transmits that are already running. It does not merely
+>    block the next frame: a fuzzer or replay in flight is asked to stop and
+>    joined.
+> 4. A blocked-ID list that is refused even while armed.
 >
-> **What the gate does not cover.** Ordinary diagnostic reads put request frames
-> on the bus without checking ARM TX: the UDS scans and DID reads, OBD-II
-> polling, and ISO-TP requests. This is deliberate, on the grounds that they
-> only read ECU state, but it does mean "disarmed" is not the same as "silent".
-> Disconnect the bus if you need the tool to emit nothing at all.
+> The UDS service scan probes read-only services unless you tick "Include
+> destructive services" and confirm.
 
 ---
 
@@ -62,63 +71,38 @@ integrations, and the safety model.
 
 ---
 
-## Run from source
-
-This is the supported, verified way to run it.
+## Install and run
 
 ```bash
 git clone https://github.com/Sherin-SEF-AI/CanLab.git
 cd CanLab
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e ".[ai,rest,mcp,adapters]"   # extras: ai, rest, mcp, adapters, mdf, dev, demo
 
-# Optional AI providers. The app works fully offline without any of them:
-export ANTHROPIC_API_KEY="sk-ant-..."   # Anthropic
-export GROQ_API_KEY="gsk_..."           # Groq
-# or run a local Ollama server for offline AI (no key)
-
-cd canlab            # source root, imports are relative to here
-python3 main.py
+canlab                                # or: python -m canlab
 ```
 
-Or download the Linux x86_64 build from the
+Or take the Linux x86_64 build from the
 [releases page](https://github.com/Sherin-SEF-AI/CanLab/releases), which needs
 no Python installation:
 
 ```bash
-tar -xzf CanLab-1.3.0-linux-x86_64.tar.gz
+tar -xzf CanLab-<version>-linux-x86_64.tar.gz
 cd CanLab/
 ./CanLab
 ```
 
-Python 3.11 or newer (developed and tested on 3.12).
+Python 3.11 or newer (developed and tested on 3.12). Keys for the optional AI
+providers go in Settings → API Keys and are stored in the OS keyring; a local
+Ollama server needs no key. Logs are written to `~/.canlab/logs/canlab.log`.
+
+A sample capture ships with the package
+(`canlab/sample_data/sample_kona_drive.csv`: 6,610 frames across 10 IDs over 10
+seconds, from 1 Hz to 100 Hz) so every feature can be tried without hardware.
 
 ---
 
-## What it does: 15 tabs
-
-All 15 tabs build and render. An automated smoke test loads the bundled sample
-log and cycles every one of them.
-
-| # | Tab | What it does |
-|---|---|---|
-| 1 | **FRAMES** | Raw frame table with per-byte change highlighting, hex and bus filters, freeze and follow. |
-| 2 | **SIGNALS** | DBC-decoded signal table: physical value, unit, entropy, suspected byte role. |
-| 3 | **PLOT** | Multi-signal time series, per-byte traces, mouse-wheel zoom. |
-| 4 | **AI ENGINE** | Send an ID to Anthropic, Groq or a local Ollama model. The offline findings are injected into the prompt. Memory persists across sessions. |
-| 5 | **DBC BUILDER** | Visual signal editor. Imports DBC, ARXML and CAN matrix; exports DBC, openpilot DBC, CANdb++, ARXML (experimental) and Wireshark Lua. |
-| 6 | **CODE GEN** | Generates Python or C parsing code from DBC definitions. |
-| 7 | **INTELLIGENCE** | Cross-ID byte Pearson correlation with a lag sweep, embedding similarity, fingerprinting. |
-| 8 | **INJECTION** | Six sub-tabs: inject, replay with a scrubber, trigger rules, actuator sweep with a watchdog, fuzzer, scripted test sequences. Gated by ARM TX. |
-| 9 | **DIAGNOSTICS** | Six sub-tabs: OBD-II/UDS, UDS deep scan, UDS services, security access, bus load, bus health. |
-| 10 | **DASHBOARD** | Byte-value heatmap, message timeline, physical overlay gauges. |
-| 11 | **AUTO-RE** | Counter and checksum detection and entropy-boundary analysis across IDs, in worker threads. |
-| 12 | **TIMELINE** | Scrubbable multi-ID event timeline plus a video-sync sub-tab. |
-| 13 | **OBD-II** | Live PID gauge grid. Discovers supported PIDs across the continuation windows. |
-| 14 | **ML INTEL** | Byte-role classification, anomaly detection, change-point detection, embedding search. |
-| 15 | **GATEWAY** | Bidirectional CAN bridge with ordered pass, block and modify rules. Gated by ARM TX. |
-
-### Walkthrough
+## Demo
 
 ![CanLab in use](docs/demo-preview.gif)
 
@@ -128,31 +112,103 @@ every tab is below, in four parts, 1080p with subtitles burned in.
 **GitHub will not play these in the page.** It serves `.mp4` from a repository
 as a download, so the links below save the file rather than opening a player.
 They are also attached to the
-[latest release](https://github.com/Sherin-SEF-AI/CanLab/releases/latest) if
-that is easier to grab.
+[latest release](https://github.com/Sherin-SEF-AI/CanLab/releases/latest).
 
 | Part | Covers | Length |
 |---|---|---|
 | [1. Loading a capture and finding structure](docs/canlab-demo-part1-analysis.mp4?raw=1) | FRAMES, the ID panel and inspector, SIGNALS, counter and checksum detection, the checksum guesser, entropy boundaries | 3.0 min |
 | [2. Defining signals and checking them](docs/canlab-demo-part2-signals.mp4?raw=1) | DBC BUILDER and its bit grid, the live decode preview, PLOT, INTELLIGENCE, ML INTEL, DASHBOARD | 2.6 min |
-| [3. Timeline, code generation and exports](docs/canlab-demo-part3-outputs.mp4?raw=1) | TIMELINE, CODE GEN, the five export formats, DIAGNOSTICS, security access | 2.4 min |
+| [3. Timeline, code generation and exports](docs/canlab-demo-part3-outputs.mp4?raw=1) | TIMELINE, CODE GEN, the five export formats, DIAGNOSTICS including XCP and DoIP, security access | 2.4 min |
 | [4. The transmit gate, injection and live capture](docs/canlab-demo-part4-transmitting.mp4?raw=1) | ARM TX, INJECTION, replay, fuzzing, GATEWAY, OBD-II, the AI engine, live capture | 3.3 min |
+| [Real vehicle capture](docs/canlab-demo-realdata.mp4?raw=1) | The same application driven through a real 180-ID capture: detection, entropy, decoding, and the transmit gate | 2.0 min |
 
 Subtitles: [part 1](docs/canlab-demo-part1-analysis.srt),
 [part 2](docs/canlab-demo-part2-signals.srt),
 [part 3](docs/canlab-demo-part3-outputs.srt),
 [part 4](docs/canlab-demo-part4-transmitting.srt).
 
-> Recorded from the `fix/production-readiness` branch, so two things in it are
-> ahead of `main`: the DIAGNOSTICS tab there has XCP and DoIP panels (on `main`
-> those protocols are library-only, see below), and it has selectable vehicle
-> profiles. Everything else shown is what `main` does.
+It is generated rather than hand-recorded, so it cannot drift away from what the
+application does. [`docs/demo/record.py`](docs/demo/record.py) drives a real
+`MainWindow` under Qt's offscreen platform through 24 scenes, calling the same
+slots the buttons call, so a scene that stops working fails the run instead of
+quietly recording a stale screen.
+[`docs/demo/build.py`](docs/demo/build.py) synthesises the narration, times each
+scene's frames to its own audio, and muxes with ffmpeg. Parts are split on scene
+boundaries, never mid sentence, and the build fails if a scene lands in no part
+or in two.
 
-The preview above is cut from those four files by `docs/demo/build.py`. The
-whole thing is generated, not hand-recorded, so it cannot drift away from what
-the application does: `docs/demo/record.py` drives a real `MainWindow` under Qt's
-offscreen platform and calls the same slots the buttons call, so a scene that
-stops working fails the run instead of quietly recording a stale screen.
+```bash
+pip install -e ".[demo]"                   # plus ffmpeg on PATH
+QT_QPA_PLATFORM=offscreen python docs/demo/record.py    # about a minute
+python docs/demo/build.py
+```
+
+Narration clips are cached by a digest of their own text, so editing one scene
+re-voices that scene alone.
+
+---
+
+## Finding a signal by doing something
+
+The analysis narrows the search; this finishes it. Connect to the bus, go to
+INTELLIGENCE, type a label such as `brake`, press **Start** as you press the
+pedal and **Stop** as you release it, and repeat a few times. **Rank
+candidates** then scores every byte and every bit on the bus by how well it
+followed your marks: a flag that is set exactly while you pressed scores near
+1, a pedal-position byte that rises while you pressed scores by correlation.
+Double-click the winner to define it.
+
+It works from a file too: type a start and end time against a loaded log.
+Marks are saved with the project.
+
+---
+
+## A typical session
+
+1. **Open a log.** FRAMES shows every frame in time order. A byte lights up when
+   it changes, so the parts of a message that move are visible at a glance.
+2. **Pick an ID.** The inspector gives you the last frames in hex, a per-byte
+   activity bar, and minimum, maximum and mean per byte.
+3. **Narrow it down.** AUTO-RE finds the rolling counters and checksum bytes,
+   which are not signals, and entropy boundaries suggest where one field ends
+   and the next begins. SIGNALS classifies each message; ML INTEL classifies
+   each byte.
+4. **Write the definition.** DBC BUILDER has a bit grid that converts between
+   grid position and DBC bit numbering, which is the part that is easy to get
+   wrong by hand.
+5. **Check it.** The live preview decodes real frames from your capture through
+   the definition. PLOT draws the decoded value over time, where a wrong byte
+   order shows up as a sawtooth.
+6. **Export.** DBC, openpilot DBC, CANdb++, ARXML or a Wireshark dissector. Each
+   format is verified in the test suite by loading it back with the tool that
+   has to read it.
+
+If you have a physical reference for a signal, a GPS speed log for instance,
+[reference calibration](#reference-driven-calibration) can search for the field
+that fits it and report the scale and offset.
+
+---
+
+## What it does: 16 tabs
+
+| # | Tab | What it does |
+|---|---|---|
+| 1 | **FRAMES** | Raw frame table with per-byte change highlighting, hex and bus filters, freeze and follow. |
+| 2 | **SNIFFER** | One row per message rather than one per frame, the bytes coloured green when they rise and red when they fall. Notch ignores every bit that is already moving, so what lights up next is what you just did. |
+| 3 | **SIGNALS** | Per-message classification: frame count, rate, payload entropy, suspected message type. |
+| 4 | **PLOT** | Multi-signal time series. Raw bytes and decoded signals share a time axis, each with its own scale. |
+| 5 | **AI ENGINE** | Send one ID's statistics to Anthropic, OpenAI, Groq or a local Ollama model. The offline findings go with the question. Memory persists across sessions. |
+| 6 | **DBC BUILDER** | Visual signal editor with a bit grid and a live decode preview. Imports DBC, ARXML and CAN matrix; exports DBC, openpilot DBC, CANdb++, ARXML and Wireshark Lua. |
+| 7 | **CODE GEN** | Generates Python or C that opens the bus and decodes or encodes your signals. |
+| 8 | **INTELLIGENCE** | Annotated capture: mark when you did something and every byte and bit is ranked by how well it followed. Also periodicity, cross-ID correlation with a lag sweep, capture diffing, J1939 PGN decode, value lookup. |
+| 9 | **INJECTION** | Six sub-tabs: inject, replay with a scrubber and a signal override, trigger rules, actuator sweep with a watchdog, fuzzer, scripted test sequences. Gated by ARM TX. |
+| 10 | **DIAGNOSTICS** | Eight sub-tabs: OBD-II/UDS, UDS deep scan, UDS services, security access, bus load, bus health, XCP, DoIP. |
+| 11 | **DASHBOARD** | Byte-activity heatmap across all messages, message timeline, gauges pointed at signals you have defined. |
+| 12 | **AUTO-RE** | Counter and checksum detection, entropy boundaries, correlation, a per-byte checksum algorithm guesser, and bit-level flag and value-table detection. Runs in worker threads. |
+| 13 | **TIMELINE** | Several signals stacked on one scrubbable axis with a shared playhead, plus video sync with an adjustable offset. |
+| 14 | **OBD-II** | Live PID gauges. Discovers supported PIDs by walking the continuation windows rather than assuming the first 32. |
+| 15 | **ML INTEL** | Per-byte role classification with confidence, anomaly scoring against a fitted baseline, change-point detection, embedding similarity. |
+| 16 | **GATEWAY** | Bridges two CAN channels with ordered pass, block and modify rules. Gated by ARM TX. |
 
 ---
 
@@ -160,33 +216,90 @@ stops working fails the run instead of quietly recording a stale screen.
 
 | Format | Notes |
 |---|---|
-| SavvyCAN CSV | GVRET and SavvyCAN export, including 2-digit hex data bytes and a trailing comma. |
-| candump `.log` | `candump -l` output. |
-| pcap / pcapng | Linux SocketCAN linktype 227, via dpkt. |
+| SavvyCAN CSV | GVRET and SavvyCAN export. IDs and data bytes are read as hex. |
+| candump `.log` | `candump -l` output, including CAN FD (`##`) lines. Error and remote frames are counted and skipped. |
+| pcap / pcapng | Linux SocketCAN linktype 227, classic and FD, via dpkt. |
 | Vector BLF | via python-can `BLFReader`. |
 | Vector ASC | via python-can `ASCReader`. |
-| MDF4 `.mf4` / `.mdf` | CANedge and similar. **Requires** `pip install asammdf`. |
-| openpilot `.rlog` / `.qlog` | **Requires** pycapnp and the cereal `log.capnp` schema. Fails with a clear error if either is missing; it does not guess. |
+| MDF4 `.mf4` / `.mdf` | CANedge and similar. Needs `pip install canlab[mdf]`. |
+| openpilot `.rlog` / `.qlog` | Needs pycapnp and the cereal `log.capnp` schema. Raises a clear error if either is missing. |
+
+Every parser produces the same columns: `Timestamp, ID, Bus, DLC, Extended,
+B0..B7`, widened to `B63` when FD frames are present, plus a per-ID `Delta`. The
+parsers are tested against fixtures in the genuine formats, including
+byte-order-mark and CRLF variants.
 
 ---
 
-## Analysis and ML (offline, no API key)
+## Analysis (offline, no API key)
+
+None of this sends anything anywhere.
 
 | Feature | Module | Notes |
 |---|---|---|
-| Byte role classifier | `core/signal_classifier.py` | COUNTER, CHECKSUM, BOOLEAN, PHYSICAL or PADDING per byte (heuristic). |
-| Counter and checksum detection | `core/counter_checksum_detector.py`, `core/checksum_guesser.py` | Tests several checksum algorithms per byte and reports a match fraction. |
-| Cross-ID correlation | `core/correlation_engine.py` | Pearson r per byte pair with nearest-timestamp alignment and a lag sweep. |
+| Checksum algorithms | `core/checksums.py` | Parametrised CRC-8 plus OEM variants (Hyundai, Toyota, Honda, Subaru, AUTOSAR), checked against published check values and against commaai/opendbc. |
+| Counter and checksum detection | `core/counter_checksum_detector.py` | Sweeps every message. Counters are whole-byte or per-nibble, with the modulus read from the values seen and reported only when a roll-over was actually observed. |
+| Checksum algorithm guesser | `core/checksum_guesser.py` | Takes one message and one byte and scores all twelve algorithms, fitting on the first 70% of the capture and validating on the rest. Reports both numbers. |
+| Byte role classifier | `core/signal_classifier.py` | COUNTER, CHECKSUM, BOOLEAN, PHYSICAL or PADDING per byte. |
+| Cross-ID correlation | `core/correlation_engine.py` | Pearson r per byte pair, nearest-timestamp alignment, lag sweep. |
 | Anomaly detection | `core/anomaly_detector.py` | Z-score per byte and Isolation Forest on the frame vector. |
-| Entropy boundaries | `core/entropy_boundary.py` | Per-bit entropy to suggest signal edges. |
-| Multiplexer detection | `core/mux_detector.py` | Finds a mode-selector byte and per-mode active bytes. |
-| Reference calibration | `core/reference_calibrate.py` | See below. |
+| Entropy boundaries | `core/entropy_boundary.py` | Per-bit entropy to suggest where one field ends and the next begins. |
+| Multiplexer detection | `core/mux_detector.py` | Finds a mode-selector byte and the bytes active in each mode. |
+| Reference calibration | `core/reference_calibrate.py` | See [below](#reference-driven-calibration). |
 
-These are **heuristics that suggest candidates**, not guarantees. Always verify.
-The checksum confidence is a train/validate match fraction over a chronological
-split, not a statistical proof. The DASHBOARD heatmap shows message-timing
-co-occurrence, not signal-value correlation; byte-value correlation lives in the
-INTELLIGENCE tab (`core/correlation_engine.py`).
+**Flags and enumerations.** Per-byte analysis cannot see a turn indicator,
+which is one bit, or a gear selector, which is four sparse values held for a
+while each. `core/bit_flags.py` finds switches and small packed fields by
+their signature (rare changes, long holds), and is careful about the top bit
+of a slowly moving measurement, which looks the same until you notice the bits
+below it churning. `core/value_tables.py` finds bytes that only ever take a
+few values and hold them, and drafts the value table for the DBC. AUTO-RE has
+a panel for both.
+
+**On checksum detection.** A byte counts as a checksum only if the relation
+beats simply guessing that byte's most common value, so constant padding does
+not qualify. A relation that holds across most of the payload is discarded
+rather than reported: "is byte k the exclusive-or of the other seven?" is the
+same question as "does the whole message exclusive-or to zero?", so a genuine
+checksum and a payload that merely repeats each value an even number of times
+both make all eight bytes match, and the data alone cannot say which byte it is.
+On the shipped sample capture the detector finds exactly the 6 counters and 7
+checksums the generator wrote, with the right byte and the right algorithm, and
+reports nothing for the three messages that have none.
+
+These remain **heuristics that suggest candidates**. A confidence figure is a
+match fraction over the frames you loaded, not a proof. Verify before you trust.
+
+---
+
+## From the command line
+
+The analysis runs without the window, for CI over a folder of drives, from a
+notebook, or piped into something else. A test asserts the process never
+imports Qt.
+
+```bash
+canlab-cli ids      capture.csv                          # IDs, rates, moving bytes
+canlab-cli detect   capture.csv --json out.json --dbc draft.dbc
+canlab-cli decode   capture.csv --dbc signals.dbc --out decoded.csv
+canlab-cli convert  capture.blf capture.csv              # csv, blf, asc, log
+```
+
+`detect` runs every detector and can draft a DBC from what it found, with
+overlapping claims resolved so the file loads in cantools. `convert` writes
+SavvyCAN's own CSV layout, so the result opens there as well as here.
+
+---
+
+## Vehicle profiles
+
+Framing conventions are a setting, not an assumption. A profile says where a
+rolling counter and checksum live and which algorithm computes the checksum. It
+does not claim to identify your vehicle. The default, **generic**, adds neither.
+Hyundai/Kia, Toyota, Honda, Subaru and AUTOSAR E2E ship as presets, selectable
+in Settings → VEHICLE. The chosen profile drives injection stamping, the
+openpilot export metadata, the generated code, and the framing hint given to the
+AI.
 
 ---
 
@@ -195,13 +308,11 @@ INTELLIGENCE tab (`core/correlation_engine.py`).
 `core/reference_calibrate.py` searches for the CAN field (ID, byte range,
 endianness) whose values best fit a **physical reference** by least squares, and
 reports scale and offset with an R² verdict of PASS or UNCONFIRMED. The
-reference can be a CSV of `timestamp,value` (Tools → *Calibrate signal from
-reference CSV*), or a value read by OCR from a dashboard video
-(`core/vision_reference.py`, which needs `opencv-python` and `rapidocr`).
-Sentinel codes meaning "signal unavailable" are masked, and the fitted scale is
-snapped to a neat value when that barely changes the decode. Both refinements
-are adapted from CSS Electronics' reverse-engineering skills; see
-[Acknowledgements](#acknowledgements).
+reference is a CSV of `timestamp,value` (Tools → *Calibrate signal from
+reference CSV*). Sentinel codes meaning "signal unavailable" are masked, and the
+fitted scale is snapped to a neat value when that barely changes the decode.
+Both refinements are adapted from CSS Electronics' reverse-engineering skills
+(see [Acknowledgements](#acknowledgements)).
 
 ---
 
@@ -209,18 +320,17 @@ are adapted from CSS Electronics' reverse-engineering skills; see
 
 | Protocol | Module | Notes |
 |---|---|---|
-| UDS (ISO 14229) | `core/uds.py` | DTC read, ECU info (DIDs), service scan, read-only by default. |
-| ISO-TP (ISO 15765-2) | `core/isotp.py` | Single and multi-frame transmit (flow-control handshake and consecutive frames) and reassembly. |
+| ISO-TP (ISO 15765-2) | `core/isotp.py` | Single and multi-frame transmit with the flow-control handshake and STmin, reassembly, CAN FD escape frames, functional addressing. |
+| UDS (ISO 14229) | `core/uds.py` | Read DTCs, read ECU identification, service scan (read-only by default), NRC 0x78 response-pending handling, periodic TesterPresent during long scans. |
+| Security access | `core/security_access.py` | Seed and key algorithms, scripted key functions, rate-limited brute force that stops on the ECU's attempt-limit response. |
 | J1939 | `core/j1939.py` | PGN decoding plus DM1 active-DTC decode (SPN, FMI, CM, OC). |
-| OBD-II (SAE J1979) | `core/obd2_pids.py` | 26-PID table, supported-PID discovery across the continuation windows. |
+| OBD-II (SAE J1979) | `core/obd2_pids.py` | PID table and supported-PID discovery across continuation windows. |
+| XCP over CAN | `core/xcp.py` | Read-only client (CONNECT, UPLOAD, SHORT_UPLOAD) and a measurement poller. No memory-write or programming commands are implemented. |
+| DoIP (ISO 13400) | `core/doip.py` | Vehicle discovery, routing activation, UDS over IP, on stdlib sockets. |
 
-### Library-only protocols
-
-`core/xcp.py` (XCP over CAN, a read-only CONNECT / UPLOAD / SHORT_UPLOAD client
-and poll worker, no memory writes) and `core/doip.py` (ISO 13400 vehicle
-discovery, routing activation and UDS over IP on stdlib sockets) are implemented
-and unit-tested, but **there is no user interface for either**. They are usable
-from a script or a plugin, not from the application.
+Every diagnostic request goes through the ARM TX gate, reads included. One
+receive thread dispatches frames to each consumer, so a diagnostic scan and the
+live frame table never take responses from each other.
 
 ---
 
@@ -229,28 +339,31 @@ from a script or a plugin, not from the application.
 | Format | Import | Export |
 |---|---|---|
 | Standard DBC | Yes | Yes, parseable by cantools |
-| openpilot DBC | Yes, as an opendbc cross-reference | Yes, parseable by cantools |
-| Vector CANdb++ | No | Yes (`BA_DEF_` blocks) |
-| AUTOSAR ARXML 4.3 | Yes | **Experimental.** Round-trips within CanLab but is **not** validated against the full AUTOSAR schema. Do not rely on it in external AUTOSAR tools yet. |
-| Wireshark Lua dissector | No | Yes, little- and big-endian; big-endian verified against cantools |
+| openpilot DBC | Yes, as an opendbc cross-reference | Yes |
+| Vector CANdb++ | No | Yes, with `BA_DEF_` blocks carrying cycle times measured from your capture |
+| AUTOSAR ARXML 4.3 | Yes, via cantools | Yes, verified loadable by cantools |
+| Wireshark Lua dissector | No | Yes |
 | Excel/CSV CAN matrix | Yes | No |
 
-Multiplexed signals are supported on DBC export (`SG_ M` and `m<n>`).
+Extended 29-bit IDs, multiplexed signals and value tables round-trip. The
+builder has undo and redo (Ctrl+Z, Ctrl+Shift+Z); an import counts as one
+step. All
+decoding and encoding goes through one cantools-backed path, so the value the
+preview shows is the value the exported file produces.
 
-**opendbc matching** (Tools → *Match against opendbc*) fetches the real
-`commaai/opendbc` library, caches it, and ranks how well your capture's IDs
-match each OEM DBC. The first run needs network access.
+The Lua dissector extracts bits with plain arithmetic, using neither `bit32`
+(removed in Lua 5.3) nor the 5.3+ bitwise operators (a syntax error on earlier
+versions), so one file works across the Lua versions Wireshark ships. Its output
+is tested against cantools for little-endian, big-endian and signed fields, and
+executed under a real Lua runtime.
 
----
-
-## AI engine
-
-Providers: **Anthropic**, **Groq** (Llama 3.x) and **Ollama** (any local model,
-no API key). Before an AI call, CanLab runs the offline detectors and injects
-their findings (byte roles, message type and period, checksum guess, similar
-IDs) into the prompt, so the model reasons on structured facts rather than raw
-hex. Configure in Settings → API Keys. Nothing is sent until you supply a key
-and ask for an analysis.
+**opendbc matching** (Tools → *Match against opendbc*) fetches the
+`commaai/opendbc` index, caches it under `~/.canlab/opendbc_cache`, and ranks
+how well your capture's IDs match each OEM DBC. **Apply** loads the chosen
+database's signals straight into the builder, by default only for messages
+seen on this bus, as one undo step. If your vehicle is one openpilot supports,
+that is most of the work done. The first run needs network access; afterwards
+it works from the cache.
 
 ---
 
@@ -258,24 +371,86 @@ and ask for an analysis.
 
 | Capability | Module | Notes |
 |---|---|---|
-| REST API and live web dashboard | `core/rest_api.py` | Loopback only, **token-authenticated** (`X-API-Token`, shown on start). `GET /` serves a self-contained live-frames page; `/inject` also requires ARM TX. |
-| MCP server | `mcp_server.py` | Exposes load_log, list_ids, detectors, correlate, opendbc-match, mux and calibrate as MCP tools, so an MCP client can drive the analysis loop. |
-| Decoded time-series export | `core/timeseries_export.py` | Exports a Timestamp-by-signal matrix to CSV or Parquet. |
-| Plugin SDK | [`docs/PLUGINS.md`](docs/PLUGINS.md) | Documented `register(app)` API and two example plugins. The loader reads plugin metadata statically and runs code only on explicit activation. |
+| REST API and live web dashboard | `core/rest_api.py` | Loopback only, token-authenticated. `GET /` serves a live-frames page; `/inject` also requires ARM TX. |
+| MCP server | `core/mcp_tools.py`, `core/mcp_service.py`, `mcp_server.py` | 25 tools over the capture, the detectors, the DBC and annotations, served from inside the window (live state) or headless. See below. |
+| Hardware adapters | `core/adapters.py` | Named adapter profiles for every python-can backend, detection of connected adapters, and a listen-only test. See below. |
+| GVRET hardware | `core/gvret.py` | The serial protocol SavvyCAN's own boards speak (Macchina M2/A0, EVTV CANDue, ESP32RET over WiFi). python-can has no such backend, so CanLab supplies one and registers it as the `gvret` interface. |
+| Capture trimming | `core/capture_split.py` | Cut the loaded capture to a time window, a frame or percentage range, a set of IDs, or one bus. Tools > Trim capture. |
+| Decoded time-series export | `core/timeseries_export.py` | A Timestamp-by-signal matrix to CSV or Parquet. |
+| Plugin SDK | [`docs/PLUGINS.md`](docs/PLUGINS.md) | Documented `register(app)` API, an event bus and two example plugins. Plugin code does not run until you enable it in Settings. |
 | Panda backend | `core/panda_backend.py` | comma.ai Panda as a python-can-compatible bus, with the safety model selectable. |
 
----
+### Assistants over MCP (Claude, ChatGPT, Codex)
 
-## REST API
+CanLab is an MCP server. An assistant connected to it can load a capture, list
+IDs, read byte statistics and raw frames, run every detector, draft a DBC,
+define and remove signals, decode frames, annotate the timeline and rank bytes
+against the annotations. It cannot transmit: no MCP tool touches the bus.
 
-Start it from the **REST API** toolbar toggle. It binds to **127.0.0.1:8765**
-and prints a per-session token. Every request needs an `X-API-Token` header.
+There are two servers with the same 25 tools:
+
+- **Inside the window.** The **MCP** toolbar toggle (or Settings > MCP) starts
+  a Streamable HTTP server on `127.0.0.1:8766/mcp` over the capture you have
+  loaded or are recording. A signal the assistant adds appears in the DBC
+  Builder as one undoable step. Optional bearer token; loopback only unless you
+  tick "allow other machines".
+- **Headless.** `canlab-mcp` serves stdio and loads captures on request;
+  `canlab-mcp --http` serves HTTP without the window.
+
+Settings > MCP writes the exact configuration for each client. In short:
 
 ```bash
+# Claude Code, against the running window (or a headless --http server)
+claude mcp add --transport http canlab http://127.0.0.1:8766/mcp
+
+# Claude Desktop and Codex CLI launch stdio servers; this one bridges to the window
+canlab-mcp --attach http://127.0.0.1:8766/mcp        # put this in their config
+
+# Claude Desktop, headless (no window needed): {"command": "/path/.venv/bin/canlab-mcp"}
+```
+
+ChatGPT connects from OpenAI's servers, so it cannot reach your loopback
+address. Publish the server over HTTPS (`cloudflared tunnel --url
+http://127.0.0.1:8766`, or ngrok), tick "allow connections from other machines",
+and add `https://<tunnel-host>/mcp` as a connector with no authentication;
+`search` and `fetch` are provided for ChatGPT's connector contract and Developer
+mode exposes the rest. ChatGPT cannot send a bearer token, so while the tunnel
+is up anyone who has the URL can read the capture and edit the signal list.
+
+The tools, the HTTP transport, the bridge and the in-window server are tested
+with the official MCP client (`tests/test_mcp_server.py`,
+`tests/test_mcp_in_app.py`).
+
+### Hardware CAN adapters
+
+Settings > CAN ADAPTERS keeps a list of named adapters and the toolbar switches
+between them. **Detect connected** asks every python-can backend what it sees,
+reads CAN network devices from sysfs, and recognises common USB sticks by
+vendor and product id (candleLight, CANable, USBtin, PEAK, Kvaser). **Test**
+opens the adapter and listens for one second; it never transmits, and a failure
+comes with the fix (the `ip link` command, the pip package, the dialout group).
+
+Every backend python-can ships is selectable: SocketCAN, slcan, gs_usb, PCAN,
+Kvaser, Vector, IXXAT, USB2CAN, Seeed, Robotell, serial, CANalyst-II, neoVI,
+socketcand, UDP multicast and virtual, plus **GVRET**, which CanLab adds
+itself. GVRET is what SavvyCAN's own hardware runs, so a Macchina M2 or A0, an
+EVTV CANDue or an ESP32RET board works here too; give it a serial port, or
+`<ip>:23` for a board on WiFi. The dialog shows what each one expects
+as a channel and which driver or package it needs. `pip install canlab[adapters]`
+adds pyserial (slcan) and gs_usb; vendor drivers (PCAN-Basic, CANlib, XL) come
+from the vendor. Detection and the adapter model are tested against stand-ins
+for the probes; opening is tested for real on python-can's virtual bus.
+
+### REST API
+
+Start it from the **REST API** toolbar toggle. It binds to `127.0.0.1:8765` and
+prints a per-session token. Every data request needs an `X-API-Token` header.
+
+```
 GET  /            # live web dashboard (HTML, open)
 GET  /frames      # last N frames  (?n=N)
 GET  /signals     # decoded DBC signals
-GET  /status      # connection and frame count
+GET  /status      # connection state and frame count
 GET  /memory      # AI memory entries
 POST /inject      # inject a frame: needs the token AND ARM TX
                   # {"id":"0x200","data":"01 02 03 04 05 06 07 08"}
@@ -283,41 +458,114 @@ POST /inject      # inject a frame: needs the token AND ARM TX
 
 ---
 
-## Testing
+## How it fits together
 
-```bash
-python -m pytest tests/ -q        # 154 passed, 1 skipped
-```
+Three pieces carry most of the design, and they are worth knowing if you are
+reading the code or writing a plugin.
 
-The skip is the MDF4 importer, which needs the optional `asammdf` package. If
-the MCP SDK is not installed either, that is a second skip.
+**One receive thread.** `core/bus_hub.py` is the only place that calls `recv()`.
+It hands each frame to every subscriber that asked for it, filtered by ID. This
+is why a UDS scan and the live table can run at the same time without taking
+each other's frames. Workers are given a subscription rather than the bus.
 
-Tests cover ID normalisation; ISO-TP single and multi-frame transmit (PCI
-framing); the ARM TX gate, including that disarming mid-run stops replay and the
-actuator sweep; UDS destructive-service classification and DTC and PID decoding;
-OBD-II PID decoding; NaN-safety in the ML paths; BLF, ASC and candump FD import;
-SavvyCAN CSV with hex bytes and a trailing comma; opendbc matching; reference
-calibration and its refinements; multiplexer detection; J1939 DM1; XCP; DoIP;
-the REST auth and NaN-safe JSON model; DBC round trip (message length and
-extended ID); big-endian and signed injection packing; the lazy live-frame
-store; the vectorised correlation aligner; and an import smoke test of every
-tab.
+**One transmit gate.** `core/safety.py` holds the armed flag, the blocked-ID
+set, and a registry of running transmit workers. Every send goes through
+`gated_send`. Disarming notifies observers and stops registered workers, rather
+than only refusing the next frame.
+
+**A capped ring buffer.** `core/frame_store.py` keeps frames in preallocated
+NumPy arrays (500,000 by default, oldest dropped) and appends in constant time,
+so a long capture does not get slower as it grows. The pandas DataFrame the rest
+of the application reads is built on demand and cached until the next change.
+Views that update live read only what they display: the frame table takes a
+fixed tail, the inspector takes a per-ID tail, and the ID tree reads
+incrementally maintained statistics rather than the frames themselves.
 
 ---
 
-## Recent fixes
+## Validated against real captures
 
-A deep-audit pass fixed a batch of protocol, correctness, safety and performance
-defects: ISO-TP framing, UDS, DTC and OBD decoding, DBC decoding on cantools 40
-and later, DBC round trip, replay DLC, NaN-safe REST JSON, per-frame ARM TX
-re-checks, injection byte-order packing, plugin consent, and a live-capture
-store that was quadratic in the number of frames. See
-[docs/AUDIT_FIXES.md](docs/AUDIT_FIXES.md) for the full list; each item has a
-regression test in `tests/test_audit_fixes.py`.
+The unit suite uses fixtures and a generated sample. Separately, the whole
+application is run end to end over real vehicle recordings, because synthetic
+data agrees with whatever the code assumes.
 
-Since then, the actuator sweep in the INJECTION tab has been brought under the
-ARM TX gate. It was the one transmit path with no check, and it put frames on
-the bus while the toolbar read DISARMED.
+Two corpora, 90 checks:
+
+| Corpus | What it is | Checks |
+|---|---|---|
+| SavvyCAN examples | 12,974 frames, 180 IDs, 11-bit, one bus | 36 |
+| CANedge recordings and python-can format files | 2 to 154,896 frames, 29-bit J1939, dual-bus, native MDF4, CAN FD and error frames | 54 |
+
+The second corpus is other people's hardware output, none of it produced here:
+five CANedge logger recordings in native MDF4 from
+[CSS Electronics](https://github.com/CSS-Electronics/api-examples) (MIT),
+including a 145,000-frame J1939 log that is 29-bit end to end and a 23-minute
+two-channel recording, plus Vector BLF and ASC written by
+[python-can](https://github.com/hardbyte/python-can)'s own writers covering
+CAN FD, 64-byte FD, error frames and a comma-decimal locale. One real log is
+then written out in all five formats and read back by every parser, which all
+have to agree about the same traffic.
+
+It found two defects the older corpus could not reach: the openpilot DBC
+exporter wrote a bare 29-bit frame id, so every J1939 capture exported a file
+cantools refuses, and the sniffer aged a loaded capture against wall-clock
+time so every row expired the moment a file opened. Both are fixed and pinned
+by tests.
+
+```bash
+for p in 1 2 3; do python tests/real_data/acceptance_phase$p.py <data-dir>; done
+python tests/real_data/acceptance_new_sources.py <data-dir>
+```
+
+Details and provenance: [`tests/real_data/README.md`](tests/real_data/README.md).
+A recording of the run is
+[canlab-realdata-validation.mp4](docs/canlab-realdata-validation.mp4?raw=1)
+(4:42, narrated and subtitled).
+
+---
+
+## Testing
+
+```bash
+pip install -e ".[dev]"
+QT_QPA_PLATFORM=offscreen python -m pytest -q     # 448 passed
+ruff check canlab tests
+```
+
+The suite covers the log parsers against fixtures in the genuine formats; DBC
+encode and decode round trips through cantools (little-endian, big-endian,
+signed, extended IDs, multiplexing, value tables); the ARXML and Lua exports
+loaded back by cantools and by a real Lua runtime; the checksum algorithms
+against published check values; the ARM TX gate on every transmit path,
+including that disarming stops a running worker; the receive dispatcher; the
+frame store including its growth cost; ISO-TP and UDS wire format and NRC 0x78
+handling; settings, plugin opt-in and project round trips; the MCP tools over
+Streamable HTTP, through the stdio bridge in a subprocess, and inside the
+window with the official MCP client; adapter detection and a listen-only open
+on the virtual bus; the GVRET codec against byte strings built to its wire
+format, including chunk splitting and resynchronisation after noise; the
+sniffer's change detection and notch masking; the capture splitter; and an offscreen smoke test that builds the real window,
+cycles every tab, runs a live capture and asserts no thread is left running.
+
+The single skip is the MDF4 parser, which needs the optional `asammdf` extra.
+
+---
+
+## Performance
+
+Measured on the development machine (Linux, Python 3.12) with a capture of
+150,000 frames across 16 IDs held in memory. Treat these as the shape of the
+cost rather than a benchmark.
+
+| Operation | Cost |
+|---|---|
+| Build the full DataFrame from the ring buffer | 5 ms |
+| Fetch one ID's frames | 0.5 ms |
+| Refresh the frame table, 1,000 rows on screen | 72 ms |
+| Rebuild the plot signal tree, 16 IDs | 70 ms |
+
+Live capture is drained on a timer and the views are throttled, so the cost per
+batch stays flat as the capture grows. Memory is bounded by the ring buffer cap.
 
 ---
 
@@ -325,33 +573,44 @@ the bus while the toolbar read DISARMED.
 
 - **Not validated on many real vehicles.** Signal identification is heuristic.
   Verify every result before trusting it.
-- ARM TX covers the transmit features, not diagnostic reads. See
-  [Safety](#safety) for exactly which paths it gates.
-- **XCP and DoIP have no user interface.** They are library modules only.
-- **ARXML export is experimental** and is not validated against the AUTOSAR
-  schema.
-- **openpilot rlog import** needs pycapnp and the cereal schema. Without them it
-  raises rather than producing data.
-- **MDF4** import needs `asammdf`. **Vision OCR** needs `opencv-python`,
-  `rapidocr` and `onnxruntime`, which are heavy and optional.
-- CAN FD parsing and decoding is partial in places.
-- The prebuilt Linux binary on the releases page is built from `main` on
-  x86_64 and is not signed. There is no macOS or Windows binary; run from
-  source on those.
+- The analysis suggests candidates. A confidence figure is a match fraction over
+  the frames you loaded, not a statistical proof.
+- **openpilot rlog import** needs pycapnp plus the cereal schema. Without them
+  it raises rather than producing data.
+- **MDF4** import needs `asammdf` (`pip install canlab[mdf]`).
+- CAN FD is parsed, stored, decoded, injected and replayed end to end, and the
+  bit grid follows the message length. It has been tested on a virtual bus,
+  not on FD hardware.
+- The Gateway needs **two** hardware CAN channels.
+- The AI features send the selected ID's frame statistics to whichever provider
+  you configure (Anthropic, OpenAI, Groq or Ollama). Nothing is sent until you
+  enter a key and click Analyze, and a suggested signal is refused unless the
+  response actually states a bit position. The OpenAI provider is tested
+  against a stand-in for the SDK, not against the live service.
+- The MCP server in the window has no authentication unless you set a token,
+  and ChatGPT's connectors cannot send one. Keep it on loopback unless you
+  accept that.
+- Adapter detection was verified with the virtual backend and with stand-ins
+  for the USB, serial and sysfs probes; no physical adapter was attached during
+  development.
+- The GVRET backend is written to the protocol in SavvyCAN's source and tested
+  against byte streams built to that format, including a scripted board behind
+  the bus object. It has not been run against a physical GVRET board.
+- Plugins run with full application privileges once enabled. Only enable plugins
+  you trust.
+- The prebuilt Linux binary on the releases page is x86_64 and unsigned.
+  There is no macOS or Windows binary; run from source on those.
 
 ---
 
 ## System requirements
 
 - Linux, macOS or Windows with Python 3.11 or newer
-- 4 GB RAM, 8 GB recommended for the ML features
-- Optional: SocketCAN for live hardware, a comma.ai Panda, or another
-  python-can-supported adapter
-
-Live hardware is supported via [python-can](https://python-can.readthedocs.io)
-(`socketcan`, `pcan`, `kvaser`, `virtual`, `serial`, `slcan` and others) and the
-Panda backend. **Two hardware CAN channels are required for the gateway
-feature.**
+- 4 GB RAM, 8 GB recommended for the machine-learning features
+- Optional: SocketCAN for live hardware, a comma.ai Panda, or any
+  [python-can](https://python-can.readthedocs.io) adapter, added under
+  Settings > CAN ADAPTERS (`socketcan`, `slcan`, `gs_usb`, `pcan`, `kvaser`,
+  `vector` and the rest)
 
 ---
 
@@ -360,13 +619,23 @@ feature.**
 The calibration refinements in `core/calibrate_refine.py`, sentinel masking and
 scale snapping, are adapted from CSS Electronics'
 [CAN bus reverse engineering skills](https://github.com/CSS-Electronics/can-bus-reverse-engineering-skills)
-(MIT, © 2026 CSS Electronics).
+(MIT). The OEM checksum algorithms in `core/checksums.py` follow
+[commaai/opendbc](https://github.com/commaai/opendbc) (MIT).
+
+The SNIFFER tab and its notch, the capture splitter and the GVRET protocol
+follow [SavvyCAN](https://github.com/collin80/SavvyCAN) (MIT), whose sniffer
+window and Bisector are the originals and whose source documents the GVRET
+wire format. The real-data test capture is from that project's examples.
+
+Built on [python-can](https://python-can.readthedocs.io),
+[cantools](https://github.com/cantools/cantools), PyQt6, pandas, NumPy and
+pyqtgraph.
 
 ---
 
 ## License
 
-MIT License. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
 
 **Author:** Sherin Joseph Roy
 **Repository:** https://github.com/Sherin-SEF-AI/CanLab
