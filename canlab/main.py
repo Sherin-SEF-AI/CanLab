@@ -52,6 +52,12 @@ def _show_safety_disclaimer(app: QApplication) -> None:
         settings.setValue("disclaimer_accepted", True)
 
 
+def _app_icon():
+    """The CanLab mark, for the window, the taskbar and the dock."""
+    from PyQt6.QtGui import QIcon
+    return QIcon(os.path.join(os.path.dirname(os.path.abspath(__file__)), "canlab.png"))
+
+
 def main():
     configure_logging()
     install_excepthook()
@@ -62,6 +68,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("CanLab")
     app.setOrganizationName("CanLab")
+    app.setWindowIcon(_app_icon())
     app.setStyleSheet(QSS)
     app.setFont(mono_font())
     install_error_dialog(app)

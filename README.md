@@ -1,10 +1,14 @@
+<p align="center">
+  <img src="docs/assets/logo.png" alt="CanLab" width="128" height="128">
+</p>
+
 # CanLab
 
 **A desktop workstation for reverse-engineering a CAN bus.**
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python)](https://www.python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green?style=flat-square)](https://pypi.org/project/PyQt6/)
-[![Tests](https://img.shields.io/badge/tests-382%20passing-brightgreen?style=flat-square)](#testing)
+[![Tests](https://img.shields.io/badge/tests-412%20passing-brightgreen?style=flat-square)](#testing)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
 Load a capture, work out which bytes carry what, write the signal definitions
@@ -13,7 +17,7 @@ read. It also speaks the diagnostic protocols (UDS, ISO-TP, J1939, OBD-II, XCP,
 DoIP), and, for isolated bench use only, can inject, replay, fuzz and bridge.
 
 > **Status:** beta. Single-author project, actively developed. It runs, and the
-> behaviour described here is covered by an automated suite of 382 tests (see
+> behaviour described here is covered by an automated suite of 412 tests (see
 > [Testing](#testing)). But the analysis methods are heuristics that suggest
 > candidates rather than identify signals, some features need optional
 > dependencies, and it has not been validated across a wide range of real
@@ -53,6 +57,17 @@ DoIP), and, for isolated bench use only, can inject, replay, fuzz and bridge.
 >
 > The UDS service scan probes read-only services unless you tick "Include
 > destructive services" and confirm.
+
+---
+
+## Documentation
+
+Full documentation, with the walkthrough videos playing in the page:
+**[sherin-sef-ai.github.io/CanLab](https://sherin-sef-ai.github.io/CanLab/)**
+
+Installation, the reverse-engineering workflow end to end, every tab, how the
+analysis actually works, the diagnostics protocols, the export formats, the
+integrations, and the safety model.
 
 ---
 
