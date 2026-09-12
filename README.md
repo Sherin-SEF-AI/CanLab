@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo.png" alt="CanLab" width="128" height="128">
+</p>
+
 # CanLab
 
 **A desktop (PyQt6) tool for reverse-engineering CAN bus data.**

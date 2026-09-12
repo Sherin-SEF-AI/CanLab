@@ -90,13 +90,17 @@ def page(filename: str, title: str, lede: str, body: str) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title} · CanLab</title>
 <meta name="description" content="{lede}">
+<link rel="icon" href="assets/favicon.ico" sizes="16x16 24x24 32x32 48x48 64x64">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
 <link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <header class="masthead">
   <div class="masthead-inner">
-    <a class="brand" href="index.html">CanLab<span>/docs</span></a>
+    <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">CanLab<span>/docs</span></a>
     <nav aria-label="Sections">{nav}</nav>
   </div>
 </header>

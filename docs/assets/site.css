@@ -70,6 +70,8 @@ body {
   font-family: var(--mono); font-weight: 700; font-size: 1.05rem;
   color: var(--green); text-decoration: none; letter-spacing: .04em;
 }
+.brand { display: inline-flex; align-items: center; gap: .55rem; }
+.brand img { border-radius: 6px; display: block; }
 .brand span { color: var(--dim); font-weight: 400; }
 .masthead nav { display: flex; gap: .1rem; flex-wrap: wrap; margin-left: auto; }
 .masthead nav a {
