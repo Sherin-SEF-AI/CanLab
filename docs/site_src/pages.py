@@ -1074,9 +1074,34 @@ def register(app):
    features, MCP to connect an assistant, and PLUGINS to approve anything you
    have installed. Everything persists across restarts.</p>
 
+{h2("Validated against real captures")}
+<p>Separately from the unit suite, the whole application is run end to end over
+   real vehicle recordings, because synthetic data agrees with whatever the
+   code assumes. Two corpora, ninety checks.</p>
+{table(["Corpus", "What it is", "Checks"], [
+    ["SavvyCAN examples", "12,974 frames, 180 IDs, 11-bit, one bus", "36"],
+    ["CANedge recordings and python-can format files",
+     "2 to 154,896 frames, 29-bit J1939, dual-bus, native MDF4, CAN FD and "
+     "error frames", "54"],
+])}
+<p>The second corpus is other people's hardware output, none of it produced
+   here: five CANedge logger recordings in native MDF4 from CSS Electronics,
+   including a 145,000-frame J1939 log that is 29-bit end to end and a
+   23-minute two-channel recording, plus Vector BLF and ASC written by
+   python-can's own writers covering CAN FD, 64-byte FD, error frames and a
+   comma-decimal locale. One real log is then written out in all five formats
+   and read back by every parser, which all have to agree about the same
+   traffic.</p>
+<p>It found two defects the older corpus could not reach: the openpilot DBC
+   exporter wrote a bare 29-bit frame id, so every J1939 capture exported a
+   file cantools refuses, and the sniffer aged a loaded capture against
+   wall-clock time so every row expired the moment a file opened. Both are
+   fixed and pinned by tests. A narrated recording of the run is in the
+   repository as <code>docs/canlab-realdata-validation.mp4</code>.</p>
+
 {h2("Testing")}
 <p>The suite runs headless:</p>
-<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 441 passed</code></pre>
+<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 448 passed</code></pre>
 <p>Tests that need an optional dependency skip cleanly when it is absent: the
    MDF4 importer without <code>asammdf</code>, the transport tests without the
    MCP SDK, the Lua dissector without a Lua runtime.</p>

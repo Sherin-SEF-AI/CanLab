@@ -82,6 +82,64 @@ phase 3: 11/11 passed
   ECU answers OBD-II and UDS over ISO-TP
 ```
 
+## A second corpus: other people's hardware
+
+The run above uses one capture, all 11-bit, one bus, re-containered by this
+project into the binary formats. That cannot see a bug in any extended-ID
+path, any multi-bus path, or in the MDF4 reader, because those were only ever
+given files this repository wrote itself.
+
+`acceptance_new_sources.py` uses real device recordings instead, none of them
+produced here:
+
+| File | Frames | IDs | Span | Notes |
+|---|---|---|---|---|
+| `canedge_a.MF4` | 2,010 | 2 | 299 s | slow OBD/GPS log |
+| `canedge_b.MF4` | 5,588 | 12 | 64 s | two channels |
+| `canedge_c.MF4` | 9,600 | 50 | 60 s | J1939, every frame 29-bit |
+| `canedge_big.MF4` | 145,534 | 142 | 196 s | J1939, every frame 29-bit |
+| `canedge_nissan.MF4` | 154,896 | 16 | 1,369 s | 23 minutes, two channels |
+
+Those are CANedge logger recordings in native MDF4, from
+[CSS-Electronics/api-examples](https://github.com/CSS-Electronics/api-examples)
+and
+[canedge-influxdb-writer](https://github.com/CSS-Electronics/canedge-influxdb-writer)
+(MIT). Alongside them, Vector BLF and ASC written by
+[python-can](https://github.com/hardbyte/python-can/tree/develop/test/data)'s
+own writers cover CAN FD, 64-byte FD, error frames, extended error frames,
+remote frames and a comma-decimal locale, and a multi-bus ASC comes from
+[mdf4-converters](https://github.com/CSS-Electronics/mdf4-converters).
+
+```bash
+python tests/real_data/acceptance_new_sources.py <data-dir>
+```
+
+Then the real J1939 log goes through every writer the application has and is
+read back by every parser, so all five formats have to agree about the same
+traffic with 29-bit IDs. Nothing transmits: no bus is opened at all.
+
+### What it found
+
+Two real defects that the old corpus could not reach.
+
+- The **openpilot DBC exporter** wrote the bare frame id for a 29-bit
+  message. A DBC needs `id | 0x80000000`, so every J1939 capture exported an
+  unloadable file. The other four exporters were correct. Pinned by
+  `tests/test_export_extended_ids.py`, which also gave the openpilot and
+  CANdb++ writers their first unit coverage.
+- The **sniffer** aged a loaded capture against wall-clock time, so every row
+  expired the instant a file was opened. A file has no "now"; the newest frame
+  is the present.
+
+```
+54/54 passed
+  5 real MDF4 recordings, 2 to 154,896 frames, 29-bit and dual-bus
+  14 native BLF/ASC files including 64-byte FD and error frames
+  9,600 real 29-bit frames identical across csv, blf, asc, log and pcap
+  every detector, every exporter, the sniffer, the splitter, the MCP tools
+  and the GVRET codec, over data none of them had seen
+```
+
 ## What this does not cover
 
 No real hardware is involved, so none of the following is verified here: a real

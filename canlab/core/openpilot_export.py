@@ -23,16 +23,20 @@ def to_opendbc_string(signal_defs: list, msg_meta: Optional[dict] = None) -> str
     if msg_meta is None:
         msg_meta = {}
 
-    # Group signals by message
+    # Group signals by message. The key is the DBC frame id, which carries
+    # 0x80000000 for a 29-bit message: without it cantools and opendbc both
+    # refuse the file, because a bare 0x9F11202 is not a valid standard id.
+    # Every BO_, CM_ and VAL_ line has to use the same number.
+    from canlab.core.dbc_manager import dbc_frame_id, frame_id_int
     messages: dict[int, dict] = {}
     for sig in signal_defs:
         try:
-            mid = int(sig.get("message_id", "0"), 16)
+            mid = dbc_frame_id(sig)
         except (ValueError, TypeError):
             mid = 0
         if mid not in messages:
             messages[mid] = {
-                "name":    sig.get("message_name", f"MSG_{mid:03X}"),
+                "name":    sig.get("message_name", f"MSG_{frame_id_int(sig):03X}"),
                 "signals": [],
                 "length":  int(sig.get("msg_length", 8)),
             }

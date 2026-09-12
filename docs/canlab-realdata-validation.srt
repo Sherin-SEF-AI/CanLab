@@ -1,0 +1,299 @@
+1
+00:00:00,000 --> 00:00:02,234
+This is not the bundled sample.
+
+2
+00:00:02,234 --> 00:00:08,719
+It is a recording from a CANedge logger, in native MDF four,
+published by CSS Electronics.
+
+3
+00:00:08,719 --> 00:00:13,763
+Nine thousand six hundred frames across fifty arbitration
+identifiers,
+
+4
+00:00:13,763 --> 00:00:18,231
+and every single one is a twenty-nine bit extended identifier,
+
+5
+00:00:18,231 --> 00:00:22,555
+because this is a J1939 vehicle rather than a passenger car.
+
+6
+00:00:22,555 --> 00:00:28,824
+Until now the MDF four reader had only ever been given files
+this project wrote itself.
+
+7
+00:00:28,824 --> 00:00:34,278
+The sniffer collapses the bus to one row per message instead
+of one row per frame.
+
+8
+00:00:34,278 --> 00:00:39,998
+A byte turns green when it rises and red when it falls, and
+fades back after a second.
+
+9
+00:00:39,998 --> 00:00:45,984
+Bytes that have never moved stay dim, so what is alive on this
+bus is visible at a glance.
+
+10
+00:00:45,984 --> 00:00:48,381
+Notch is the reason to use this view.
+
+11
+00:00:48,381 --> 00:00:53,369
+It records every bit that is currently in motion and ignores
+it from then on.
+
+12
+00:00:53,369 --> 00:00:59,524
+On this log that masks four hundred and sixty four bits of
+counters and checksums in one press,
+
+13
+00:00:59,524 --> 00:01:01,273
+and the display goes quiet.
+
+14
+00:01:01,273 --> 00:01:05,808
+From that point the only thing that lights up is something you
+caused.
+
+15
+00:01:05,808 --> 00:01:11,175
+The offline detectors run over the real log with no prior
+knowledge of the vehicle:
+
+16
+00:01:11,175 --> 00:01:16,930
+rolling counters, checksum bytes and the algorithm that
+reproduces them, bit level flags,
+
+17
+00:01:16,930 --> 00:01:21,974
+enumerated bytes, field boundaries from bit entropy, and
+multiplexed messages.
+
+18
+00:01:21,974 --> 00:01:27,082
+On this capture that is twenty four counters, six flags,
+fourteen enumerations,
+
+19
+00:01:27,082 --> 00:01:30,768
+forty two field boundaries and four multiplexed messages.
+
+20
+00:01:30,768 --> 00:01:33,298
+The same sweep goes below byte level:
+
+21
+00:01:33,298 --> 00:01:36,306
+single bit switches and small packed fields,
+
+22
+00:01:36,306 --> 00:01:40,613
+and bytes that behave as enumerations rather than
+measurements.
+
+23
+00:01:40,613 --> 00:01:45,262
+On a real J1939 log that is six flags and fourteen enumerated
+bytes,
+
+24
+00:01:45,262 --> 00:01:47,928
+each with the states actually observed.
+
+25
+00:01:47,928 --> 00:01:51,806
+Entropy per bit finds where one field ends and the next
+begins,
+
+26
+00:01:51,806 --> 00:01:54,638
+without being told anything about the vehicle.
+
+27
+00:01:54,638 --> 00:01:57,901
+Forty two candidate field boundaries on this capture,
+
+28
+00:01:57,901 --> 00:02:03,072
+each with a confidence that is a match fraction over the
+frames loaded, not a proof.
+
+29
+00:02:03,072 --> 00:02:09,355
+The signals view gives one row per message with its rate,
+payload entropy and a suspected type.
+
+30
+00:02:09,355 --> 00:02:14,844
+On a J1939 bus the identifiers carry a parameter group number
+and a source address,
+
+31
+00:02:14,844 --> 00:02:20,400
+so the shape of the traffic is already meaningful before a
+single signal is defined.
+
+32
+00:02:20,400 --> 00:02:25,905
+A signal defined on the busiest real message decodes real
+frames through cantools,
+
+33
+00:02:25,905 --> 00:02:29,597
+with the bit grid showing exactly which bits it claims.
+
+34
+00:02:29,597 --> 00:02:32,417
+Because the identifier is twenty-nine bit,
+
+35
+00:02:32,417 --> 00:02:37,183
+the exported file has to set the extended flag in its frame
+identifier.
+
+36
+00:02:37,183 --> 00:02:40,607
+Exporting this capture is what found a genuine bug:
+
+37
+00:02:40,607 --> 00:02:45,575
+the openpilot writer was emitting the bare number, which
+cantools refuses.
+
+38
+00:02:45,575 --> 00:02:49,536
+Every writer is now checked against an extended identifier.
+
+39
+00:02:49,536 --> 00:02:55,301
+Plotted against time, the decoded signal is what confirms or
+refutes the definition.
+
+40
+00:02:55,301 --> 00:02:57,704
+A physical quantity moves smoothly;
+
+41
+00:02:57,704 --> 00:03:00,518
+a sawtooth means the byte order is wrong.
+
+42
+00:03:00,518 --> 00:03:04,224
+This is the step that turns a candidate into a signal.
+
+43
+00:03:04,224 --> 00:03:10,300
+The same real log is written out as SavvyCAN C S V, Vector B L
+F, Vector A S C,
+
+44
+00:03:10,300 --> 00:03:15,069
+candump and socket C A N pcap, then read back by every parser.
+
+45
+00:03:15,069 --> 00:03:22,299
+All five have to return the same nine thousand six hundred
+frames, the same fifty identifiers,
+
+46
+00:03:22,299 --> 00:03:26,145
+the same payload bytes and the same extended flag.
+
+47
+00:03:26,145 --> 00:03:26,760
+They do.
+
+48
+00:03:26,760 --> 00:03:28,312
+A second real recording:
+
+49
+00:03:28,312 --> 00:03:34,198
+twenty-three minutes from a two channel logger, one hundred
+and fifty five thousand frames.
+
+50
+00:03:34,198 --> 00:03:37,626
+Both channels keep their bus tags through the reader,
+
+51
+00:03:37,626 --> 00:03:40,537
+which the single bus sample could never test.
+
+52
+00:03:40,537 --> 00:03:45,000
+The sniffer folds the whole thing into sixteen rows in half a
+second.
+
+53
+00:03:45,000 --> 00:03:46,974
+The largest of the real logs:
+
+54
+00:03:46,974 --> 00:03:52,557
+one hundred and forty five thousand frames, one hundred and
+forty two identifiers,
+
+55
+00:03:52,557 --> 00:03:54,259
+extended from end to end.
+
+56
+00:03:54,259 --> 00:04:00,455
+It loads, it parses, and every arbitration identifier above
+seven hundred and ninety one is
+
+57
+00:04:00,455 --> 00:04:04,608
+correctly reported as extended rather than quietly truncated.
+
+58
+00:04:04,608 --> 00:04:08,004
+Through all of this the transmit gate stayed shut.
+
+59
+00:04:08,004 --> 00:04:14,387
+No bus was opened, nothing was sent, and none of the twenty
+five tools the assistant interface
+
+60
+00:04:14,387 --> 00:04:16,764
+exposes is able to transmit at all.
+
+61
+00:04:16,764 --> 00:04:20,364
+Ninety checks over real data, fifty four of them new,
+
+62
+00:04:20,364 --> 00:04:23,352
+and four hundred and forty eight unit tests.
+
+63
+00:04:23,352 --> 00:04:25,389
+Two real bugs found and fixed:
+
+64
+00:04:25,389 --> 00:04:28,445
+the openpilot writer on extended identifiers,
+
+65
+00:04:28,445 --> 00:04:32,520
+and the sniffer ageing a loaded log against wall clock time.
+
+66
+00:04:32,520 --> 00:04:36,130
+Synthetic data agrees with whatever the code assumes.
+
+67
+00:04:36,130 --> 00:04:42,192
+Real data from somebody else's hardware does not, which is the
+whole point of running it.

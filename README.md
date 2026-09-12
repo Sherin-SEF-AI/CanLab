@@ -8,7 +8,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python)](https://www.python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green?style=flat-square)](https://pypi.org/project/PyQt6/)
-[![Tests](https://img.shields.io/badge/tests-441%20passing-brightgreen?style=flat-square)](#testing)
+[![Tests](https://img.shields.io/badge/tests-448%20passing-brightgreen?style=flat-square)](#testing)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
 Load a capture, work out which bytes carry what, write the signal definitions
@@ -17,7 +17,7 @@ read. It also speaks the diagnostic protocols (UDS, ISO-TP, J1939, OBD-II, XCP,
 DoIP), and, for isolated bench use only, can inject, replay, fuzz and bridge.
 
 > **Status:** beta. Single-author project, actively developed. It runs, and the
-> behaviour described here is covered by an automated suite of 441 tests (see
+> behaviour described here is covered by an automated suite of 448 tests (see
 > [Testing](#testing)). But the analysis methods are heuristics that suggest
 > candidates rather than identify signals, some features need optional
 > dependencies, and it has not been validated across a wide range of real
@@ -29,7 +29,7 @@ DoIP), and, for isolated bench use only, can inject, replay, fuzz and bridge.
 [Analysis](#analysis-offline-no-api-key) ·
 [Vehicle profiles](#vehicle-profiles) · [Diagnostics](#diagnostics) ·
 [DBC](#dbc-ecosystem) · [Integrations](#integrations) ·
-[Architecture](#how-it-fits-together) · [Testing](#testing) ·
+[Architecture](#how-it-fits-together) · [Real data](#validated-against-real-captures) · [Testing](#testing) ·
 [Limitations](#limitations)
 
 ---
@@ -483,11 +483,52 @@ incrementally maintained statistics rather than the frames themselves.
 
 ---
 
+## Validated against real captures
+
+The unit suite uses fixtures and a generated sample. Separately, the whole
+application is run end to end over real vehicle recordings, because synthetic
+data agrees with whatever the code assumes.
+
+Two corpora, 90 checks:
+
+| Corpus | What it is | Checks |
+|---|---|---|
+| SavvyCAN examples | 12,974 frames, 180 IDs, 11-bit, one bus | 36 |
+| CANedge recordings and python-can format files | 2 to 154,896 frames, 29-bit J1939, dual-bus, native MDF4, CAN FD and error frames | 54 |
+
+The second corpus is other people's hardware output, none of it produced here:
+five CANedge logger recordings in native MDF4 from
+[CSS Electronics](https://github.com/CSS-Electronics/api-examples) (MIT),
+including a 145,000-frame J1939 log that is 29-bit end to end and a 23-minute
+two-channel recording, plus Vector BLF and ASC written by
+[python-can](https://github.com/hardbyte/python-can)'s own writers covering
+CAN FD, 64-byte FD, error frames and a comma-decimal locale. One real log is
+then written out in all five formats and read back by every parser, which all
+have to agree about the same traffic.
+
+It found two defects the older corpus could not reach: the openpilot DBC
+exporter wrote a bare 29-bit frame id, so every J1939 capture exported a file
+cantools refuses, and the sniffer aged a loaded capture against wall-clock
+time so every row expired the moment a file opened. Both are fixed and pinned
+by tests.
+
+```bash
+for p in 1 2 3; do python tests/real_data/acceptance_phase$p.py <data-dir>; done
+python tests/real_data/acceptance_new_sources.py <data-dir>
+```
+
+Details and provenance: [`tests/real_data/README.md`](tests/real_data/README.md).
+A recording of the run is
+[canlab-realdata-validation.mp4](docs/canlab-realdata-validation.mp4?raw=1)
+(4:42, narrated and subtitled).
+
+---
+
 ## Testing
 
 ```bash
 pip install -e ".[dev]"
-QT_QPA_PLATFORM=offscreen python -m pytest -q     # 441 passed
+QT_QPA_PLATFORM=offscreen python -m pytest -q     # 448 passed
 ruff check canlab tests
 ```
 
