@@ -302,14 +302,12 @@ print("\n=== REMAINING FEATURES ===")
 
 
 def ai_without_key():
-    from canlab.tabs.ai_engine_tab import AIEngineTab
     tab = window.ai_tab if hasattr(window, "ai_tab") else None
     if tab is None:
         return False, "AI tab not found"
     tab._api_key = ""
     state.select_id(busiest)
     pump(0.3)
-    before = tab.response_view.toPlainText() if hasattr(tab, "response_view") else ""
     tab._run_analysis()
     pump(0.6)
     return True, "analysis without a key returns without sending or crashing"
@@ -319,7 +317,6 @@ check("AI engine refuses to send without a key", ai_without_key)
 
 
 def plugins():
-    import hashlib
     import tempfile
     from pathlib import Path
 
