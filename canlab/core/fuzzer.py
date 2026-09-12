@@ -58,6 +58,7 @@ class FuzzWorker(QThread):
                     arbitration_id=self._target_id,
                     data=data,
                     is_extended_id=False,
+                    is_fd=len(data) > 8,
                 )
                 try:
                     safety.gated_send(self._bus, msg)

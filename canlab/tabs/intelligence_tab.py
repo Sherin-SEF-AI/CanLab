@@ -3,12 +3,12 @@ from PyQt6.QtWidgets import (
     QScrollArea, QFrame,
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QFileDialog,
-    QTextEdit, QMessageBox,
+    QTextEdit, QMessageBox, QLineEdit, QListWidget, QDoubleSpinBox,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
 
-from canlab.theme import COLORS, mono_font
+from canlab.theme import COLORS, mono_font, desc_label
 from canlab.core.state import get_state
 
 
@@ -109,6 +109,59 @@ class IntelligenceTab(QWidget):
         coa_lay.addWidget(self.lbl_coa_status)
         ll.addWidget(coa_grp)
 
+        # Annotated capture: mark when something happened, rank what tracked it.
+        ann_grp = QGroupBox("ANNOTATED CAPTURE")
+        ann_lay = QVBoxLayout(ann_grp)
+        ann_lay.addWidget(desc_label(
+            "Mark when you did something (press the brake, flick the "
+            "indicator) and every byte and bit on the bus is ranked by how "
+            "well it followed your marks."))
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Label:", font=mono_font(8)))
+        self.ann_label = QLineEdit("brake")
+        self.ann_label.setFont(mono_font(8))
+        row.addWidget(self.ann_label, 1)
+        ann_lay.addLayout(row)
+        self.btn_ann_toggle = QPushButton("Start")
+        self.btn_ann_toggle.setObjectName("btn_green")
+        self.btn_ann_toggle.setCheckable(True)
+        self.btn_ann_toggle.toggled.connect(self._ann_toggle)
+        ann_lay.addWidget(self.btn_ann_toggle)
+        manual = QHBoxLayout()
+        self.ann_start = QDoubleSpinBox()
+        self.ann_end = QDoubleSpinBox()
+        for sp in (self.ann_start, self.ann_end):
+            sp.setRange(0, 1e9)
+            sp.setDecimals(2)
+            sp.setSuffix(" s")
+            sp.setFont(mono_font(8))
+        self.btn_ann_add = QPushButton("Add range")
+        self.btn_ann_add.clicked.connect(self._ann_add_manual)
+        manual.addWidget(self.ann_start)
+        manual.addWidget(self.ann_end)
+        manual.addWidget(self.btn_ann_add)
+        ann_lay.addLayout(manual)
+        self.ann_list = QListWidget()
+        self.ann_list.setFont(mono_font(8))
+        self.ann_list.setMaximumHeight(110)
+        ann_lay.addWidget(self.ann_list)
+        btns = QHBoxLayout()
+        self.btn_ann_rank = QPushButton("Rank candidates")
+        self.btn_ann_rank.setObjectName("btn_green")
+        self.btn_ann_rank.clicked.connect(self._ann_rank)
+        self.btn_ann_remove = QPushButton("Remove")
+        self.btn_ann_remove.clicked.connect(self._ann_remove)
+        self.btn_ann_clear = QPushButton("Clear")
+        self.btn_ann_clear.clicked.connect(self._ann_clear)
+        for b in (self.btn_ann_rank, self.btn_ann_remove, self.btn_ann_clear):
+            btns.addWidget(b)
+        ann_lay.addLayout(btns)
+        self.lbl_ann_status = QLabel("No marks yet.")
+        self.lbl_ann_status.setFont(mono_font(8))
+        self.lbl_ann_status.setObjectName("label_dim")
+        ann_lay.addWidget(self.lbl_ann_status)
+        ll.addWidget(ann_grp)
+
         # J1939 Decoder
         j1939_grp = QGroupBox("J1939 PGN DECODER")
         j1939_lay = QVBoxLayout(j1939_grp)
@@ -123,7 +176,6 @@ class IntelligenceTab(QWidget):
         # Value Reverse Lookup
         vr_grp = QGroupBox("VALUE REVERSE LOOKUP")
         vr_lay = QVBoxLayout(vr_grp)
-        from PyQt6.QtWidgets import QDoubleSpinBox
         vr_row = QHBoxLayout()
         vr_row.addWidget(QLabel("Target:", font=mono_font(8)))
         self.vr_target = QDoubleSpinBox()
@@ -241,6 +293,20 @@ class IntelligenceTab(QWidget):
         self.vr_table.setMaximumHeight(160)
         rl.addWidget(QLabel("VALUE REVERSE LOOKUP RESULTS", font=mono_font(8)))
         rl.addWidget(self.vr_table)
+
+        self.ann_table = QTableWidget(0, 6)
+        self.ann_table.setHorizontalHeaderLabels(
+            ["Label", "Location", "r", "On", "Off", "What it did"])
+        self.ann_table.setFont(mono_font())
+        self.ann_table.verticalHeader().setVisible(False)
+        self.ann_table.verticalHeader().setDefaultSectionSize(20)
+        self.ann_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.ann_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.ann_table.setToolTip("Double-click a row to add it to the DBC as a signal.")
+        self.ann_table.doubleClicked.connect(self._ann_add_signal)
+        rl.addWidget(QLabel("ANNOTATION CANDIDATES  (double-click to add to DBC)",
+                            font=mono_font(8)))
+        rl.addWidget(self.ann_table)
 
         splitter.setSizes([240, 760])
         outer.addWidget(splitter)
@@ -420,6 +486,93 @@ class IntelligenceTab(QWidget):
         self.delta_table.setRowCount(0)
         self.lbl_coa_status.setText("—")
         self.lbl_coa_status.setStyleSheet("")
+
+    # ── Annotated capture ─────────────────────────────────────────────────
+
+    def _ann_now(self) -> float:
+        """The clock the frames use: wall time while live, capture time when
+        working from a file (the newest frame, so a mark lands at the end)."""
+        import time
+        if self._state.is_connected:
+            return time.time()
+        df = self._state.frames_df
+        return float(df["Timestamp"].max()) if len(df) else 0.0
+
+    def _ann_toggle(self, on: bool):
+        label = self.ann_label.text().strip() or "action"
+        ann = self._state.annotations
+        if on:
+            ann.begin(label, self._ann_now())
+            self.btn_ann_toggle.setText(f"Stop '{label}'")
+            self.lbl_ann_status.setText(f"Marking '{label}'…")
+        else:
+            ann.end(label, self._ann_now())
+            self.btn_ann_toggle.setText("Start")
+            self._ann_refresh_list()
+
+    def _ann_add_manual(self):
+        label = self.ann_label.text().strip() or "action"
+        a, b = self.ann_start.value(), self.ann_end.value()
+        if b <= a:
+            self.lbl_ann_status.setText("End must be after start.")
+            return
+        self._state.annotations.add(label, a, b)
+        self._ann_refresh_list()
+
+    def _ann_refresh_list(self):
+        self.ann_list.clear()
+        for a in self._state.annotations.items:
+            end = f"{a.end:.2f}" if a.closed else "open"
+            self.ann_list.addItem(f"{a.label:<12} {a.start:.2f} → {end}")
+        n = len(self._state.annotations.items)
+        self.lbl_ann_status.setText(f"{n} mark(s).")
+
+    def _ann_remove(self):
+        row = self.ann_list.currentRow()
+        if row >= 0:
+            self._state.annotations.remove(row)
+            self._ann_refresh_list()
+
+    def _ann_clear(self):
+        self._state.annotations.clear()
+        self.ann_table.setRowCount(0)
+        self._ann_refresh_list()
+
+    def _ann_rank(self):
+        from canlab.core.annotations import rank_candidates
+        df = self._state.frames_df
+        if df.empty:
+            QMessageBox.information(self, "No Data", "Load or capture frames first.")
+            return
+        ann = self._state.annotations
+        if not any(a.closed for a in ann.items):
+            QMessageBox.information(self, "No marks",
+                                    "Add at least one closed mark first.")
+            return
+        cands = rank_candidates(df, ann)
+        self._ann_candidates = cands
+        self.ann_table.setRowCount(len(cands))
+        for r, c in enumerate(cands):
+            cells = [c.label, c.location, f"{c.r:+.2f}", str(c.frames_on),
+                     str(c.frames_off), c.describe().split(": ", 1)[-1]]
+            for col, txt in enumerate(cells):
+                item = QTableWidgetItem(txt)
+                item.setFont(mono_font())
+                if col == 2:
+                    strong = c.strength >= 0.8
+                    item.setForeground(QBrush(QColor(
+                        COLORS["green"] if strong else COLORS["amber"])))
+                self.ann_table.setItem(r, col, item)
+        self.lbl_ann_status.setText(
+            f"{len(cands)} candidate(s) for {len(ann.labels())} label(s).")
+
+    def _ann_add_signal(self, index):
+        from canlab.core.annotations import candidate_to_signal
+        cands = getattr(self, "_ann_candidates", [])
+        row = index.row()
+        if 0 <= row < len(cands):
+            self._state.add_dbc_signal(candidate_to_signal(cands[row]))
+            self.lbl_ann_status.setText(f"Added {cands[row].location} to the DBC.")
 
     # ── J1939 ─────────────────────────────────────────────────────────────────
 

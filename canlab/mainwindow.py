@@ -342,6 +342,16 @@ class MainWindow(QMainWindow):
 
         view_menu.addSeparator()
         for text, sequence, handler in [
+            ("Undo Signal Edit", QKeySequence.StandardKey.Undo, self._undo_dbc),
+            ("Redo Signal Edit", QKeySequence.StandardKey.Redo, self._redo_dbc),
+        ]:
+            action = QAction(text, self)
+            action.setShortcut(QKeySequence(sequence))
+            action.triggered.connect(handler)
+            view_menu.addAction(action)
+
+        view_menu.addSeparator()
+        for text, sequence, handler in [
             ("Connect / Disconnect Bus", "Ctrl+D", self._toggle_connection),
             ("Arm / Disarm TX",          "Ctrl+E", lambda: self._act_arm.trigger()),
         ]:
@@ -349,6 +359,18 @@ class MainWindow(QMainWindow):
             action.setShortcut(QKeySequence(sequence))
             action.triggered.connect(handler)
             view_menu.addAction(action)
+
+    def _undo_dbc(self) -> None:
+        if self._state.undo_dbc():
+            self.statusBar().showMessage("Undid the last signal edit.", 2500)
+        else:
+            self.statusBar().showMessage("Nothing to undo.", 2500)
+
+    def _redo_dbc(self) -> None:
+        if self._state.redo_dbc():
+            self.statusBar().showMessage("Redid the signal edit.", 2500)
+        else:
+            self.statusBar().showMessage("Nothing to redo.", 2500)
 
     def _step_tab(self, delta: int) -> None:
         count = self.tabs.count()
@@ -704,11 +726,54 @@ class MainWindow(QMainWindow):
                 "No matches (index empty or no overlap). Requires network access "
                 "to fetch the opendbc library on first run.")
             return
-        lines = [f"{m['score']*100:5.1f}%  {m['dbc']}   "
-                 f"({len(m['matched_ids'])} IDs, {m['message_count']} msgs)"
-                 for m in matches]
-        QMessageBox.information(self, "opendbc matches (by ID overlap)",
-                                "\n".join(lines))
+        from canlab.ui.opendbc_dialog import OpendbcMatchDialog
+        dlg = OpendbcMatchDialog(matches, self)
+        if dlg.exec() and dlg.chosen:
+            self._apply_opendbc(dlg.chosen, only_seen=dlg.only_seen)
+
+    def _apply_opendbc(self, dbc_name: str, only_seen: bool = True) -> None:
+        """Load a matched opendbc database straight into the signal list.
+
+        The match already said this DBC explains the capture; making the user
+        go and find the file by hand was the missing step. Signals for messages
+        not on this bus are skipped by default, since an OEM database carries
+        hundreds of them and they would only clutter the builder.
+        """
+        from canlab.core.canid import normalize_id
+        from canlab.core.dbc_manager import load_dbc
+        from canlab.core.opendbc_matcher import CACHE_DIR
+        path = CACHE_DIR / dbc_name
+        if not path.exists():
+            QMessageBox.warning(self, "opendbc", f"{dbc_name} is not in the cache.")
+            return
+        try:
+            incoming = load_dbc(str(path))
+        except Exception as exc:
+            QMessageBox.critical(self, "opendbc", f"Could not read {dbc_name}:\n{exc}")
+            return
+        seen = {normalize_id(i) for i in self._state.frames_df["ID"].unique()} \
+            if only_seen and not self._state.frames_df.empty else None
+        have = {(normalize_id(s.get("message_id", "")), s.get("signal_name"))
+                for s in self._state.dbc_signals}
+        added, skipped = [], 0
+        for sig in incoming:
+            mid = normalize_id(sig.get("message_id", ""))
+            if seen is not None and mid not in seen:
+                skipped += 1
+                continue
+            if (mid, sig.get("signal_name")) in have:
+                continue
+            added.append(sig)
+        if not added:
+            QMessageBox.information(self, "opendbc",
+                                    "Nothing new to add from that database.")
+            return
+        self._state.replace_dbc_signals(list(self._state.dbc_signals) + added)
+        msgs = len({s["message_id"] for s in added})
+        self.statusBar().showMessage(
+            f"opendbc: applied {len(added)} signals across {msgs} messages from "
+            f"{dbc_name}" + (f" ({skipped} for messages not on this bus skipped)"
+                             if skipped else ""), 8000)
 
     def _export_timeseries(self):
         if self._state.frames_df.empty or not self._state.dbc_signals:

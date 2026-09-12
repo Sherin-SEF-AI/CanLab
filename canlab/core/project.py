@@ -21,6 +21,8 @@ def save_project(state, path: str):
         zf.writestr("memory.json",  json.dumps(state.ai_memory,   indent=2))
         zf.writestr("triggers.json",json.dumps(state.triggers,    indent=2))
         zf.writestr("notes.json",   json.dumps(getattr(state, "notes_by_signal", {}), indent=2))
+        ann = getattr(state, "annotations", None)
+        zf.writestr("annotations.json", ann.to_json() if ann is not None else "[]")
 
         meta = {
             "format_version": PROJECT_FORMAT_VERSION,
@@ -63,6 +65,9 @@ def load_project(state, path: str):
             state.triggers    = json.loads(zf.read("triggers.json"))
         if "notes.json" in names:
             state.notes_by_signal = json.loads(zf.read("notes.json"))
+        if "annotations.json" in names:
+            from canlab.core.annotations import AnnotationSet
+            state.annotations = AnnotationSet.from_json(zf.read("annotations.json").decode())
 
         if "meta.json" in names:
             # Older archives also carried repo_*/annotations/fingerprint keys

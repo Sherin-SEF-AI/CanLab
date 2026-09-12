@@ -66,6 +66,10 @@ class AppState(QObject):
         # ── New fields for 12-feature additions ───────────────────────────────
         self.canfd_enabled:     bool         = False
         self.notes_by_signal:   dict         = {}   # "{msg_id}/{sig_name}" -> str
+        # Marks on the capture timeline ("brake pressed", 12.4s to 14.1s),
+        # made live or against a loaded log, and ranked against every byte.
+        from canlab.core.annotations import AnnotationSet
+        self.annotations = AnnotationSet()
         self.fuzz_running:      bool         = False
         self.active_backend:    str          = "python-can"
         # Framing conventions for injection/export/AI hints; "generic" asserts
@@ -163,19 +167,80 @@ class AppState(QObject):
     def _on_armed_changed(self, armed: bool):
         self.tx_armed_changed.emit(bool(armed))
 
+    # ── DBC signal edits, with history ───────────────────────────────────
+    # Every mutation snapshots the list first. Undo restores the snapshot;
+    # redo re-applies what undo took back. Snapshots are whole-list copies,
+    # which is fine at the sizes a DBC reaches and makes correctness obvious.
+    DBC_HISTORY_LIMIT = 200
+
+    def _record_dbc(self) -> None:
+        import copy
+        hist = self.__dict__.setdefault("_dbc_history", [])
+        hist.append(copy.deepcopy(self.dbc_signals))
+        del hist[:-self.DBC_HISTORY_LIMIT]
+        self.__dict__["_dbc_future"] = []
+
+    def can_undo_dbc(self) -> bool:
+        return bool(self.__dict__.get("_dbc_history"))
+
+    def can_redo_dbc(self) -> bool:
+        return bool(self.__dict__.get("_dbc_future"))
+
+    def undo_dbc(self) -> bool:
+        import copy
+        hist = self.__dict__.get("_dbc_history", [])
+        if not hist:
+            return False
+        self.__dict__.setdefault("_dbc_future", []).append(
+            copy.deepcopy(self.dbc_signals))
+        self.dbc_signals = hist.pop()
+        self.dbc_updated.emit()
+        return True
+
+    def redo_dbc(self) -> bool:
+        import copy
+        fut = self.__dict__.get("_dbc_future", [])
+        if not fut:
+            return False
+        self.__dict__.setdefault("_dbc_history", []).append(
+            copy.deepcopy(self.dbc_signals))
+        self.dbc_signals = fut.pop()
+        self.dbc_updated.emit()
+        return True
+
     def add_dbc_signal(self, signal_def: dict):
+        self._record_dbc()
         self.dbc_signals.append(signal_def)
         self.dbc_updated.emit()
 
     def update_dbc_signal(self, index: int, signal_def: dict):
         if 0 <= index < len(self.dbc_signals):
+            self._record_dbc()
             self.dbc_signals[index] = signal_def
             self.dbc_updated.emit()
 
     def remove_dbc_signal(self, index: int):
         if 0 <= index < len(self.dbc_signals):
+            self._record_dbc()
             self.dbc_signals.pop(index)
             self.dbc_updated.emit()
+
+    def add_dbc_signals(self, signals: list) -> int:
+        """Append many as one undo step. An import of 300 signals must not
+        take 300 presses of undo to take back."""
+        signals = [s for s in signals if s]
+        if not signals:
+            return 0
+        self._record_dbc()
+        self.dbc_signals.extend(signals)
+        self.dbc_updated.emit()
+        return len(signals)
+
+    def replace_dbc_signals(self, signals: list) -> None:
+        """Bulk replace as one undo step: imports, auto-build, project load."""
+        self._record_dbc()
+        self.dbc_signals = list(signals)
+        self.dbc_updated.emit()
 
     def get_frames_for_id(self, hex_id: str, tail: int | None = None) -> pd.DataFrame:
         return self._store.frames_for_id(hex_id, tail=tail)

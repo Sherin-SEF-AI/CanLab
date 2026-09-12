@@ -54,6 +54,14 @@ class DBCBuilderTab(QWidget):
         left_lay.addWidget(self.sig_list)
 
         toolbar_btns = QHBoxLayout()
+        btn_undo = QPushButton("Undo")
+        btn_undo.setToolTip("Undo the last signal edit (Ctrl+Z)")
+        btn_undo.clicked.connect(self._undo)
+        btn_redo = QPushButton("Redo")
+        btn_redo.setToolTip("Redo (Ctrl+Shift+Z)")
+        btn_redo.clicked.connect(self._redo)
+        toolbar_btns.addWidget(btn_undo)
+        toolbar_btns.addWidget(btn_redo)
         btn_new = QPushButton("New")
         btn_new.clicked.connect(self._new_signal)
         btn_imp = QPushButton("Import")
@@ -286,6 +294,14 @@ class DBCBuilderTab(QWidget):
             "description":  self.f_desc.text(),
         }
 
+    def _undo(self):
+        self.status_label.setText("Undid the last signal edit."
+                                  if self._state.undo_dbc() else "Nothing to undo.")
+
+    def _redo(self):
+        self.status_label.setText("Redid the signal edit."
+                                  if self._state.redo_dbc() else "Nothing to redo.")
+
     def _new_signal(self):
         self._selected_idx = -1
         for w in [self.f_msg_id, self.f_msg_name, self.f_sig_name, self.f_unit,
@@ -383,8 +399,7 @@ class DBCBuilderTab(QWidget):
         if path:
             try:
                 sigs = load_dbc(path)
-                for sig in sigs:
-                    self._state.add_dbc_signal(sig)
+                self._state.add_dbc_signals(sigs)          # one undo step
                 self.status_label.setText(f"Imported {len(sigs)} signals")
                 self.status_label.setStyleSheet(f"color:{COLORS['green']}")
             except Exception as e:
@@ -424,11 +439,8 @@ class DBCBuilderTab(QWidget):
             return
         signals = build_from_analyzer(self._state)
         existing_ids = {s.get("message_id") for s in self._state.dbc_signals}
-        added = 0
-        for sig in signals:
-            if sig["message_id"] not in existing_ids:
-                self._state.add_dbc_signal(sig)
-                added += 1
+        fresh = [s for s in signals if s["message_id"] not in existing_ids]
+        added = self._state.add_dbc_signals(fresh)          # one undo step
         self.status_label.setText(f"Auto-built: added {added} signals")
         self.status_label.setStyleSheet(f"color:{COLORS['green']}")
 
@@ -436,6 +448,8 @@ class DBCBuilderTab(QWidget):
         return f"{sig.get('message_id','?')}/{sig.get('signal_name','?')}"
 
     def _update_bit_editor(self, sig: dict):
+        # An FD message is longer than eight bytes; the grid follows it.
+        self.bit_editor.set_rows(max(8, int(sig.get("msg_length") or 8)))
         mid = sig.get("message_id", "")
         frames = self._state.get_frames_for_id(mid)
         if not frames.empty:
@@ -517,8 +531,7 @@ class DBCBuilderTab(QWidget):
             if not signals:
                 QMessageBox.warning(self, "Empty", "No signals found in the file.")
                 return
-            for sig in signals:
-                self._state.add_dbc_signal(sig)
+            self._state.add_dbc_signals(signals)           # one undo step
             get_db(self._state)   # validate the merged set now, not on first decode
             self.status_label.setText(
                 f"Imported {len(signals)} signal(s) from CAN matrix."
@@ -540,8 +553,7 @@ class DBCBuilderTab(QWidget):
             if not signals:
                 QMessageBox.warning(self, "Empty", "No signals found in ARXML.")
                 return
-            for sig in signals:
-                self._state.add_dbc_signal(sig)
+            self._state.add_dbc_signals(signals)           # one undo step
             get_db(self._state)
             self.status_label.setText(f"Imported {len(signals)} signal(s) from ARXML.")
             self.status_label.setStyleSheet(f"color:{COLORS['green']}")

@@ -18,9 +18,9 @@ from canlab.core.bit_coords import grid_to_dbc, dbc_to_grid
 
 
 CELL  = 28    # px per bit cell
-ROWS  = 8
 COLS  = 8
-TOTAL = ROWS * COLS   # 64 bits
+DEFAULT_ROWS = 8      # classic CAN; an FD message can be up to 64 rows
+MAX_ROWS = 64
 
 
 class _Grid(QWidget):
@@ -34,13 +34,37 @@ class _Grid(QWidget):
         self._sel_end    = -1
         self._cells: set = set()       # committed selection, painted after a drag
         self._hover_bit  = -1
-        self._data_bytes = bytes(8)
-        self.setMinimumSize(COLS * CELL + 2, ROWS * CELL + 2)
-        self.setMaximumSize(COLS * CELL + 2, ROWS * CELL + 2)
+        self._rows = DEFAULT_ROWS
+        self._data_bytes = bytes(self._rows)
+        self._apply_size()
         self.setMouseTracking(True)
 
+    def _apply_size(self) -> None:
+        self.setMinimumSize(COLS * CELL + 2, self._rows * CELL + 2)
+        self.setMaximumSize(COLS * CELL + 2, self._rows * CELL + 2)
+
+    @property
+    def rows(self) -> int:
+        return self._rows
+
+    def set_rows(self, rows: int) -> None:
+        """Size the grid to the message: 8 bytes for classic CAN, up to 64."""
+        rows = max(1, min(MAX_ROWS, int(rows)))
+        if rows == self._rows:
+            return
+        self._rows = rows
+        self._data_bytes = self._data_bytes.ljust(rows, b"\x00")[:rows]
+        self._cells = {c for c in self._cells if c < rows * COLS}
+        self._apply_size()
+        self.updateGeometry()
+        self.update()
+
     def set_data(self, data: bytes) -> None:
-        self._data_bytes = data.ljust(8, b"\x00")[:8]
+        # A frame longer than the grid grows it; that is how an FD frame
+        # arriving at the preview widens the editor without a separate step.
+        if len(data) > self._rows:
+            self.set_rows(len(data))
+        self._data_bytes = data.ljust(self._rows, b"\x00")[:self._rows]
         self.update()
 
     def set_cells(self, cells) -> None:
@@ -56,7 +80,7 @@ class _Grid(QWidget):
     def _bit_at(self, pos: QPoint) -> int:
         col = pos.x() // CELL
         row = pos.y() // CELL
-        if 0 <= col < COLS and 0 <= row < ROWS:
+        if 0 <= col < COLS and 0 <= row < self._rows:
             return row * COLS + col
         return -1
 
@@ -97,7 +121,7 @@ class _Grid(QWidget):
         lo = min(self._sel_start, self._sel_end) if dragging else -1
         hi = max(self._sel_start, self._sel_end) if dragging else -1
 
-        for bit in range(TOTAL):
+        for bit in range(self._rows * COLS):
             selected = (lo <= bit <= hi) if dragging else (bit in self._cells)
             row = bit // COLS
             col = bit %  COLS
@@ -137,7 +161,7 @@ class _Grid(QWidget):
         # Byte labels on left (row headers)
         p.setPen(QColor(COLORS["dim"]))
         p.setFont(QFont("Courier New", 7))
-        for row in range(ROWS):
+        for row in range(self._rows):
             p.drawText(-20, row * CELL, 18, CELL,
                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                        f"B{row}")
@@ -204,6 +228,10 @@ class BitGridWidget(QWidget):
 
     def set_data(self, data: bytes) -> None:
         self._grid.set_data(data)
+
+    def set_rows(self, rows: int) -> None:
+        """Size the grid to the message length: 8 for classic CAN, up to 64."""
+        self._grid.set_rows(rows)
 
     def set_selection(self, start_bit: int, length: int, little_endian=None) -> None:
         """Show a DBC signal (start bit in DBC numbering) on the grid."""

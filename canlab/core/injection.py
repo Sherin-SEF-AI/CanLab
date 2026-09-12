@@ -9,8 +9,12 @@ def pack_signal(value: float, sig: dict) -> bytearray:
     payload = encode_frame([sig], sig.get("message_id", "0"),
                            {sig.get("signal_name", "SIG"): value})
     data = bytearray(payload)
-    if len(data) < 8:
-        data.extend(bytes(8 - len(data)))
+    # Pad to the message's declared length, not to 8: a CAN FD message can be
+    # up to 64 bytes, and a signal placed in byte 20 needs the frame to reach
+    # it. Classic messages still come out as 8.
+    want = max(8, min(64, int(sig.get("msg_length") or 8)))
+    if len(data) < want:
+        data.extend(bytes(want - len(data)))
     return data
 
 

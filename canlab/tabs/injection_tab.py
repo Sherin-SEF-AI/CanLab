@@ -156,6 +156,28 @@ class InjectionTab(QWidget):
         speed_row.addWidget(self.speed_spin)
         self.chk_replay_loop = QCheckBox("Loop")
         speed_row.addWidget(self.chk_replay_loop)
+
+        # Hold one signal at a chosen value while everything else replays as
+        # recorded: what does the module do when speed reads zero and nothing
+        # else changes? Needs the signal defined in the DBC.
+        ovr_row = QHBoxLayout()
+        self.chk_replay_override = QCheckBox("Override")
+        self.chk_replay_override.setToolTip(
+            "Re-encode frames carrying this signal with the value held, "
+            "everything else left as recorded.")
+        ovr_row.addWidget(self.chk_replay_override)
+        self.replay_override_sig = QComboBox()
+        self.replay_override_sig.setFont(mono_font(8))
+        self.replay_override_sig.setMinimumWidth(160)
+        ovr_row.addWidget(self.replay_override_sig, 1)
+        self.replay_override_val = QDoubleSpinBox()
+        self.replay_override_val.setRange(-1e9, 1e9)
+        self.replay_override_val.setDecimals(3)
+        self.replay_override_val.setFont(mono_font(8))
+        ovr_row.addWidget(self.replay_override_val)
+        lay.addLayout(ovr_row)
+        self._state.dbc_updated.connect(self._refresh_override_signals)
+        self._refresh_override_signals()
         speed_row.addStretch()
         lay.addLayout(speed_row)
 
@@ -324,7 +346,13 @@ class InjectionTab(QWidget):
                  apply_checksum=self.chk_checksum.isChecked())
         import can
         from canlab.core.safety import gated_send, BusNotArmedError, BlockedIdError
-        msg = can.Message(arbitration_id=mid, data=bytes(data), is_extended_id=False)
+        # More than eight bytes is a CAN FD frame; mark it so, and ask for
+        # the faster data phase when the bus was opened with one.
+        fd = len(data) > 8 or bool(self._state.bus_hub and
+                                   getattr(self._state.bus_hub, "fd", False))
+        msg = can.Message(arbitration_id=mid, data=bytes(data),
+                          is_extended_id=False, is_fd=fd,
+                          bitrate_switch=fd and len(data) > 8)
         try:
             gated_send(bus, msg)
             self.lbl_inj_status.setText(
@@ -406,6 +434,17 @@ class InjectionTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 
+    def _refresh_override_signals(self):
+        current = self.replay_override_sig.currentText()
+        self.replay_override_sig.blockSignals(True)
+        self.replay_override_sig.clear()
+        for s in self._state.dbc_signals:
+            self.replay_override_sig.addItem(s.get("signal_name", ""))
+        i = self.replay_override_sig.findText(current)
+        if i >= 0:
+            self.replay_override_sig.setCurrentIndex(i)
+        self.replay_override_sig.blockSignals(False)
+
     def _start_replay(self):
         if self._replay_df is None or self._replay_df.empty:
             QMessageBox.information(self, "No Log", "Load a log file first.")
@@ -415,11 +454,17 @@ class InjectionTab(QWidget):
             QMessageBox.information(self, "No Bus", "Connect CAN bus first.")
             return
         from canlab.core.replay import ReplayWorker
+        overrides = {}
+        if self.chk_replay_override.isChecked() and self.replay_override_sig.currentText():
+            overrides = {self.replay_override_sig.currentText():
+                         self.replay_override_val.value()}
         self._replay_worker = ReplayWorker(
             bus=bus,
             frames_df=self._replay_df,
             speed=self.speed_spin.value(),
             loop=self.chk_replay_loop.isChecked(),
+            overrides=overrides,
+            dbc_signals=list(self._state.dbc_signals),
         )
         self._replay_worker.tick.connect(self._on_replay_tick)
         self._replay_worker.loop_started.connect(
