@@ -105,16 +105,23 @@ log and cycles every one of them.
 
 ### Walkthrough
 
-A narrated walkthrough of every tab, recorded from the running application, in
-four parts. 1080p, subtitles burned in, and each subtitle file is also there
-separately if you want to read along or search the text.
+![CanLab in use](docs/demo-preview.gif)
+
+Twenty seconds of the real application, above. The full narrated walkthrough of
+every tab is below, in four parts, 1080p with subtitles burned in.
+
+**GitHub will not play these in the page.** It serves `.mp4` from a repository
+as a download, so the links below save the file rather than opening a player.
+They are also attached to the
+[latest release](https://github.com/Sherin-SEF-AI/CanLab/releases/latest) if
+that is easier to grab.
 
 | Part | Covers | Length |
 |---|---|---|
-| [1. Loading a capture and finding structure](docs/canlab-demo-part1-analysis.mp4) | FRAMES, the ID panel and inspector, SIGNALS, counter and checksum detection, the checksum guesser, entropy boundaries | 3.0 min |
-| [2. Defining signals and checking them](docs/canlab-demo-part2-signals.mp4) | DBC BUILDER and its bit grid, the live decode preview, PLOT, INTELLIGENCE, ML INTEL, DASHBOARD | 2.6 min |
-| [3. Timeline, code generation and exports](docs/canlab-demo-part3-outputs.mp4) | TIMELINE, CODE GEN, the five export formats, DIAGNOSTICS, security access | 2.4 min |
-| [4. The transmit gate, injection and live capture](docs/canlab-demo-part4-transmitting.mp4) | ARM TX, INJECTION, replay, fuzzing, GATEWAY, OBD-II, the AI engine, live capture | 3.3 min |
+| [1. Loading a capture and finding structure](docs/canlab-demo-part1-analysis.mp4?raw=1) | FRAMES, the ID panel and inspector, SIGNALS, counter and checksum detection, the checksum guesser, entropy boundaries | 3.0 min |
+| [2. Defining signals and checking them](docs/canlab-demo-part2-signals.mp4?raw=1) | DBC BUILDER and its bit grid, the live decode preview, PLOT, INTELLIGENCE, ML INTEL, DASHBOARD | 2.6 min |
+| [3. Timeline, code generation and exports](docs/canlab-demo-part3-outputs.mp4?raw=1) | TIMELINE, CODE GEN, the five export formats, DIAGNOSTICS, security access | 2.4 min |
+| [4. The transmit gate, injection and live capture](docs/canlab-demo-part4-transmitting.mp4?raw=1) | ARM TX, INJECTION, replay, fuzzing, GATEWAY, OBD-II, the AI engine, live capture | 3.3 min |
 
 Subtitles: [part 1](docs/canlab-demo-part1-analysis.srt),
 [part 2](docs/canlab-demo-part2-signals.srt),
@@ -126,8 +133,9 @@ Subtitles: [part 1](docs/canlab-demo-part1-analysis.srt),
 > those protocols are library-only, see below), and it has selectable vehicle
 > profiles. Everything else shown is what `main` does.
 
-The video is generated, not hand-recorded, so it cannot drift away from what the
-application does: `docs/demo/record.py` drives a real `MainWindow` under Qt's
+The preview above is cut from those four files by `docs/demo/build.py`. The
+whole thing is generated, not hand-recorded, so it cannot drift away from what
+the application does: `docs/demo/record.py` drives a real `MainWindow` under Qt's
 offscreen platform and calls the same slots the buttons call, so a scene that
 stops working fails the run instead of quietly recording a stale screen.
 
