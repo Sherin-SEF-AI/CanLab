@@ -251,3 +251,49 @@ def test_a_counter_that_never_rolls_over_reports_no_wrap():
     found = detect_counters_and_checksums(
         _frame_rows([[i % 256] + [7] * 7 for i in range(600)]))["200"]["counters"]
     assert found[0]["wrap"] == 256
+
+
+# ── Every algorithm the registry knows, not just the vectorised three ────────
+# Found by running the sweep over a real 180-message vehicle capture: it
+# reported zero checksums, while the per-byte guesser found CRC-8 immediately.
+
+def _planted(algorithm_name, byte_index=7, n=300, can_id="200"):
+    """Real-shaped varying payload with a known checksum planted in one byte."""
+    from canlab.core.checksums import ALGORITHMS
+
+    algo = ALGORITHMS[algorithm_name]
+    rows = []
+    for i in range(n):
+        payload = [(i * 7) & 0xFF, (i * 13) & 0xFF, (i * 29) & 0xFF, 0x3C,
+                   (i * 5) & 0xFF, 0x00, (i * 11) & 0xFF, 0x00]
+        payload[byte_index] = algo.compute(bytes(payload), int(can_id, 16),
+                                           byte_index) & 0xFF
+        rows.append(payload)
+    return _frame_rows(rows, can_id)
+
+
+@pytest.mark.parametrize("algorithm", [
+    "xor8", "sum8", "nibble_sum", "crc8_j1850", "crc8_autosar", "crc8",
+    "toyota", "subaru", "honda",
+])
+def test_the_sweep_finds_every_registry_algorithm(algorithm):
+    found = detect_counters_and_checksums(_planted(algorithm))["200"]["checksums"]
+    assert found, f"{algorithm} planted in B7 was not detected at all"
+    assert found[0]["col"] == "B7", (
+        f"{algorithm} detected at {found[0]['col']}, not the byte it was in")
+
+
+def test_a_real_xor_checksum_is_not_discarded_as_a_coincidence():
+    """When B7 is the XOR of B0..B6 the whole message XORs to zero, so every
+    byte satisfies the relation. That is also true of a payload that merely
+    repeats itself, and suppressing both lost the real one."""
+    found = detect_counters_and_checksums(_planted("xor8"))["200"]["checksums"]
+    assert [(c["col"], c["algorithm"]) for c in found] == [("B7", "XOR8")]
+
+
+def test_only_one_checksum_is_reported_per_message():
+    """Once one byte is a checksum, others often satisfy some relation as a
+    consequence; reporting them sends the reader after an echo."""
+    for algorithm in ("sum8", "crc8_j1850"):
+        found = detect_counters_and_checksums(_planted(algorithm))["200"]["checksums"]
+        assert len(found) == 1, f"{algorithm}: reported {found}"
