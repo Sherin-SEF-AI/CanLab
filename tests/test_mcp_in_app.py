@@ -77,7 +77,7 @@ def test_window_serves_live_state(window, qcore, tmp_path):
     st.setValue(SettingsDialog.S_MCP_REMOTE, False)
     window._start_mcp()
     assert window._mcp_service is not None and window._mcp_service.running
-    assert window._act_mcp.text() == f"MCP: ON :{port}"
+    assert window._act_mcp.text() == f"MCP :{port}"
     url = window._mcp_service.url
 
     other = tmp_path / "other.csv"
@@ -121,7 +121,7 @@ def test_window_serves_live_state(window, qcore, tmp_path):
     assert state.sources[-1]["name"] == "other.csv"
 
     window._stop_mcp()
-    assert window._mcp_service is None and window._act_mcp.text() == "MCP: OFF"
+    assert window._mcp_service is None and window._act_mcp.text() == "MCP"
 
 
 def test_port_in_use_is_reported(qcore):

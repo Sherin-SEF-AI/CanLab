@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from PyQt6.QtGui import QFont
 
 COLORS = {
@@ -18,6 +20,13 @@ COLORS = {
     "function":     "#00ff88",
 }
 
+# Qt's stylesheet engine draws subcontrol arrows from an image; the CSS
+# border-triangle trick renders as a filled square, which is what the combo
+# boxes used to show. These ship with the package.
+_ASSETS = Path(__file__).resolve().parent / "assets"
+_ARROW = (_ASSETS / "arrow-down.svg").as_posix()
+_ARROW_DIM = (_ASSETS / "arrow-down-dim.svg").as_posix()
+
 FONT_FAMILY = "Courier New"
 FONT_SIZE   = 9
 
@@ -25,6 +34,25 @@ def mono_font(size=FONT_SIZE, bold=False) -> QFont:
     f = QFont(FONT_FAMILY, size)
     f.setBold(bold)
     return f
+
+
+def dot_icon(color: str, size: int = 10):
+    """A filled circle, for showing whether something is on at a glance.
+
+    A toolbar of identical grey words makes the reader parse every one of
+    them to find the state. A coloured dot is read without reading.
+    """
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
+    px = QPixmap(size, size)
+    px.fill(Qt.GlobalColor.transparent)
+    p = QPainter(px)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(color))
+    p.drawEllipse(1, 1, size - 2, size - 2)
+    p.end()
+    return QIcon(px)
 
 QSS = f"""
 QMainWindow, QDialog {{
@@ -186,15 +214,19 @@ QLineEdit:focus, QComboBox:focus, QSpinBox:focus {{
 
 QComboBox::drop-down {{
     border: none;
-    background: {COLORS['border']};
+    background: transparent;
     width: 16px;
 }}
 
 QComboBox::down-arrow {{
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 6px solid {COLORS['text']};
-    margin-right: 4px;
+    image: url({_ARROW});
+    width: 10px;
+    height: 6px;
+    margin-right: 5px;
+}}
+
+QComboBox::down-arrow:disabled {{
+    image: url({_ARROW_DIM});
 }}
 
 QComboBox QAbstractItemView {{

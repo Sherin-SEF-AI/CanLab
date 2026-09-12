@@ -344,8 +344,11 @@ def settings_persist():
     import tempfile
 
     from PyQt6.QtCore import QSettings
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope,
-                      tempfile.mkdtemp())
+    # Both formats: QSettings("CanLab", "CanLab") asks for NativeFormat, so
+    # redirecting IniFormat alone let this write into the real user config.
+    tmp = tempfile.mkdtemp()
+    for fmt in (QSettings.Format.NativeFormat, QSettings.Format.IniFormat):
+        QSettings.setPath(fmt, QSettings.Scope.UserScope, tmp)
     from canlab.settings_dialog import SettingsDialog, settings
     st = settings()
     st.setValue(SettingsDialog.S_CHANNEL, "can7")

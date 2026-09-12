@@ -18,6 +18,7 @@ a = Analysis(
     binaries=pil_binaries,
     datas=[
         (str(ROOT / "canlab.png"),             "canlab"             ),
+        (str(ROOT / "assets"),                 "canlab/assets"      ),
         (str(ROOT / "sample_data"),            "canlab/sample_data" ),
         *pil_datas,
     ],

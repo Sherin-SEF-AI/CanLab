@@ -3,12 +3,12 @@ import can
 import pandas as pd
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QTabWidget, QToolBar, QStatusBar, QLabel, QFileDialog,
-    QMessageBox, QPushButton, QProgressBar, QMenu,
+    QMessageBox, QProgressBar, QMenu, QComboBox, QToolButton, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QKeySequence
+from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal
+from PyQt6.QtGui import QAction, QKeySequence, QColor
 
-from canlab.theme import COLORS, mono_font
+from canlab.theme import COLORS, dot_icon, mono_font
 from canlab.core.state import get_state
 from canlab.core.log_parser import parse_log_file
 from canlab.core.dbc_manager import load_dbc
@@ -101,10 +101,19 @@ class MainWindow(QMainWindow):
     # ── Toolbar ───────────────────────────────────────────────────────────────
 
     def _build_toolbar(self):
+        """Three groups: what you open, the bus you are on, what is running.
+
+        Everything here is also in the menus. The toolbar carries only what a
+        session actually reaches for, so the row fits without items falling off
+        the end, and the three running-state buttons sit together on the right
+        where state belongs rather than mixed in among the verbs.
+        """
         tb = QToolBar("Main")
         tb.setMovable(False)
-        tb.setFixedHeight(32)
+        tb.setIconSize(QSize(9, 9))
+        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(tb)
+        self._toolbar = tb
 
         def act(text, slot, tip=""):
             a = QAction(text, self)
@@ -113,61 +122,131 @@ class MainWindow(QMainWindow):
             tb.addAction(a)
             return a
 
-        # File
-        act("Open Log",         self._open_log,            "Open CSV/candump log file")
-        act("Open .rlog",       self._open_rlog,           "Import openpilot .rlog/.qlog")
-        act("Save Project",     self._save_project,        "Save .canlab project")
-        act("Open Project",     self._open_project,        "Open .canlab project")
-        act("Export openpilot", self._export_openpilot_dbc,"Export openpilot DBC")
-        act("Export Lua",       self._export_lua,          "Export Wireshark Lua dissector")
+        def menu_button(text, tip, entries):
+            """One button that drops a menu, so a family of related actions
+            costs one slot in the row instead of four."""
+            a = QAction(text, self)
+            a.setToolTip(tip)
+            menu = QMenu(self)
+            for label, slot in entries:
+                if slot is None:
+                    menu.addSeparator()
+                else:
+                    menu.addAction(label).triggered.connect(slot)
+            a.setMenu(menu)
+            tb.addAction(a)
+            btn = tb.widgetForAction(a)
+            if btn is not None:
+                btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            return a, menu
+
+        # ── files in, files out ───────────────────────────────────────────────
+        menu_button("Open", "Open a capture or a saved project", [
+            ("Open Log…", self._open_log),
+            ("Open openpilot .rlog…", self._open_rlog),
+            (None, None),
+            ("Open Project…", self._open_project),
+        ])
+        act("Save", self._save_project, "Save the .canlab project")
+        menu_button("Export", "Write the signal definitions out", [
+            ("Export DBC…", self._export_dbc),
+            ("Export openpilot DBC…", self._export_openpilot_dbc),
+            ("Export Wireshark Lua…", self._export_lua),
+            (None, None),
+            ("Export decoded time-series…", self._export_timeseries),
+        ])
         tb.addSeparator()
 
-        # CAN: which adapter, then connect
-        from PyQt6.QtWidgets import QComboBox
-        lbl = QLabel(" Adapter: ")
+        # ── the bus ───────────────────────────────────────────────────────────
+        lbl = QLabel(" Bus ")
         lbl.setFont(mono_font(8))
+        lbl.setStyleSheet(f"color:{COLORS['dim']}; background:transparent")
         tb.addWidget(lbl)
         self.adapter_combo = QComboBox()
         self.adapter_combo.setFont(mono_font(8))
         self.adapter_combo.setFixedHeight(22)
-        self.adapter_combo.setMinimumWidth(160)
-        self.adapter_combo.setToolTip("The hardware adapter Connect CAN opens. "
-                                      "Manage them in Settings > CAN ADAPTERS.")
+        self.adapter_combo.setFixedWidth(150)
         self._refresh_adapter_combo()
         self.adapter_combo.activated.connect(self._on_adapter_picked)
         tb.addWidget(self.adapter_combo)
-        self._act_connect    = act("Connect CAN",  self._connect_can,    "Connect live CAN bus")
-        self._act_disconnect = act("Disconnect",   self._disconnect_can, "Disconnect live CAN")
-        self._act_disconnect.setEnabled(False)
+        self._act_connect = act("Connect", self._toggle_connection, "")
+        self._update_connect_action()
         tb.addSeparator()
 
-        # Global transmit safety gate — disarmed by default. Nothing (injection,
-        # replay, fuzz, gateway) can write to the bus until the user arms it.
-        self._act_arm = QAction("ARM TX: OFF", self)
+        # ── what is running ───────────────────────────────────────────────────
+        # Pushed to the right: these report state and are toggled occasionally,
+        # unlike the verbs on the left.
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        spacer.setStyleSheet("background:transparent")
+        tb.addWidget(spacer)
+        tb.addSeparator()
+
+        # The transmit gate is the one control that can put frames on a wire,
+        # so armed is red and unmissable rather than another word in a row.
+        self._act_arm = QAction("ARM TX", self)
         self._act_arm.setCheckable(True)
-        self._act_arm.setToolTip("Arm/disarm bus transmit. Off = no frames can be sent.")
         self._act_arm.toggled.connect(self._toggle_arm)
         tb.addAction(self._act_arm)
-        tb.addSeparator()
+        self._act_rest = act("REST", self._toggle_rest_api, "")
+        self._act_mcp = act("MCP", self._toggle_mcp, "")
+        _, self._plugins_menu = menu_button("Plugins", "Plugins found in ~/.canlab/plugins", [])
+        self._plugins_menu.aboutToShow.connect(self._fill_plugins_menu)
 
-        # AI + DBC
-        act("Run AI RE",  self._run_ai_re,     "AI-analyze all unknown IDs")
-        act("Export DBC", self._export_dbc,    "Export DBC file")
-        act("Code Gen",   self._generate_code, "Switch to Code Gen tab")
-        tb.addSeparator()
+        self._set_pill(self._act_arm, False, "ARM TX", COLORS["error"],
+                       "Bus transmit is disarmed: nothing can be sent. Click to arm (Ctrl+E).")
+        self._set_pill(self._act_rest, False, "REST", COLORS["green"],
+                       "REST API server is stopped. Click to start it.")
+        self._set_pill(self._act_mcp, False, "MCP", COLORS["green"],
+                       "MCP server is stopped. Click to let an assistant "
+                       "(Claude, ChatGPT, Codex) work on this capture.")
 
-        # REST API toggle
-        self._act_rest = act("REST API: OFF", self._toggle_rest_api, "Toggle REST API server")
-        self._act_mcp = act("MCP: OFF", self._toggle_mcp,
-                            "Let an assistant (Claude, ChatGPT, Codex) work on this capture over MCP")
-        tb.addSeparator()
+    def _set_pill(self, action, on: bool, text: str, color: str, tip: str) -> None:
+        """Show a running/stopped state as a coloured dot and a tinted button."""
+        action.setText(text)
+        action.setToolTip(tip)
+        action.setIcon(dot_icon(color if on else COLORS["dim"]))
+        btn = self._toolbar.widgetForAction(action)
+        if btn is None:
+            return
+        if not on:
+            btn.setStyleSheet("")
+            return
+        c = QColor(color)
+        rgb = f"{c.red()},{c.green()},{c.blue()}"
+        btn.setStyleSheet(
+            f"QToolButton {{ color:{color}; background:rgba({rgb},30);"
+            f" border:1px solid rgba({rgb},120); border-radius:3px; padding:2px 6px; }}"
+            f"QToolButton:hover {{ background:rgba({rgb},55); color:{color}; }}")
 
-        # Plugins
-        btn_plugins = QPushButton("Plugins…")
-        btn_plugins.setFixedHeight(22)
-        btn_plugins.setFont(mono_font(8))
-        btn_plugins.clicked.connect(self._show_plugins_menu)
-        tb.addWidget(btn_plugins)
+    def _update_connect_action(self) -> None:
+        on = bool(self._state.is_connected)
+        self._act_connect.setText("Disconnect" if on else "Connect")
+        self._act_connect.setIcon(dot_icon(COLORS["green"] if on else COLORS["dim"]))
+        self._act_connect.setToolTip(
+            "Recording from the bus. Click to disconnect (Ctrl+D)." if on
+            else "Open the selected adapter and start recording (Ctrl+D).")
+        # Switching adapters mid-capture would not take effect until the next
+        # connect, so the picker is closed rather than silently ignored.
+        self.adapter_combo.setEnabled(not on)
+        self.adapter_combo.setToolTip(
+            "Disconnect first to switch adapter." if on
+            else "The adapter Connect opens. Manage them in Settings > CAN ADAPTERS.")
+
+    def _fill_plugins_menu(self) -> None:
+        from canlab.core.plugin_loader import discover_plugins
+        menu = self._plugins_menu
+        menu.clear()
+        self._plugins = discover_plugins()
+        if not self._plugins:
+            menu.addAction("No plugins in ~/.canlab/plugins").setEnabled(False)
+        for p in self._plugins:
+            mark = "on " if p.get("enabled") else "off"
+            err = f"   [{p.get('error')}]" if p.get("error") else ""
+            menu.addAction(f"{mark}  {p['name']} v{p['version']}{err}").setEnabled(False)
+        menu.addSeparator()
+        menu.addAction("Manage plugins…").triggered.connect(
+            lambda: self._open_settings(tab="PLUGINS"))
 
     # ── Menu bar ──────────────────────────────────────────────────────────────
 
@@ -677,8 +756,7 @@ class MainWindow(QMainWindow):
         self._state.is_connected = True
         self._drain_timer.start()
 
-        self._act_connect.setEnabled(False)
-        self._act_disconnect.setEnabled(True)
+        self._update_connect_action()
         self._state.can_connected.emit(True)
 
     # ── Adapters ──────────────────────────────────────────────────────────────
@@ -693,7 +771,10 @@ class MainWindow(QMainWindow):
         combo.blockSignals(True)
         combo.clear()
         for a in self._adapters:
-            combo.addItem(f"{a.name}  ({a.describe()})", a.name)
+            # The name alone in the box, the whole configuration on hover:
+            # the full string was being cut off mid-word in the toolbar.
+            combo.addItem(f"{a.name} · {a.channel}", a.name)
+            combo.setItemData(combo.count() - 1, a.describe(), Qt.ItemDataRole.ToolTipRole)
         if not self._adapters:
             combo.addItem(f"{self._can_settings.get('interface')} "
                           f"{self._can_settings.get('channel')}", "")
@@ -725,9 +806,6 @@ class MainWindow(QMainWindow):
                 import json
                 st.setValue(SettingsDialog.S_EXTRA, json.dumps(a.extra))
                 self.statusBar().showMessage(f"Adapter: {a.name} ({a.describe()})", 4000)
-                if self._hubs:
-                    self.statusBar().showMessage(
-                        f"Adapter {a.name} selected; disconnect and reconnect to use it.", 6000)
                 return
 
     def _open_bus(self, interface: str, channel: str, bitrate: int,
@@ -766,8 +844,7 @@ class MainWindow(QMainWindow):
         self._state.bus_hub      = None
         self._state.can_bus      = None
         self._state.is_connected = False
-        self._act_connect.setEnabled(True)
-        self._act_disconnect.setEnabled(False)
+        self._update_connect_action()
         self._state.can_connected.emit(False)
 
     def _on_live_error(self, err: str):
@@ -933,7 +1010,10 @@ class MainWindow(QMainWindow):
                 self._act_arm.setChecked(False)   # reverts text via toggled
                 return
         set_armed(checked)
-        self._act_arm.setText("ARM TX: ON" if checked else "ARM TX: OFF")
+        self._set_pill(self._act_arm, checked, "ARM TX", COLORS["error"],
+                       "Bus transmit is ARMED: every send is live. Click to disarm (Ctrl+E)."
+                       if checked else
+                       "Bus transmit is disarmed: nothing can be sent. Click to arm (Ctrl+E).")
         self.statusBar().showMessage(
             "Bus transmit ARMED — every send is live" if checked
             else "Bus transmit disarmed — nothing can be sent", 3000
@@ -954,7 +1034,10 @@ class MainWindow(QMainWindow):
             )
             self._rest_api_server.start()
             self._state.rest_api_running = True
-            self._act_rest.setText(f"REST API: ON :{self._state.rest_api_port}")
+            self._set_pill(self._act_rest, True, f"REST :{self._state.rest_api_port}",
+                           COLORS["green"],
+                           f"REST API running on 127.0.0.1:{self._state.rest_api_port}. "
+                           "Click to stop it.")
             token = self._rest_api_server.token
             self.statusBar().showMessage(
                 f"REST API running on 127.0.0.1:{self._state.rest_api_port}", 4000
@@ -1008,7 +1091,9 @@ class MainWindow(QMainWindow):
                                      f"{cfg['port']}:\n{e}")
             return
         self._mcp_service = svc
-        self._act_mcp.setText(f"MCP: ON :{cfg['port']}")
+        self._set_pill(self._act_mcp, True, f"MCP :{cfg['port']}", COLORS["green"],
+                       f"MCP server running at {svc.url}. Settings > MCP shows what to "
+                       "paste into Claude Code, Claude Desktop, Codex or ChatGPT.")
         self.statusBar().showMessage(
             f"MCP server at {svc.url}. Settings > MCP shows what to paste into "
             "Claude Code, Claude Desktop, Codex or ChatGPT.", 8000)
@@ -1017,7 +1102,9 @@ class MainWindow(QMainWindow):
         if self._mcp_service is not None:
             self._mcp_service.stop()
             self._mcp_service = None
-        self._act_mcp.setText("MCP: OFF")
+        self._set_pill(self._act_mcp, False, "MCP", COLORS["green"],
+                       "MCP server is stopped. Click to let an assistant "
+                       "(Claude, ChatGPT, Codex) work on this capture.")
 
     def _open_mcp_settings(self):
         self._open_settings(tab="MCP")
@@ -1027,7 +1114,8 @@ class MainWindow(QMainWindow):
             self._rest_api_server.stop()
             self._rest_api_server = None
         self._state.rest_api_running = False
-        self._act_rest.setText("REST API: OFF")
+        self._set_pill(self._act_rest, False, "REST", COLORS["green"],
+                       "REST API server is stopped. Click to start it.")
 
     # ── Plugins ───────────────────────────────────────────────────────────────
 
@@ -1039,20 +1127,6 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 f"Plugins loaded: {', '.join(activated)}", 5000
             )
-
-    def _show_plugins_menu(self):
-        from canlab.core.plugin_loader import discover_plugins
-        self._plugins = discover_plugins()
-        menu = QMenu(self)
-        if not self._plugins:
-            menu.addAction("No plugins found  (~/.canlab/plugins/)")
-        else:
-            for p in self._plugins:
-                status = "✓" if p.get("enabled") else "✗"
-                err    = f"  [{p.get('error','')}]" if p.get("error") else ""
-                a = menu.addAction(f"{status} {p['name']} v{p['version']}{err}")
-                a.setEnabled(False)
-        menu.exec(self.cursor().pos())
 
     # ── Bus load status bar ───────────────────────────────────────────────────
 
