@@ -51,14 +51,18 @@ with open("real_capture.pcap", "wb") as fh:                 # SocketCAN, link ty
 ## Running it
 
 ```bash
-QT_QPA_PLATFORM=offscreen python tests/real_data/acceptance_phase1.py tests/real_data
-QT_QPA_PLATFORM=offscreen python tests/real_data/acceptance_phase2.py tests/real_data
+for p in 1 2 3; do
+  QT_QPA_PLATFORM=offscreen python tests/real_data/acceptance_phase$p.py tests/real_data
+done
 ```
 
 Phase 1 covers loading, the panels, and every offline analysis. Phase 2 covers
 decoding, all six export formats round-tripped through the tool that has to
 read them, code generation, the transmit gate, and the REST and MCP
-integrations. Each check prints what it actually observed, not just pass or
+integrations. Phase 3 is everything the first two left out: MDF4, the project
+round trip, each transmit worker armed and disarmed, plugin approval, settings,
+opendbc matching, and a full ISO-TP request and response against a scripted ECU
+responder on a virtual bus. Each check prints what it actually observed, not just pass or
 fail, so a regression tells you what the application did.
 
 ## What a good run looks like
@@ -72,7 +76,20 @@ phase 1: 14/14 passed
 phase 2: 11/11 passed
   every export loaded back by cantools
   disarmed sent 0 frames, armed sent 1
+phase 3: 11/11 passed
+  3000 real frames survive an MDF4 round trip
+  replay, fuzzer and sweep each send 0 disarmed
+  ECU answers OBD-II and UDS over ISO-TP
 ```
+
+## What this does not cover
+
+No real hardware is involved, so none of the following is verified here: a real
+ECU answering a UDS scan or a security-access seed, a physical CAN adapter, the
+gateway (which needs two channels), CAN FD (the capture is classic CAN), the AI
+providers (no key), openpilot rlog (no cereal schema), vision OCR, and the GUI
+as a person drives it, since these scripts call the same slots the buttons call
+rather than clicking.
 
 All five parsers must agree on the same capture: 12,974 frames and 180 IDs from
 the CSV, the candump log, BLF, ASC and pcap alike. A disagreement means one
