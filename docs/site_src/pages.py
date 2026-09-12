@@ -61,7 +61,7 @@ def build_pages(*, h2, table, video_card, parts, repo):
   <a class="card" href="guide.html"><h3>The workflow</h3><p>Load, narrow down,
      define, verify, export. Start here if you have a capture and no idea what
      is in it.</p></a>
-  <a class="card" href="tabs.html"><h3>All 15 tabs</h3><p>What each one does
+  <a class="card" href="tabs.html"><h3>All 16 tabs</h3><p>What each one does
      and when you would reach for it.</p></a>
   <a class="card" href="analysis.html"><h3>How the analysis works</h3>
      <p>Counters, checksums, entropy, correlation, and what the confidence
@@ -174,16 +174,21 @@ export GROQ_API_KEY="gsk_..."</code></pre>
 {h2("Hardware interfaces")}
 <p>Live capture goes through
    <a href="https://python-can.readthedocs.io">python-can</a>, so anything it
-   supports works: <code>socketcan</code>, <code>pcan</code>,
-   <code>kvaser</code>, <code>serial</code>, <code>slcan</code>,
-   <code>virtual</code> and others. Pick the interface and channel in
-   <strong>Settings &rarr; CAN INTERFACE</strong>.</p>
+   supports works: <code>socketcan</code>, <code>slcan</code>,
+   <code>gs_usb</code>, <code>pcan</code>, <code>kvaser</code>,
+   <code>vector</code>, <code>virtual</code> and the rest, plus
+   <code>gvret</code>, which CanLab adds itself for SavvyCAN's hardware. Add
+   adapters in <strong>Settings &rarr; CAN ADAPTERS</strong>, which can detect
+   what is plugged in and test it without transmitting, then pick one from the
+   toolbar. See <a href="integrations.html#hardware-adapters">hardware
+   adapters</a>.</p>
 <p>On Linux you can practise with no hardware at all using a virtual bus:</p>
 <pre><code>sudo modprobe vcan
 sudo ip link add dev vcan0 type vcan
 sudo ip link set up vcan0
 cangen vcan0 -g 5          # optional: generate traffic</code></pre>
-<p>Then connect to interface <code>socketcan</code>, channel <code>vcan0</code>.
+<p>Then add an adapter on <code>socketcan</code> / <code>vcan0</code> and press
+   Connect.
    The <a href="tabs.html#gateway">gateway</a> is the one feature that needs
    two hardware channels.</p>
 
@@ -411,7 +416,7 @@ def build_pages_2(*, h2, table, repo):
 {h2("Working with a live bus")}
 <p>Everything above works on a file. Connecting to hardware adds two things:
    frames arrive continuously, and you can transmit.</p>
-<p>Pick the interface in <strong>Settings &rarr; CAN INTERFACE</strong> and use
+<p>Pick the adapter in <strong>Settings &rarr; CAN ADAPTERS</strong> and use
    the toolbar's <strong>Connect CAN</strong>. Frames stream into the same
    FRAMES tab and every analysis works on what has been captured so far. The
    <strong>Freeze</strong> button stops the table scrolling while you read
@@ -450,9 +455,9 @@ def build_pages_3(*, h2, table, repo):
     pages.append((
         "tabs.html",
         "Tabs",
-        "What each of the 15 tabs does and when you would reach for it.",
+        "What each of the 16 tabs does and when you would reach for it.",
         f"""
-<h1>The 15 tabs</h1>
+<h1>The 16 tabs</h1>
 <p class="lede">Roughly in the order you would use them. Tabs marked with a
    star in the application are the analysis-heavy ones.</p>
 
@@ -465,6 +470,24 @@ def build_pages_3(*, h2, table, repo):
    updating while you read, without stopping capture. <strong>Follow</strong>
    keeps it scrolled to the newest frame. Double-click a row for the full frame
    detail.</p>
+
+{h2("SNIFFER")}
+<p>One row per message instead of one per frame, which is the shape of the
+   question you actually ask at the bench: I pressed the button, what changed.
+   Each byte is coloured by what it just did, <strong>green</strong> when it
+   rose and <strong>red</strong> when it fell, fading back after a second.
+   Bytes that have never moved sit dim, so the active ones stand out.</p>
+<p><strong>Notch</strong> is the reason to use this rather than FRAMES. It
+   records every bit currently in motion and ignores it from then on. Press it
+   a few times while the vehicle idles and the wheel-speed counters, the
+   checksums and the sensor jitter all go quiet; the bit that lights up next is
+   the one you caused. Un-notch forgets the mask. There is also a bit view, an
+   option to keep silent IDs on screen rather than letting them expire after
+   five seconds, and one to blank notched bits entirely.</p>
+<p>Modelled on SavvyCAN's sniffer window and on <code>cansniffer</code>. It
+   works on a live bus and on a loaded capture; on a file there is no "now", so
+   nothing expires. Rendering 180 IDs costs about 40 ms, and the table updates
+   in place rather than rebuilding.</p>
 
 {h2("SIGNALS")}
 <p>One row per message rather than per frame: frame count, rate, payload
@@ -483,7 +506,7 @@ def build_pages_3(*, h2, table, repo):
 
 {h2("AI ENGINE")}
 <p>Optional, and off until you configure a provider. Sends one message ID's
-   statistics to Anthropic, Groq or a local Ollama model and asks for an
+   statistics to Anthropic, OpenAI, Groq or a local Ollama model and asks for an
    interpretation. What makes it more useful than pasting hex into a chat
    window is that the offline findings go with the question: the byte roles,
    the detected checksum, the message period. Memory persists across sessions.
@@ -873,22 +896,49 @@ POST /inject      # inject a frame: needs the token AND ARM TX
      alone will not transmit.</p>
 </div>
 
-{h2("MCP server")}
-<p><code>mcp_server.py</code> exposes the analysis as Model Context Protocol
-   tools, so an MCP client can drive the loop. Run it with
-   <code>python mcp_server.py</code> from the source root; it needs
-   <code>pip install mcp</code>.</p>
-{table(["Tool", "Does"], [
-    ["<code>load_log</code>", "Load a capture from a path."],
-    ["<code>list_ids</code>", "Every arbitration ID with counts and rates."],
-    ["<code>byte_stats</code>", "Per-byte statistics for one ID."],
-    ["<code>detect_counters_checksums</code>",
-     "Run the counter and checksum sweep."],
-    ["<code>correlate</code>", "Byte correlation between two IDs."],
-    ["<code>detect_multiplexers</code>", "Find multiplexed messages."],
-    ["<code>match_opendbc</code>", "Rank the capture against opendbc."],
-    ["<code>calibrate</code>", "Fit fields against a reference CSV."],
+{h2("MCP server: Claude, ChatGPT and Codex")}
+<p>CanLab is a Model Context Protocol server. An assistant connected to it can
+   load a capture, list IDs, read byte statistics and raw frames, run every
+   detector, draft a DBC, define and remove signals, decode frames, annotate
+   the timeline and rank bytes against those annotations: 25 tools in
+   <code>canlab/core/mcp_tools.py</code>. <strong>No MCP tool transmits.</strong>
+   Putting frames on a wire stays behind ARM TX in the window, where a person
+   is watching.</p>
+<p>The same tools are served two ways.</p>
+{table(["Where", "How"], [
+    ["<strong>Inside the window</strong>",
+     "The <strong>MCP</strong> toolbar toggle, or Settings &rarr; MCP, starts a "
+     "Streamable HTTP server on <code>127.0.0.1:8766/mcp</code> over the capture "
+     "you have loaded or are recording right now. A signal the assistant adds "
+     "appears in DBC BUILDER as one undoable step."],
+    ["<strong>Headless</strong>",
+     "<code>canlab-mcp</code> serves stdio and loads captures on request; "
+     "<code>canlab-mcp --http</code> serves the same over HTTP with no window."],
 ])}
+<p>Settings &rarr; MCP writes the exact configuration for each client and copies
+   it to the clipboard. In short:</p>
+<pre><code># Claude Code, against the running window (or a headless --http server)
+claude mcp add --transport http canlab http://127.0.0.1:8766/mcp
+
+# Claude Desktop and Codex CLI launch stdio servers, so bridge to the window
+canlab-mcp --attach http://127.0.0.1:8766/mcp
+
+# Claude Desktop, headless, no window needed
+{{"command": "/path/to/.venv/bin/canlab-mcp"}}</code></pre>
+<p>ChatGPT connects from OpenAI's servers, so it cannot reach your loopback
+   address. Publish the server over HTTPS first, with
+   <code>cloudflared tunnel --url http://127.0.0.1:8766</code> or ngrok, tick
+   <em>allow connections from other machines</em>, and add
+   <code>https://&lt;tunnel-host&gt;/mcp</code> as a connector. The
+   <code>search</code> and <code>fetch</code> tools exist for ChatGPT's
+   connector contract; Developer mode exposes the rest.</p>
+<div class="warn">
+  <span class="callout-title">A tunnel has no authentication</span>
+  <p>The in-window server takes an optional bearer token, but ChatGPT's
+     connectors cannot send one. While a tunnel is up, anyone who learns the
+     URL can read the capture and edit the signal list. Nothing can transmit,
+     but close the tunnel when you are done.</p>
+</div>
 
 {h2("Plugins")}
 <p>Drop a <code>.py</code> file into <code>~/.canlab/plugins/</code>. It needs
@@ -914,9 +964,11 @@ def register(app):
 </div>
 
 {h2("AI engine")}
-<p>Three providers: <strong>Anthropic</strong>, <strong>Groq</strong> and
-   <strong>Ollama</strong>, the last running locally with no key and nothing
-   leaving the machine. Configure in <strong>Settings &rarr; API KEYS</strong>.</p>
+<p>Four providers: <strong>Anthropic</strong>, <strong>OpenAI</strong>,
+   <strong>Groq</strong> and <strong>Ollama</strong>, the last running locally
+   with no key and nothing leaving the machine. Configure in
+   <strong>Settings &rarr; API KEYS</strong>; the model field is editable, so a
+   model id newer than the built-in list can be typed in.</p>
 <p>What is sent, when you click Analyze on an ID, is that message's statistics:
    byte roles, message type and period, the checksum guess, similar IDs, and a
    sample of frames. Not your whole capture, and nothing at all until you
@@ -925,14 +977,50 @@ def register(app):
    reasons about measured facts rather than raw hex. Its answers are still
    suggestions; treat them the way you would treat the heuristics.</p>
 
-{h2("Hardware backends")}
-<p>Anything <a href="https://python-can.readthedocs.io">python-can</a> supports
-   works. A comma.ai Panda is also supported directly through
+{h2("Hardware adapters")}
+<p><strong>Settings &rarr; CAN ADAPTERS</strong> keeps a list of named adapters
+   and the toolbar switches between them, so a bench with a PEAK on one port
+   and a CANable on another is two clicks rather than two retypings. Each
+   adapter is a backend, a channel, a bitrate, a CAN FD flag and whatever else
+   that backend needs, such as an slcan stick's serial baud rate or a
+   socketcand host.</p>
+<p><strong>Detect connected</strong> asks every python-can backend what it can
+   see, reads CAN network devices from sysfs, and recognises common USB sticks
+   by vendor and product id. <strong>Test</strong> opens the adapter and listens
+   for one second; it never transmits, and when opening fails it names the fix,
+   whether that is the <code>ip link</code> command, a missing pip package or
+   the dialout group.</p>
+{table(["Backend", "Notes"], [
+    ["<code>socketcan</code>",
+     "Linux. The kernel owns the bitrate, so bring the device up first. "
+     "PEAK, Kvaser, candleLight and 8devices adapters all appear here."],
+    ["<code>gvret</code>",
+     "<strong>SavvyCAN's own hardware</strong>: Macchina M2 and A0, EVTV "
+     "CANDue, ESP32RET. python-can ships no backend for it, so CanLab supplies "
+     "one in <code>core/gvret.py</code> and registers it as an interface. Give "
+     "it a serial port, or <code>&lt;ip&gt;:23</code> for a board on WiFi."],
+    ["<code>slcan</code>", "CANable with slcan firmware, USBtin, Lawicel."],
+    ["<code>gs_usb</code>", "candleLight over libusb, where there is no kernel driver."],
+    ["<code>pcan</code>, <code>kvaser</code>, <code>vector</code>, <code>ixxat</code>",
+     "Vendor drivers, which come from the vendor."],
+    ["<code>virtual</code>, <code>udp_multicast</code>",
+     "No hardware at all, for trying the application."],
+])}
+<p><code>pip install canlab[adapters]</code> adds pyserial and gs_usb. A
+   comma.ai Panda is supported separately through
    <code>core/panda_backend.py</code>, presented as a python-can compatible bus
-   with the safety model selectable.</p>
-<p>The multi-bus configuration in <strong>Settings &rarr; MULTI-BUS</strong>
-   lets you capture from more than one interface at once, which is what you
-   want when a vehicle has separate powertrain and body buses.</p>
+   with the safety model selectable. The multi-bus configuration in
+   <strong>Settings &rarr; MULTI-BUS</strong> captures from more than one
+   interface at once, which is what you want when a vehicle has separate
+   powertrain and body buses.</p>
+
+{h2("Trimming a capture")}
+<p><strong>Tools &rarr; Trim capture</strong> cuts the loaded capture down to a
+   time window, a frame or percentage range, a set of IDs or ID ranges, or one
+   bus, with a live count as you type. The result either replaces what is
+   loaded or is written to a file. Every analysis runs over whatever is loaded,
+   so trimming first makes the detectors faster and their output shorter.</p>
+
 """))
 
     pages.append((
@@ -980,17 +1068,18 @@ def register(app):
 ])}
 
 {h2("Settings")}
-<p>Eight panels: API KEYS, CAN INTERFACE, GITHUB, CACHE, REST API, BACKEND,
-   MULTI-BUS and PLUGINS. The ones you will actually touch are CAN INTERFACE
-   (interface, channel, bitrate, CAN FD), API KEYS if you want the AI features,
-   and PLUGINS to approve anything you have installed.</p>
+<p>Nine panels: API KEYS, CAN ADAPTERS, VEHICLE, REST API, MCP, BACKEND,
+   MULTI-BUS, PLUGINS and frame cap. The ones you will actually touch are CAN
+   ADAPTERS (add, detect and test your hardware), API KEYS if you want the AI
+   features, MCP to connect an assistant, and PLUGINS to approve anything you
+   have installed. Everything persists across restarts.</p>
 
 {h2("Testing")}
 <p>The suite runs headless:</p>
-<pre><code>python -m pytest tests/ -q        # 154 passed, 1 skipped</code></pre>
-<p>The skip is the MDF4 importer, which needs the optional
-   <code>asammdf</code>. If the MCP SDK is not installed either, that is a
-   second skip.</p>
+<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 441 passed</code></pre>
+<p>Tests that need an optional dependency skip cleanly when it is absent: the
+   MDF4 importer without <code>asammdf</code>, the transport tests without the
+   MCP SDK, the Lua dissector without a Lua runtime.</p>
 <p>It covers the log parsers against fixtures in the real formats, DBC encode
    and decode round trips through cantools, the ARM TX gate on every transmit
    path including that disarming mid-run stops a worker, ISO-TP and UDS wire

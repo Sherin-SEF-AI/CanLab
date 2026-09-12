@@ -76,9 +76,11 @@ def page(filename: str, title: str, lede: str, body: str) -> str:
     toc = "".join(
         f'<a href="#{hid}">{re.sub("<[^>]+>", "", htext).strip()}</a>'
         for hid, htext in headings)
+    # The escaped quote cannot live inside the f-string: that is Python 3.12
+    # syntax and this project supports 3.11.
+    current = ' aria-current="page"'
     nav = "".join(
-        f'<a href="{href}"{" aria-current=\"page\"" if href == filename else ""}>'
-        f"{label}</a>"
+        f'<a href="{href}"{current if href == filename else ""}>{label}</a>'
         for href, label in NAV)
     aside = (f'<aside class="toc"><h2>On this page</h2><nav>{toc}</nav></aside>'
              if toc else '<aside class="toc"></aside>')
