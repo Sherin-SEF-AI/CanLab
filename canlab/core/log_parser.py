@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import warnings
 import struct
 from pathlib import Path
 
@@ -153,9 +154,14 @@ def parse_savvycan_csv(filepath: str) -> pd.DataFrame:
     # data byte, so each data row has one more field than the 14-column header.
     # Without it pandas promotes Time Stamp to the index and shifts every column
     # left, putting IDs in the timestamp column and the Extended flag in ID.
-    df = pd.read_csv(filepath, dtype=str, skipinitialspace=True,
-                     encoding="utf-8-sig", keep_default_na=False,
-                     index_col=False)
+    with warnings.catch_warnings():
+        # index_col=False on a row with one field more than the header warns
+        # about "loss of data". The extra field is the empty string after
+        # SavvyCAN's trailing comma, so dropping it is the point.
+        warnings.simplefilter("ignore", pd.errors.ParserWarning)
+        df = pd.read_csv(filepath, dtype=str, skipinitialspace=True,
+                         encoding="utf-8-sig", keep_default_na=False,
+                         index_col=False)
     df.columns = [str(c).strip().lstrip("﻿") for c in df.columns]
     col_map = {
         "Time Stamp": "Timestamp", "Timestamp": "Timestamp",

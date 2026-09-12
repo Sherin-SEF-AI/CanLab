@@ -11,13 +11,24 @@ Sub-tabs:
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
+    QMessageBox,
     QListWidget, QListWidgetItem, QSplitter, QAbstractItemView,
     QTabWidget, QFileDialog, QSlider, QDoubleSpinBox,
 )
 from PyQt6.QtCore import Qt, QUrl, QTimer
 from PyQt6.QtGui import QColor
-from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PyQt6.QtMultimediaWidgets import QVideoWidget
+# Video sync is one sub-tab. Qt Multimedia links against the system audio
+# stack, so on a machine without it (a CI runner, a headless box, a minimal
+# container) importing it raises and, because this module is imported at
+# startup, took the whole application down. Treat it as optional: the sub-tab
+# says why it is unavailable and everything else works.
+try:
+    from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
+    from PyQt6.QtMultimediaWidgets import QVideoWidget
+    MULTIMEDIA_ERROR = ""
+except ImportError as exc:                       # pragma: no cover
+    QAudioOutput = QMediaPlayer = QVideoWidget = None
+    MULTIMEDIA_ERROR = str(exc)
 
 from canlab.theme import COLORS, mono_font
 from canlab.core.state import get_state
@@ -158,10 +169,23 @@ class TimelineTab(QWidget):
         lay.addLayout(toolbar)
 
         # ── Video widget ──
-        self._video_widget = QVideoWidget()
-        self._video_widget.setStyleSheet("background:#000;")
-        self._video_widget.setMinimumHeight(320)
-        lay.addWidget(self._video_widget, stretch=3)
+        if QVideoWidget is None:
+            self._video_widget = None
+            unavailable = QLabel(
+                "Video sync needs Qt Multimedia, which could not be loaded:\n"
+                f"{MULTIMEDIA_ERROR}\n\n"
+                "Everything else on this tab works. On Debian or Ubuntu the "
+                "missing piece is usually libpulse0.")
+            unavailable.setWordWrap(True)
+            unavailable.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            unavailable.setObjectName("label_dim")
+            unavailable.setMinimumHeight(320)
+            lay.addWidget(unavailable, stretch=3)
+        else:
+            self._video_widget = QVideoWidget()
+            self._video_widget.setStyleSheet("background:#000;")
+            self._video_widget.setMinimumHeight(320)
+            lay.addWidget(self._video_widget, stretch=3)
 
         # ── Video scrubber ──
         self._vid_scrubber = QSlider(Qt.Orientation.Horizontal)
@@ -331,6 +355,13 @@ class TimelineTab(QWidget):
             "Video Files (*.mp4 *.avi *.mkv *.mov *.webm *.m4v);;All Files (*)"
         )
         if not path:
+            return
+
+        if QMediaPlayer is None:
+            QMessageBox.information(
+                self, "Video unavailable",
+                "Qt Multimedia could not be loaded, so video sync is off:\n"
+                f"{MULTIMEDIA_ERROR}")
             return
 
         if self._player is None:

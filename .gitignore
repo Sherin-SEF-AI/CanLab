@@ -30,6 +30,10 @@ Thumbs.db
 
 # Logs and data
 *.log
+# ...but test fixtures are inputs, not output. candump_mixed.log was
+# swallowed by the rule above, so the parser test that reads it could
+# never pass on a fresh clone.
+!tests/fixtures/*.log
 *.blf
 
 # Keyring / secrets
