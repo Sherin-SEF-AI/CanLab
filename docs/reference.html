@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference · CanLab</title>
+<meta name="description" content="Log formats, settings, limitations and where things live on disk.">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="brand" href="index.html">CanLab<span>/docs</span></a>
+    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html">Integrations</a><a href="reference.html" aria-current="page">Reference</a></nav>
+  </div>
+</header>
+<div class="wrap">
+  <div class="layout">
+    <aside class="toc"><h2>On this page</h2><nav><a href="#log-formats">Log formats</a><a href="#where-things-live">Where things live</a><a href="#settings">Settings</a><a href="#testing">Testing</a><a href="#limitations">Limitations</a><a href="#getting-help">Getting help</a><a href="#credits">Credits</a></nav></aside>
+    <main id="main">
+
+<h1>Reference</h1>
+<p class="lede">The details that do not belong anywhere else.</p>
+
+<h2 id="log-formats">Log formats</h2>
+<div class="table-scroll"><table><thead><tr><th>Format</th><th>Notes</th></tr></thead><tbody><tr><td>SavvyCAN CSV</td><td>GVRET and SavvyCAN exports. Handles both the hex byte format real exports use and older decimal ones, and the trailing comma SavvyCAN writes after the last data byte.</td></tr><tr><td>candump <code>.log</code></td><td><code>candump -l</code> output, including CAN FD lines.</td></tr><tr><td>pcap / pcapng</td><td>Linux SocketCAN, link type 227, via dpkt.</td></tr><tr><td>Vector BLF</td><td>Through python-can's reader.</td></tr><tr><td>Vector ASC</td><td>Through python-can's reader.</td></tr><tr><td>MDF4 <code>.mf4</code> / <code>.mdf</code></td><td>CANedge and similar. Needs <code>asammdf</code>.</td></tr><tr><td>openpilot <code>.rlog</code> / <code>.qlog</code></td><td>Needs pycapnp and the cereal schema. Raises a clear error if either is missing rather than guessing.</td></tr></tbody></table></div>
+<p>Every parser produces the same columns, so the rest of the application does
+   not care where a capture came from: <code>Timestamp, ID, Bus, DLC,
+   Extended, B0..B7</code>, plus a per-ID <code>Delta</code>.</p>
+
+<h2 id="where-things-live">Where things live</h2>
+<div class="table-scroll"><table><thead><tr><th>Path</th><th>What</th></tr></thead><tbody><tr><td><code>~/.canlab/plugins/</code></td><td>Plugins you have installed.</td></tr><tr><td><code>~/.canlab/opendbc_cache/</code></td><td>Cached opendbc index, so matching works offline after the first fetch.</td></tr><tr><td><code>~/.canlab/memory.json</code></td><td>AI engine memory across sessions.</td></tr><tr><td><code>canlab/sample_data/</code></td><td>The bundled sample capture, its generator, and an example seed-key script.</td></tr><tr><td><code>docs/AUDIT_FIXES.md</code></td><td>The full list of defects fixed in the deep-audit pass, each with a regression test.</td></tr></tbody></table></div>
+
+<h2 id="settings">Settings</h2>
+<p>Eight panels: API KEYS, CAN INTERFACE, GITHUB, CACHE, REST API, BACKEND,
+   MULTI-BUS and PLUGINS. The ones you will actually touch are CAN INTERFACE
+   (interface, channel, bitrate, CAN FD), API KEYS if you want the AI features,
+   and PLUGINS to approve anything you have installed.</p>
+
+<h2 id="testing">Testing</h2>
+<p>The suite runs headless:</p>
+<pre><code>python -m pytest tests/ -q        # 154 passed, 1 skipped</code></pre>
+<p>The skip is the MDF4 importer, which needs the optional
+   <code>asammdf</code>. If the MCP SDK is not installed either, that is a
+   second skip.</p>
+<p>It covers the log parsers against fixtures in the real formats, DBC encode
+   and decode round trips through cantools, the ARM TX gate on every transmit
+   path including that disarming mid-run stops a worker, ISO-TP and UDS wire
+   format, DTC and PID decoding, the REST authentication and NaN-safe JSON, and
+   an import smoke test of every tab.</p>
+
+<h2 id="limitations">Limitations</h2>
+<ul>
+  <li><strong>Not validated on many real vehicles.</strong> Signal
+      identification is heuristic. Verify every result before trusting it.</li>
+  <li><strong>ARM TX covers the transmit features, not diagnostic reads.</strong>
+      See <a href="safety.html#the-arm-tx-gate">the gate</a> for exactly which
+      paths it covers.</li>
+  <li><strong>XCP and DoIP have no user interface</strong> on <code>main</code>.
+      They are library modules.</li>
+  <li><strong>ARXML export is experimental</strong> and is not validated
+      against the AUTOSAR schema.</li>
+  <li><strong>openpilot rlog import</strong> needs pycapnp plus the cereal
+      schema; without them it raises rather than producing data.</li>
+  <li><strong>MDF4</strong> needs <code>asammdf</code>. <strong>Vision
+      OCR</strong> needs opencv, rapidocr and onnxruntime, which are heavy.</li>
+  <li><strong>CAN FD</strong> parsing and decoding is partial in places.</li>
+  <li><strong>The gateway needs two hardware channels.</strong></li>
+  <li><strong>The prebuilt binary is Linux x86_64 and unsigned.</strong> No
+      macOS or Windows build; run from source there.</li>
+</ul>
+
+<h2 id="getting-help">Getting help</h2>
+<p>Bugs and questions belong in <a href="https://github.com/Sherin-SEF-AI/CanLab/issues">the issue tracker</a>.
+   A capture that reproduces the problem helps enormously; the sample format is
+   plain CSV and easy to trim.</p>
+
+<h2 id="credits">Credits</h2>
+<p>The calibration refinements in <code>core/calibrate_refine.py</code>,
+   sentinel masking and scale snapping, are adapted from CSS Electronics'
+   <a href="https://github.com/CSS-Electronics/can-bus-reverse-engineering-skills">CAN
+   bus reverse engineering skills</a> (MIT). The OEM checksum algorithms in
+   <code>core/checksums.py</code> follow
+   <a href="https://github.com/commaai/opendbc">commaai/opendbc</a> (MIT).</p>
+<p>Built on python-can, cantools, PyQt6, pandas, NumPy and pyqtgraph.</p>
+
+    </main>
+  </div>
+</div>
+<footer>
+  <div class="wrap">
+    <p>CanLab is MIT licensed. Author: Sherin Joseph Roy.
+       <a href="https://github.com/Sherin-SEF-AI/CanLab">Source on GitHub</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/releases">Releases</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/issues">Issues</a></p>
+    <p>These pages describe the code on <code>main</code>. Where a statement is
+       about a specific module the module is named, so it can be checked
+       against the source.</p>
+  </div>
+</footer>
+</body>
+</html>

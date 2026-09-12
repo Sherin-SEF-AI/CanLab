@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analysis · CanLab</title>
+<meta name="description" content="How the offline detection actually works, and how much to trust it.">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="brand" href="index.html">CanLab<span>/docs</span></a>
+    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html" aria-current="page">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html">Integrations</a><a href="reference.html">Reference</a></nav>
+  </div>
+</header>
+<div class="wrap">
+  <div class="layout">
+    <aside class="toc"><h2>On this page</h2><nav><a href="#counters-and-checksums">Counters and checksums</a><a href="#identifying-the-checksum-algorithm">Identifying the checksum algorithm</a><a href="#entropy-boundaries">Entropy boundaries</a><a href="#cross-id-correlation">Cross-ID correlation</a><a href="#byte-role-classification">Byte role classification</a><a href="#anomaly-detection">Anomaly detection</a><a href="#multiplexer-detection">Multiplexer detection</a><a href="#reference-calibration">Reference calibration</a><a href="#performance">Performance</a></nav></aside>
+    <main id="main">
+
+<h1>How the analysis works</h1>
+<p class="lede">All of this runs locally with no API key and nothing leaving
+   the machine. It is also all heuristic, so this page is as much about the
+   limits as the methods.</p>
+
+<div class="warn">
+  <span class="callout-title">Read this first</span>
+  <p>These methods produce <strong>candidates</strong>. A confidence figure is
+     a match fraction over the frames you loaded, not a statistical proof, and
+     not a probability that the answer is right. A byte can satisfy a checksum
+     relation by coincidence, especially in a short capture. Verify against the
+     vehicle before you rely on anything here.</p>
+</div>
+
+<h2 id="counters-and-checksums">Counters and checksums</h2>
+<p><code>core/counter_checksum_detector.py</code> sweeps every message.</p>
+<p>A <strong>counter</strong> is a byte, or a nibble of one, that increments by
+   one from frame to frame and wraps. The detector checks the whole byte and
+   each nibble separately, because four-bit counters packed into the top or
+   bottom half of a byte are common.</p>
+<p>A <strong>checksum</strong> is a byte that can be computed from the others.
+   The detector tests whether each byte is the sum, the exclusive-or, or the
+   nibble sum of the rest.</p>
+<p>Knowing which bytes these are matters more than it sounds: they change
+   constantly, so they look exactly like fast-moving signals until you rule
+   them out.</p>
+
+<h2 id="identifying-the-checksum-algorithm">Identifying the checksum algorithm</h2>
+<p>The sweep above tells you <em>which byte</em>. To find out <em>which
+   algorithm</em>, <strong>AUTO-RE &rarr; CHECKSUM GUESSER</strong> takes one
+   message and one byte and tries them all: plain and inverted sums, two's
+   complement, nibble sums, CRC-8 in its SAE J1850 and AUTOSAR forms, and the
+   manufacturer variants used by Hyundai, Toyota, Honda and Subaru
+   (<code>core/checksums.py</code>).</p>
+<p>It fits on the first 70% of the capture and validates on the remaining 30%,
+   then reports both numbers. That split is the useful part: an algorithm that
+   scores well on the training portion and badly on the validation portion has
+   memorised noise rather than found the rule.</p>
+
+<h2 id="entropy-boundaries">Entropy boundaries</h2>
+<p><code>core/entropy_boundary.py</code> measures per-bit entropy across a
+   message. Bits that never change are padding. Bits that change constantly
+   carry something. Runs of bits with similar entropy tend to belong to the
+   same field, so the boundaries between runs suggest where one signal ends and
+   the next begins.</p>
+<p>It is a suggestion about <em>structure</em>, not meaning. It will happily
+   draw a boundary through the middle of a 16-bit value whose high byte rarely
+   changes.</p>
+
+<h2 id="cross-id-correlation">Cross-ID correlation</h2>
+<p><code>core/correlation_engine.py</code> computes Pearson r between byte
+   pairs across different messages, aligning them to nearest timestamps and
+   sweeping a range of lags.</p>
+<p>This is how you find the same physical quantity reported by two ECUs, which
+   is useful because one of them is often easier to identify than the other. A
+   high correlation between a byte you understand and one you do not is a
+   strong lead.</p>
+<p>Bear in mind that with thousands of aligned samples almost anything reaches
+   statistical significance, so judge by the size of r, not by whether a test
+   passed.</p>
+
+<h2 id="byte-role-classification">Byte role classification</h2>
+<p><code>core/signal_classifier.py</code> labels each byte COUNTER, CHECKSUM,
+   BOOLEAN, PHYSICAL or PADDING, and ML INTEL shows the same with a confidence
+   and the entropy behind it. It combines the detectors above with simple
+   distribution tests: a byte with two values is a flag, a byte with a smooth
+   distribution is more likely a physical quantity.</p>
+
+<h2 id="anomaly-detection">Anomaly detection</h2>
+<p><code>core/anomaly_detector.py</code> fits a baseline from traffic you
+   declare normal, then scores later frames against it, using a z-score per
+   byte and an Isolation Forest over the frame vector. The use is finding the
+   one message that behaves differently when a fault is present or a button is
+   pressed.</p>
+
+<h2 id="multiplexer-detection">Multiplexer detection</h2>
+<p><code>core/mux_detector.py</code> looks for a selector byte whose value
+   changes which other bytes are active. Multiplexed messages otherwise look
+   like nonsense, because the same byte offset means different things depending
+   on the mode.</p>
+
+<h2 id="reference-calibration">Reference calibration</h2>
+<p><code>core/reference_calibrate.py</code> is the one method here that can
+   give you a definitive answer, because it uses ground truth.</p>
+<p>Give it a CSV of <code>timestamp,value</code> from an independent
+   measurement and it searches across arbitration IDs, byte ranges and
+   endianness for the field whose values best fit by least squares. It reports
+   scale, offset and an R² verdict of PASS or UNCONFIRMED.</p>
+<p>Two refinements matter in practice. Sentinel codes that mean "signal
+   unavailable", typically all bits set, are masked so they do not wreck the
+   fit. And a fitted scale is snapped to a neat value when doing so barely
+   changes the decode, because a real scale is far more likely to be 0.03125
+   than 0.031248. Both are adapted from CSS Electronics' reverse-engineering
+   skills.</p>
+<p>The vision variant (<code>core/vision_reference.py</code>) reads the
+   reference value off a dashboard video by OCR instead of a CSV. It needs
+   <code>opencv-python</code> and <code>rapidocr</code>.</p>
+
+<h2 id="performance">Performance</h2>
+<p>Counter and checksum detection is vectorised over NumPy arrays rather than
+   iterating rows: on a 500,000-frame capture it went from about 183 seconds to
+   about 2.8 seconds. The heavier analyses run in worker threads so the window
+   stays responsive.</p>
+
+    </main>
+  </div>
+</div>
+<footer>
+  <div class="wrap">
+    <p>CanLab is MIT licensed. Author: Sherin Joseph Roy.
+       <a href="https://github.com/Sherin-SEF-AI/CanLab">Source on GitHub</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/releases">Releases</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/issues">Issues</a></p>
+    <p>These pages describe the code on <code>main</code>. Where a statement is
+       about a specific module the module is named, so it can be checked
+       against the source.</p>
+  </div>
+</footer>
+</body>
+</html>

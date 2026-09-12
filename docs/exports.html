@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exports · CanLab</title>
+<meta name="description" content="Getting your definitions out: DBC, openpilot, CANdb++, ARXML, Wireshark and generated code.">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="brand" href="index.html">CanLab<span>/docs</span></a>
+    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html" aria-current="page">Exports</a><a href="integrations.html">Integrations</a><a href="reference.html">Reference</a></nav>
+  </div>
+</header>
+<div class="wrap">
+  <div class="layout">
+    <aside class="toc"><h2>On this page</h2><nav><a href="#the-formats">The formats</a><a href="#cross-referencing-opendbc">Cross-referencing opendbc</a><a href="#generated-code">Generated code</a><a href="#projects">Projects</a></nav></aside>
+    <main id="main">
+
+<h1>Exports and code generation</h1>
+<p class="lede">A signal definition is only useful if the next tool can read
+   it. Everything here goes through one cantools-backed path, so what the
+   preview decodes is what the file produces.</p>
+
+<h2 id="the-formats">The formats</h2>
+<div class="table-scroll"><table><thead><tr><th>Format</th><th>Import</th><th>Export</th><th>Notes</th></tr></thead><tbody><tr><td>Standard DBC</td><td>Yes</td><td>Yes</td><td>The lingua franca. Parseable by cantools and the Vector tools.</td></tr><tr><td>openpilot DBC</td><td>Yes, as a cross-reference</td><td>Yes</td><td>Carries the comma.ai checksum and counter annotations.</td></tr><tr><td>Vector CANdb++</td><td>No</td><td>Yes</td><td>With <code>BA_DEF_</code> attribute blocks.</td></tr><tr><td>AUTOSAR ARXML 4.3</td><td>Yes</td><td>Experimental</td><td>Round-trips within CanLab but is <strong>not</strong> validated against the full AUTOSAR schema. Do not rely on it in external AUTOSAR tools yet.</td></tr><tr><td>Wireshark Lua dissector</td><td>No</td><td>Yes</td><td>Your signals appear by name in a packet capture. Little- and big-endian; the big-endian path is verified against cantools.</td></tr><tr><td>Excel or CSV CAN matrix</td><td>Yes</td><td>No</td><td>For the spreadsheets that OEM documentation often arrives as.</td></tr><tr><td>Decoded time series</td><td>No</td><td>Yes</td><td>A timestamp-by-signal matrix to CSV or Parquet, for analysis elsewhere.</td></tr></tbody></table></div>
+<p>Extended 29-bit identifiers, multiplexed signals and value tables
+   round-trip.</p>
+
+<h2 id="cross-referencing-opendbc">Cross-referencing opendbc</h2>
+<p><strong>Tools &rarr; Match against opendbc</strong> fetches the
+   <a href="https://github.com/commaai/opendbc">commaai/opendbc</a> library,
+   caches it under <code>~/.canlab/opendbc_cache</code>, and ranks how well
+   your capture's arbitration IDs match each OEM database. The first run needs
+   network access; afterwards it works from the cache.</p>
+<p>If your vehicle is one openpilot already supports, this can shortcut most of
+   the work. If it is not, a partial match still tells you which OEM's
+   conventions to expect.</p>
+
+<h2 id="generated-code">Generated code</h2>
+<p><strong>CODE GEN</strong> writes a working program from your definitions:
+   Python that opens the bus and decodes the signals you picked, or encodes and
+   sends them, and a C variant that does the bit extraction directly. Pick the
+   signals, the interface and the direction.</p>
+<p>The generated Python goes through cantools for encoding, so a frame it
+   produces is formed the same way the preview decodes it.</p>
+
+<h2 id="projects">Projects</h2>
+<p><strong>File &rarr; Save Project</strong> writes a <code>.canlab</code> file
+   holding the frames, the signal definitions and your notes together, so a
+   session can be picked up later or handed to somebody else. It is the only
+   format here that round-trips the <em>work</em> rather than the result.</p>
+
+    </main>
+  </div>
+</div>
+<footer>
+  <div class="wrap">
+    <p>CanLab is MIT licensed. Author: Sherin Joseph Roy.
+       <a href="https://github.com/Sherin-SEF-AI/CanLab">Source on GitHub</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/releases">Releases</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/issues">Issues</a></p>
+    <p>These pages describe the code on <code>main</code>. Where a statement is
+       about a specific module the module is named, so it can be checked
+       against the source.</p>
+  </div>
+</footer>
+</body>
+</html>

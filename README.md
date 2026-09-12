@@ -47,6 +47,17 @@ a man-in-the-middle gateway.
 
 ---
 
+## Documentation
+
+Full documentation, with the walkthrough videos playing in the page:
+**[sherin-sef-ai.github.io/CanLab](https://sherin-sef-ai.github.io/CanLab/)**
+
+Installation, the reverse-engineering workflow end to end, every tab, how the
+analysis actually works, the diagnostics protocols, the export formats, the
+integrations, and the safety model.
+
+---
+
 ## Run from source
 
 This is the supported, verified way to run it.

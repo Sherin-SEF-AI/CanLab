@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CanLab · CanLab</title>
+<meta name="description" content="A desktop workstation for reverse-engineering a CAN bus: load a capture, find what the bytes mean, and export a DBC.">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="brand" href="index.html">CanLab<span>/docs</span></a>
+    <nav aria-label="Sections"><a href="index.html" aria-current="page">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html">Integrations</a><a href="reference.html">Reference</a></nav>
+  </div>
+</header>
+<div class="wrap">
+  <div class="layout">
+    <aside class="toc"><h2>On this page</h2><nav><a href="#watch-it-work">Watch it work</a><a href="#what-it-is-for">What it is for</a><a href="#what-it-is-not">What it is not</a><a href="#try-it-without-hardware">Try it without hardware</a></nav></aside>
+    <main id="main">
+
+<div class="hero">
+  <h1>CanLab</h1>
+  <p class="lede">A desktop workstation for reverse-engineering a CAN bus.
+     Load a capture, work out which bytes carry what, write the signal
+     definitions down, check them against real frames, and export a DBC that
+     other tools can read.</p>
+  <div class="cta">
+    <a class="btn btn-primary" href="install.html">Install</a>
+    <a class="btn" href="guide.html">How to use it</a>
+    <a class="btn" href="https://github.com/Sherin-SEF-AI/CanLab">Source</a>
+  </div>
+</div>
+
+<h2 id="watch-it-work">Watch it work</h2>
+<p>A narrated walkthrough of every tab, recorded from the running application
+   in four parts. Captions are on by default; the whole thing is about eleven
+   minutes.</p>
+<div class="video-grid"><div class="video-card">
+  <video controls preload="metadata" poster="" playsinline>
+    <source src="canlab-demo-part1-analysis.mp4" type="video/mp4">
+    <track kind="captions" srclang="en" label="English" default
+           src="canlab-demo-part1-analysis.vtt">
+    Your browser cannot play this video.
+    <a href="canlab-demo-part1-analysis.mp4">Download it instead</a>.
+  </video>
+  <div class="meta">
+    <h3>1. Loading a capture and finding structure</h3>
+    <p class="len">2:58</p>
+    <p>FRAMES, the ID panel and inspector, SIGNALS, counter and checksum detection, the checksum guesser, entropy boundaries.</p>
+  </div>
+</div><div class="video-card">
+  <video controls preload="metadata" poster="" playsinline>
+    <source src="canlab-demo-part2-signals.mp4" type="video/mp4">
+    <track kind="captions" srclang="en" label="English" default
+           src="canlab-demo-part2-signals.vtt">
+    Your browser cannot play this video.
+    <a href="canlab-demo-part2-signals.mp4">Download it instead</a>.
+  </video>
+  <div class="meta">
+    <h3>2. Defining signals and checking them</h3>
+    <p class="len">2:37</p>
+    <p>DBC BUILDER and its bit grid, the live decode preview, PLOT, INTELLIGENCE, ML INTEL, DASHBOARD.</p>
+  </div>
+</div><div class="video-card">
+  <video controls preload="metadata" poster="" playsinline>
+    <source src="canlab-demo-part3-outputs.mp4" type="video/mp4">
+    <track kind="captions" srclang="en" label="English" default
+           src="canlab-demo-part3-outputs.vtt">
+    Your browser cannot play this video.
+    <a href="canlab-demo-part3-outputs.mp4">Download it instead</a>.
+  </video>
+  <div class="meta">
+    <h3>3. Timeline, code generation and exports</h3>
+    <p class="len">2:25</p>
+    <p>TIMELINE, CODE GEN, the five export formats, DIAGNOSTICS, security access.</p>
+  </div>
+</div><div class="video-card">
+  <video controls preload="metadata" poster="" playsinline>
+    <source src="canlab-demo-part4-transmitting.mp4" type="video/mp4">
+    <track kind="captions" srclang="en" label="English" default
+           src="canlab-demo-part4-transmitting.vtt">
+    Your browser cannot play this video.
+    <a href="canlab-demo-part4-transmitting.mp4">Download it instead</a>.
+  </video>
+  <div class="meta">
+    <h3>4. The transmit gate, injection and live capture</h3>
+    <p class="len">3:23</p>
+    <p>ARM TX, INJECTION, replay, fuzzing, GATEWAY, OBD-II, the AI engine, live capture.</p>
+  </div>
+</div></div>
+<p>The walkthrough is generated rather than hand-recorded.
+   <code>docs/demo/record.py</code> drives a real main window under Qt's
+   offscreen platform and calls the same slots the buttons call, so a scene
+   that stops working fails the run instead of quietly recording a stale
+   screen.</p>
+<div class="note">
+  <span class="callout-title">One caveat</span>
+  <p>It was recorded from the <code>fix/production-readiness</code> branch, so
+     two things in it are ahead of <code>main</code>: the diagnostics tab there
+     has XCP and DoIP panels, and it has selectable vehicle profiles. On
+     <code>main</code> those protocols are
+     <a href="diagnostics.html#library-only-protocols">library modules with no
+     user interface</a>. Everything else shown is what <code>main</code>
+     does.</p>
+</div>
+
+<h2 id="what-it-is-for">What it is for</h2>
+<p>You have a capture from a vehicle bus and a few thousand frames of hex. The
+   job is to work out which arbitration IDs matter, which bytes inside them
+   move, which of those are actually signals rather than counters and
+   checksums, what physical quantity each one represents, and then to write
+   that down in a form other tools accept. CanLab is built around that loop.</p>
+<div class="cards">
+  <a class="card" href="guide.html"><h3>The workflow</h3><p>Load, narrow down,
+     define, verify, export. Start here if you have a capture and no idea what
+     is in it.</p></a>
+  <a class="card" href="tabs.html"><h3>All 15 tabs</h3><p>What each one does
+     and when you would reach for it.</p></a>
+  <a class="card" href="analysis.html"><h3>How the analysis works</h3>
+     <p>Counters, checksums, entropy, correlation, and what the confidence
+     numbers do and do not mean.</p></a>
+  <a class="card" href="safety.html"><h3>The transmit gate</h3><p>What ARM TX
+     covers, what it does not, and why that distinction matters.</p></a>
+</div>
+
+<h2 id="what-it-is-not">What it is not</h2>
+<p>It is not a signal identifier. The analysis produces candidates ranked by
+   heuristics, and a confidence figure is a match fraction over the frames you
+   loaded, not a proof. Every result needs verifying against the vehicle before
+   you rely on it. The project is a single-author effort, still alpha, and has
+   not been validated across a wide range of real vehicles. The
+   <a href="reference.html#limitations">limitations</a> are listed plainly.</p>
+
+<div class="danger">
+  <span class="callout-title">Before you connect to anything</span>
+  <p>CanLab can transmit on a CAN bus. Use it only on isolated bench setups: a
+     benchtop ECU, <code>vcan0</code>, or dedicated lab hardware. Injecting or
+     forwarding frames on a live vehicle bus can interfere with braking,
+     steering and airbag systems. Read <a href="safety.html">Safety</a>
+     first.</p>
+</div>
+
+<h2 id="try-it-without-hardware">Try it without hardware</h2>
+<p>A sample capture ships with the source at
+   <code>canlab/sample_data/sample_kona_drive.csv</code>: 6,610 frames across
+   10 arbitration IDs over 10 seconds, at rates from 1 Hz to 100 Hz. Every
+   offline feature works on it, so you can go through the whole
+   <a href="guide.html">workflow</a> before touching a vehicle.</p>
+
+    </main>
+  </div>
+</div>
+<footer>
+  <div class="wrap">
+    <p>CanLab is MIT licensed. Author: Sherin Joseph Roy.
+       <a href="https://github.com/Sherin-SEF-AI/CanLab">Source on GitHub</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/releases">Releases</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/issues">Issues</a></p>
+    <p>These pages describe the code on <code>main</code>. Where a statement is
+       about a specific module the module is named, so it can be checked
+       against the source.</p>
+  </div>
+</footer>
+</body>
+</html>

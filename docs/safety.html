@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Safety · CanLab</title>
+<meta name="description" content="What the ARM TX gate covers, what it deliberately does not, and how to work on a bus without surprising it.">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="brand" href="index.html">CanLab<span>/docs</span></a>
+    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html" aria-current="page">Safety</a><a href="guide.html">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html">Integrations</a><a href="reference.html">Reference</a></nav>
+  </div>
+</header>
+<div class="wrap">
+  <div class="layout">
+    <aside class="toc"><h2>On this page</h2><nav><a href="#the-arm-tx-gate">The ARM TX gate</a><a href="#the-other-guards">The other guards</a><a href="#working-safely">Working safely</a><a href="#if-you-are-testing-a-real-vehicle">If you are testing a real vehicle</a></nav></aside>
+    <main id="main">
+
+<h1>Safety</h1>
+<p class="lede">CanLab can put frames on a CAN bus. This page is about what
+   stops it doing that by accident, and, just as importantly, where that
+   protection ends.</p>
+
+<div class="danger">
+  <span class="callout-title">Bench use only</span>
+  <p>Use the transmit features only on isolated setups: a benchtop ECU,
+     <code>vcan0</code>, or dedicated lab hardware. Injecting or forwarding
+     frames on a live vehicle bus can interfere with braking, steering and
+     airbag systems. A vehicle on jack stands with the engine running is still
+     a live vehicle.</p>
+</div>
+
+<h2 id="the-arm-tx-gate">The ARM TX gate</h2>
+<p>There is one global toggle in the toolbar, <strong>ARM TX</strong>, and it
+   is off when the application starts. While it is off, the paths below refuse
+   to transmit. They also re-check on every frame, so turning it off stops a
+   run that is already going rather than merely preventing the next one.</p>
+<div class="table-scroll"><table><thead><tr><th>Path</th><th>Where</th></tr></thead><tbody><tr><td>Signal injection, single and looping</td><td>INJECTION &rarr; INJECT</td></tr><tr><td>Replay of a capture</td><td>INJECTION &rarr; REPLAY</td></tr><tr><td>Trigger-driven sends</td><td>INJECTION &rarr; TRIGGERS</td></tr><tr><td>Actuator sweep</td><td>INJECTION &rarr; SAFETY SCAN</td></tr><tr><td>Fuzzer</td><td>INJECTION &rarr; FUZZ</td></tr><tr><td>Scripted test sequences</td><td>INJECTION &rarr; TEST SEQUENCE</td></tr><tr><td>Gateway forwarding</td><td>GATEWAY</td></tr><tr><td>UDS Clear DTC</td><td>DIAGNOSTICS</td></tr><tr><td>The REST <code>/inject</code> endpoint</td><td>Needs the API token <em>and</em> ARM TX</td></tr></tbody></table></div>
+
+<div class="warn">
+  <span class="callout-title">What the gate does not cover</span>
+  <p>Ordinary diagnostic reads put request frames on the bus without checking
+     ARM TX: the UDS scans and identifier reads, OBD-II polling, and ISO-TP
+     requests. This is deliberate, on the grounds that they only read ECU
+     state, but it means <strong>disarmed is not the same as silent</strong>.
+     If you need the tool to emit nothing at all, disconnect the bus.</p>
+</div>
+
+<h2 id="the-other-guards">The other guards</h2>
+<ul>
+  <li><strong>A warning you have to accept on first launch.</strong> The
+      acceptance is remembered, so it appears once.</li>
+  <li><strong>The UDS service scan is read-only by default.</strong> It probes
+      only services that read. Destructive ones, such as ECU reset and clear
+      diagnostics, are skipped unless you tick <em>Include destructive
+      services</em> and confirm. Those do exactly what their names say.</li>
+  <li><strong>Security-access brute force is rate limited</strong> and stops
+      the moment the ECU reports its attempt limit. Tripping that counter can
+      lock a module until it is power cycled, and on some modules
+      permanently.</li>
+  <li><strong>The actuator sweep has a watchdog.</strong> Give it an
+      arbitration ID that should keep appearing; if that ID goes silent, the
+      sweep aborts on the assumption that something upstream has cut out.</li>
+  <li><strong>Plugins do not run until you enable them.</strong> See
+      <a href="integrations.html#plugins">plugins</a>.</li>
+</ul>
+
+<h2 id="working-safely">Working safely</h2>
+<ol class="steps">
+  <li><h3>Start on a virtual bus</h3><p>Everything except real ECU responses
+      works on <code>vcan0</code>. Get your injection payloads right there
+      first. See <a href="install.html#hardware-interfaces">hardware
+      interfaces</a> for the three commands that set one up.</p></li>
+  <li><h3>Then a bench ECU on its own</h3><p>One module, its own power, its own
+      bus segment, terminated properly. Nothing else on the wire that you would
+      mind confusing.</p></li>
+  <li><h3>Watch before you write</h3><p>Capture and analyse first. If you do
+      not know what a message normally carries, you cannot tell whether your
+      injected version is plausible.</p></li>
+  <li><h3>Arm deliberately, disarm immediately</h3><p>Turn ARM TX on for the
+      moment you need it and off again after. It is a toggle rather than a
+      per-action prompt precisely so that leaving it armed is a visible
+      state.</p></li>
+</ol>
+
+<h2 id="if-you-are-testing-a-real-vehicle">If you are testing a real vehicle</h2>
+<p>That is beyond what this project is built or tested for, and nothing here
+   should be read as a recommendation to do it. If you do, the parts that
+   matter are the ones this tool cannot give you: a way to cut power quickly,
+   a vehicle that cannot move, and somebody else present. Reading is a much
+   smaller risk than writing, and most reverse engineering is reading.</p>
+
+    </main>
+  </div>
+</div>
+<footer>
+  <div class="wrap">
+    <p>CanLab is MIT licensed. Author: Sherin Joseph Roy.
+       <a href="https://github.com/Sherin-SEF-AI/CanLab">Source on GitHub</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/releases">Releases</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/issues">Issues</a></p>
+    <p>These pages describe the code on <code>main</code>. Where a statement is
+       about a specific module the module is named, so it can be checked
+       against the source.</p>
+  </div>
+</footer>
+</body>
+</html>

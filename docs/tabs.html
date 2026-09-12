@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tabs · CanLab</title>
+<meta name="description" content="What each of the 15 tabs does and when you would reach for it.">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="brand" href="index.html">CanLab<span>/docs</span></a>
+    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html">Guide</a><a href="tabs.html" aria-current="page">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html">Integrations</a><a href="reference.html">Reference</a></nav>
+  </div>
+</header>
+<div class="wrap">
+  <div class="layout">
+    <aside class="toc"><h2>On this page</h2><nav><a href="#frames">FRAMES</a><a href="#signals">SIGNALS</a><a href="#plot">PLOT</a><a href="#ai-engine">AI ENGINE</a><a href="#dbc-builder">DBC BUILDER</a><a href="#code-gen">CODE GEN</a><a href="#intelligence">INTELLIGENCE</a><a href="#injection">INJECTION</a><a href="#diagnostics">DIAGNOSTICS</a><a href="#dashboard">DASHBOARD</a><a href="#auto-re">AUTO-RE</a><a href="#timeline">TIMELINE</a><a href="#obd-ii">OBD-II</a><a href="#ml-intel">ML INTEL</a><a href="#gateway">GATEWAY</a></nav></aside>
+    <main id="main">
+
+<h1>The 15 tabs</h1>
+<p class="lede">Roughly in the order you would use them. Tabs marked with a
+   star in the application are the analysis-heavy ones.</p>
+
+<h2 id="frames">FRAMES</h2>
+<p>The raw view: every frame in time order with its timestamp, arbitration ID,
+   bus, length, data bytes and the gap since the last frame with the same ID. A
+   byte is highlighted when it differs from the previous frame with that ID,
+   which is how you spot movement at a glance.</p>
+<p>Filter by ID (hex substring) or bus. <strong>Freeze</strong> stops the table
+   updating while you read, without stopping capture. <strong>Follow</strong>
+   keeps it scrolled to the newest frame. Double-click a row for the full frame
+   detail.</p>
+
+<h2 id="signals">SIGNALS</h2>
+<p>One row per message rather than per frame: frame count, rate, payload
+   entropy and a suspected message type. It is the fastest way to see the shape
+   of a capture. Entropy is the useful column: a message whose payload never
+   changes is not interesting, and one with high entropy across every byte is
+   often a diagnostic or multiplexed message rather than a set of signals.</p>
+
+<h2 id="plot">PLOT</h2>
+<p>Multi-signal time series. Raw bytes and decoded DBC signals share one time
+   axis, each with its own scale, so you can compare a decoded value against
+   the bytes it came from or against a different message entirely. Mouse wheel
+   zooms.</p>
+<p>This is where you confirm a definition. Physical quantities move smoothly; a
+   sawtooth usually means the byte order is wrong.</p>
+
+<h2 id="ai-engine">AI ENGINE</h2>
+<p>Optional, and off until you configure a provider. Sends one message ID's
+   statistics to Anthropic, Groq or a local Ollama model and asks for an
+   interpretation. What makes it more useful than pasting hex into a chat
+   window is that the offline findings go with the question: the byte roles,
+   the detected checksum, the message period. Memory persists across sessions.
+   See <a href="integrations.html#ai-engine">what actually leaves the
+   machine</a>.</p>
+
+<h2 id="dbc-builder">DBC BUILDER</h2>
+<p>Where a guess becomes a definition. A form for the signal fields, a bit grid
+   showing the live payload with your selection highlighted, and a live decode
+   preview running real frames from the capture through the definition.</p>
+<p>Imports DBC, ARXML and Excel or CSV CAN matrices. Exports DBC, openpilot
+   DBC, Vector CANdb++, ARXML and a Wireshark Lua dissector. There is also an
+   <em>Auto-Build DBC</em> button that drafts definitions from the detectors,
+   and a cross-reference against opendbc.</p>
+
+<h2 id="code-gen">CODE GEN</h2>
+<p>Turns your definitions into a working program. Pick the signals, the
+   interface and the direction, and it writes Python or C that opens the bus
+   and decodes them, or encodes and sends them.</p>
+
+<h2 id="intelligence">INTELLIGENCE</h2>
+<p>Looks across messages rather than within one. Its sections are signal
+   periodicity, automatic DBC generation, log diff, an opendbc cross-reference,
+   change-on-action capture, a J1939 PGN decoder, and a value reverse
+   lookup.</p>
+<p>Change-on-action is the one worth knowing about: capture a baseline, perform
+   a physical action, capture again, and it shows which bytes changed. That is
+   often the fastest route from "somewhere in these 60 messages" to a
+   candidate.</p>
+
+<h2 id="injection">INJECTION</h2>
+<p>Everything that transmits, in six sub-tabs: <strong>INJECT</strong> a signal
+   at a physical value once or in a loop, <strong>REPLAY</strong> a capture
+   back onto the bus with a scrubber, <strong>TRIGGERS</strong> that fire on a
+   byte condition, <strong>SAFETY SCAN</strong> which sweeps an actuator
+   between limits with a watchdog, <strong>FUZZ</strong> with random, boundary
+   or mutation payloads, and <strong>TEST SEQUENCE</strong> for scripted
+   inject, wait and assert steps.</p>
+<div class="warn">
+  <span class="callout-title">Gated</span>
+  <p>Nothing here transmits until ARM TX is on, and turning it off stops a run
+     already in progress. Read <a href="safety.html">Safety</a>.</p>
+</div>
+
+<h2 id="diagnostics">DIAGNOSTICS</h2>
+<p>The request side, in six sub-tabs: OBD-II and UDS, a UDS deep scan, a UDS
+   service scan, security access, bus load and bus health. Full protocol detail
+   is on <a href="diagnostics.html">the diagnostics page</a>.</p>
+
+<h2 id="dashboard">DASHBOARD</h2>
+<p>The whole bus at once. A byte-value heatmap across every message, so a dense
+   column is a message worth investigating and a blank one is padding; a
+   message timeline showing when each ID is active; and physical overlay gauges
+   driven by signals you have defined.</p>
+
+<h2 id="auto-re">AUTO-RE</h2>
+<p>The tedious part, automated. Four sub-tabs: <strong>COUNTER/CHECKSUM</strong>
+   detection across every message, <strong>ENTROPY BOUNDARIES</strong> to
+   suggest where fields begin and end, <strong>CORRELATION</strong> between
+   bytes, and a <strong>CHECKSUM GUESSER</strong> that takes one message and
+   one byte and tries every algorithm it knows. Runs in worker threads, so the
+   window stays responsive. See <a href="analysis.html">how it works</a>.</p>
+
+<h2 id="timeline">TIMELINE</h2>
+<p>Questions about <em>when</em>. Several signals stacked on one scrubbable
+   axis with a shared playhead, so you can line up the moment a flag flips
+   against the moment a value starts moving. The <strong>VIDEO SYNC</strong>
+   sub-tab loads a dashcam or bench recording and ties it to the log with an
+   adjustable offset: click a signal spike to seek the video, scrub the video
+   to move the playhead.</p>
+
+<h2 id="obd-ii">OBD-II</h2>
+<p>The standardised subset any compliant vehicle answers. Discovers which PIDs
+   are supported by walking the continuation windows rather than assuming the
+   first 32, then polls the ones you pick and shows them as live gauges.</p>
+
+<h2 id="ml-intel">ML INTEL</h2>
+<p>Per-byte rather than per-message. Classifies each byte as a counter,
+   checksum, boolean flag, physical value or padding with a confidence, fits a
+   baseline from normal traffic and scores frames against it for anomalies, and
+   finds messages with similar behaviour by embedding.</p>
+
+<h2 id="gateway">GATEWAY</h2>
+<p>Bridges two CAN channels and puts you in between. Rules are applied in
+   order: pass a message through, block it, or modify a byte or the arbitration
+   ID as it crosses. That is how you test what an ECU does when a message it
+   depends on disappears or arrives with a different value.</p>
+<p>It needs <strong>two</strong> hardware channels, and like everything else it
+   forwards nothing until ARM TX is on.</p>
+
+    </main>
+  </div>
+</div>
+<footer>
+  <div class="wrap">
+    <p>CanLab is MIT licensed. Author: Sherin Joseph Roy.
+       <a href="https://github.com/Sherin-SEF-AI/CanLab">Source on GitHub</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/releases">Releases</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/issues">Issues</a></p>
+    <p>These pages describe the code on <code>main</code>. Where a statement is
+       about a specific module the module is named, so it can be checked
+       against the source.</p>
+  </div>
+</footer>
+</body>
+</html>

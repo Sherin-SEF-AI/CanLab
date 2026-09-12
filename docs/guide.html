@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guide · CanLab</title>
+<meta name="description" content="The reverse-engineering loop end to end: load a capture, narrow it down, define a signal, verify it, export.">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="brand" href="index.html">CanLab<span>/docs</span></a>
+    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html" aria-current="page">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html">Integrations</a><a href="reference.html">Reference</a></nav>
+  </div>
+</header>
+<div class="wrap">
+  <div class="layout">
+    <aside class="toc"><h2>On this page</h2><nav><a href="#the-short-version">The short version</a><a href="#1-load-a-capture">1. Load a capture</a><a href="#2-see-which-ids-exist">2. See which IDs exist</a><a href="#3-remove-what-is-not-a-signal">3. Remove what is not a signal</a><a href="#4-guess-a-field-and-write-it-down">4. Guess a field and write it down</a><a href="#5-check-it-against-real-frames">5. Check it against real frames</a><a href="#6-calibrate-against-something-real">6. Calibrate against something real</a><a href="#7-export">7. Export</a><a href="#working-with-a-live-bus">Working with a live bus</a><a href="#a-worked-example-on-the-sample">A worked example on the sample</a></nav></aside>
+    <main id="main">
+
+<h1>Using CanLab</h1>
+<p class="lede">This is the loop the application is built around. It works
+   start to finish on the bundled sample capture, so you can follow it without
+   any hardware.</p>
+
+<h2 id="the-short-version">The short version</h2>
+<p>Load a capture. Let the offline analysis tell you which bytes are counters
+   and checksums so you can ignore them. Look at what is left, guess a field,
+   write it down as a signal, and check the decoded value against reality. When
+   it holds up, export.</p>
+
+<h2 id="1-load-a-capture">1. Load a capture</h2>
+<p><strong>File &rarr; Open Log</strong>, or the toolbar button. CanLab reads
+   SavvyCAN CSV, candump logs, pcap, Vector BLF and ASC, MDF4 and openpilot
+   rlog; the full list with caveats is in
+   <a href="reference.html#log-formats">the reference</a>. To follow along
+   without a capture of your own, open
+   <code>canlab/sample_data/sample_kona_drive.csv</code>.</p>
+<p>The FRAMES tab fills with every frame in time order. A byte lights up when
+   it changes from the previous frame with the same ID, which is the single
+   most useful thing on the screen early on: the parts of a message that move
+   are the parts worth investigating.</p>
+
+<h2 id="2-see-which-ids-exist">2. See which IDs exist</h2>
+<p>The panel on the left lists every arbitration ID in the capture with its
+   rate and frame count. This tells you the shape of the bus: a 100 Hz message
+   is almost certainly a control or sensor message, a 1 Hz one is more likely
+   status or diagnostics.</p>
+<p>Select an ID and the inspector on the right shows the last frames in hex, a
+   per-byte activity bar, and minimum, maximum and mean for each byte. A byte
+   that never changes is padding or a constant. A byte that changes every
+   single frame is a counter, a checksum, or a fast-moving value.</p>
+
+<h2 id="3-remove-what-is-not-a-signal">3. Remove what is not a signal</h2>
+<p>Two of the eight bytes in a typical message are often not data at all. Go to
+   <strong>AUTO-RE &rarr; COUNTER/CHECKSUM</strong> and run detection. It
+   sweeps every message and reports rolling counters and checksum bytes.</p>
+<p>Then <strong>ENTROPY BOUNDARIES</strong> measures per-bit entropy across a
+   message to suggest where one field ends and the next begins: bits that never
+   change are padding, bits that change together tend to belong to the same
+   value.</p>
+<p><a href="analysis.html">How the analysis works</a> explains what these
+   methods actually test, and how much to trust the numbers. The short answer
+   is that they narrow the search; they do not finish it.</p>
+
+<h2 id="4-guess-a-field-and-write-it-down">4. Guess a field and write it down</h2>
+<p>Go to <strong>DBC BUILDER</strong> and create a signal. You need a message
+   ID, a start bit, a length, a byte order and a scale. The bit grid underneath
+   shows the live payload with your selected field highlighted, and converts
+   between grid position and DBC bit numbering, which is the part that is easy
+   to get wrong by hand.</p>
+<p>Byte order is the usual trap. If a value looks like it jumps wildly when it
+   should move smoothly, try the other endianness before you conclude the field
+   is wrong.</p>
+
+<h2 id="5-check-it-against-real-frames">5. Check it against real frames</h2>
+<p>The live decode preview under the editor runs real frames from your capture
+   through the definition you just wrote and shows the physical value. This is
+   the moment of truth: a wheel speed that reads 60 to 80 km/h is plausible,
+   one that reads 4,000 is not.</p>
+<p>Then plot it. <strong>PLOT</strong> draws the decoded value over time next
+   to the raw bytes it came from. A physical quantity moves smoothly. A wrong
+   byte order shows up as a sawtooth, because the high and low halves are
+   swapped and the value wraps every time the low byte rolls over.</p>
+<div class="note">
+  <span class="callout-title">Everything decodes through one path</span>
+  <p>The preview, the plot and the exported file all go through the same
+     cantools-backed code in <code>core/dbc_manager.py</code>. What you see in
+     the preview is what the exported DBC will produce.</p>
+</div>
+
+<h2 id="6-calibrate-against-something-real">6. Calibrate against something real</h2>
+<p>If you have an independent measurement of the same quantity, a GPS speed log
+   for instance, you do not have to guess the scale.
+   <strong>Tools &rarr; Calibrate signal from reference CSV</strong> takes a
+   CSV of <code>timestamp,value</code> and searches for the CAN field whose
+   values best fit it by least squares, reporting scale, offset and an R²
+   verdict of PASS or UNCONFIRMED. See
+   <a href="analysis.html#reference-calibration">reference calibration</a>.</p>
+
+<h2 id="7-export">7. Export</h2>
+<p>When the definitions hold up, get them out. <strong>File &rarr; Export
+   DBC</strong>, or one of the other formats from the DBC BUILDER: openpilot
+   DBC, Vector CANdb++, AUTOSAR ARXML, or a Wireshark Lua dissector so your
+   signals appear by name in a packet capture. <strong>CODE GEN</strong> will
+   write Python or C that opens the bus and decodes them. The formats and their
+   caveats are on <a href="exports.html">the exports page</a>.</p>
+
+<h2 id="working-with-a-live-bus">Working with a live bus</h2>
+<p>Everything above works on a file. Connecting to hardware adds two things:
+   frames arrive continuously, and you can transmit.</p>
+<p>Pick the interface in <strong>Settings &rarr; CAN INTERFACE</strong> and use
+   the toolbar's <strong>Connect CAN</strong>. Frames stream into the same
+   FRAMES tab and every analysis works on what has been captured so far. The
+   <strong>Freeze</strong> button stops the table scrolling while you read
+   something, without stopping capture.</p>
+<p>Transmitting requires arming first, deliberately. Read
+   <a href="safety.html">Safety</a> before you do; it explains what the gate
+   covers and what it does not.</p>
+
+<h2 id="a-worked-example-on-the-sample">A worked example on the sample</h2>
+<ol class="steps">
+  <li><h3>Open the sample</h3><p><code>canlab/sample_data/sample_kona_drive.csv</code>,
+      6,610 frames, 10 IDs.</p></li>
+  <li><h3>Run counter and checksum detection</h3><p>AUTO-RE finds the rolling
+      counters and the trailing checksum bytes, so you know which bytes to
+      ignore.</p></li>
+  <li><h3>Look at ID 0A6</h3><p>It runs at 50 Hz and its bytes move
+      smoothly, which is what a wheel-speed message looks like.</p></li>
+  <li><h3>Define a 16-bit big-endian signal</h3><p>Start bit 7, length 16,
+      scale 0.03125, on message 0A6.</p></li>
+  <li><h3>Read the preview</h3><p>Values in the 60 to 80 range with a unit of
+      km/h. That is the right order of magnitude for a wheel speed, so the
+      scale is plausible.</p></li>
+  <li><h3>Plot it</h3><p>A smooth rise and fall, not a sawtooth. The byte order
+      is right.</p></li>
+  <li><h3>Export the DBC</h3><p>And load it in any tool that reads DBC to
+      confirm it round-trips.</p></li>
+</ol>
+
+    </main>
+  </div>
+</div>
+<footer>
+  <div class="wrap">
+    <p>CanLab is MIT licensed. Author: Sherin Joseph Roy.
+       <a href="https://github.com/Sherin-SEF-AI/CanLab">Source on GitHub</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/releases">Releases</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/issues">Issues</a></p>
+    <p>These pages describe the code on <code>main</code>. Where a statement is
+       about a specific module the module is named, so it can be checked
+       against the source.</p>
+  </div>
+</footer>
+</body>
+</html>
