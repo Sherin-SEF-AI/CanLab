@@ -23,6 +23,13 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+# python-can ships no GVRET backend, so CanLab supplies one under that name.
+try:
+    from canlab.core.gvret import register as _register_gvret
+    _register_gvret()
+except Exception:                                    # pragma: no cover
+    log.debug("could not register the GVRET backend", exc_info=True)
+
 BITRATES = [1_000_000, 500_000, 250_000, 125_000, 100_000, 50_000, 33_333, 20_000, 10_000]
 FD_DATA_BITRATES = [2_000_000, 4_000_000, 5_000_000, 8_000_000]
 
@@ -47,6 +54,13 @@ INTERFACES: dict[str, InterfaceInfo] = {i.key: i for i in [
                   notes="The kernel owns the bitrate. Bring the device up first:\n"
                         "  sudo ip link set can0 up type can bitrate 500000\n"
                         "candleLight, PEAK, Kvaser and 8devices adapters all appear here on Linux."),
+    InterfaceInfo("gvret", "GVRET firmware (Macchina M2/A0, EVTV CANDue, ESP32RET)",
+                  "/dev/ttyACM0" if sys.platform != "win32" else "COM3", "serial",
+                  requires="pyserial (serial boards)",
+                  extra=(("tty_baudrate", "Serial baud", 1_000_000),
+                         ("bus_index", "Board bus index", 0)),
+                  notes="SavvyCAN's native hardware. For an ESP32RET board on WiFi "
+                        "give host:port as the channel instead, usually <ip>:23."),
     InterfaceInfo("slcan", "Serial line CAN (CANable slcan firmware, USBtin, Lawicel CANUSB)",
                   "/dev/ttyACM0" if sys.platform != "win32" else "COM3", "serial",
                   requires="pyserial", extra=(("tty_baudrate", "Serial baud", 115200),),
@@ -95,6 +109,8 @@ KNOWN_USB: dict[tuple[int, int], tuple[str, str]] = {
     (0xAD50, 0x60C4): ("CANable (slcan firmware)", "slcan"),
     (0x16D0, 0x117E): ("CANable 2.0 (slcan firmware)", "slcan"),
     (0x04D8, 0x000A): ("USBtin", "slcan"),
+    (0x2341, 0x804D): ("Macchina M2 (GVRET)", "gvret"),
+    (0x2A03, 0x804D): ("Macchina M2 (GVRET)", "gvret"),
     (0x0C72, 0x000C): ("PEAK PCAN-USB", "pcan"),
     (0x0C72, 0x000D): ("PEAK PCAN-USB Pro", "pcan"),
     (0x0BFD, 0x0120): ("Kvaser Leaf Light", "kvaser"),
@@ -243,7 +259,11 @@ def detect_adapters(interfaces: list[str] | None = None, timeout: float = 3.0) -
 
     for device, desc, vidpid in _serial_ports():
         known = KNOWN_USB.get(vidpid)
-        if known and known[1] in ("slcan",):
+        if known and known[1] == "gvret":
+            add(Adapter(name=f"{known[0]} on {device}", interface="gvret", channel=device,
+                        extra={"tty_baudrate": 1_000_000, "bus_index": 0},
+                        detected=f"USB serial {desc}".strip()))
+        elif known and known[1] in ("slcan",):
             add(Adapter(name=f"{known[0]} on {device}", interface="slcan", channel=device,
                         extra={"tty_baudrate": 115200}, detected=f"USB serial {desc}".strip()))
         else:

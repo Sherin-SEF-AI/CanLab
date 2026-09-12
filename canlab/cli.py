@@ -196,26 +196,31 @@ def cmd_decode(args) -> int:
 
 # ── convert ──────────────────────────────────────────────────────────────────
 
+def write_savvycan_csv(df, path) -> int:
+    """SavvyCAN's own layout, so the file opens there and reads back through
+    CanLab's parser: microsecond timestamps, 8-digit hex IDs, two-digit hex
+    bytes, and the trailing comma SavvyCAN writes."""
+    with open(path, "w", newline="") as fh:
+        fh.write("Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8\n")
+        for _, r in df.iterrows():
+            dlc = int(r["DLC"]) if r.get("DLC") == r.get("DLC") else 8
+            cells = []
+            for i in range(8):
+                v = r.get(f"B{i}")
+                cells.append(f"{int(v):02X}" if v == v and v is not None else "")
+            fh.write(f"{int(round(float(r['Timestamp']) * 1e6))},"
+                     f"{int(r['ID'], 16):08X},"
+                     f"{'true' if r.get('Extended') else 'false'},Rx,"
+                     f"{int(r.get('Bus', 0) or 0)},{dlc},{','.join(cells)},\n")
+    return len(df)
+
+
 def cmd_convert(args) -> int:
     df = _load(args.capture)
     out = Path(args.out)
     suffix = out.suffix.lower()
     if suffix == ".csv":
-        # SavvyCAN's own layout, so the file opens in SavvyCAN and reads back
-        # through CanLab's parser: microsecond timestamps, 8-digit hex IDs,
-        # two-digit hex bytes, and the trailing comma SavvyCAN writes.
-        with open(out, "w", newline="") as fh:
-            fh.write("Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8\n")
-            for _, r in df.iterrows():
-                dlc = int(r["DLC"]) if r.get("DLC") == r.get("DLC") else 8
-                cells = []
-                for i in range(8):
-                    v = r.get(f"B{i}")
-                    cells.append(f"{int(v):02X}" if v == v and v is not None else "")
-                fh.write(f"{int(round(float(r['Timestamp']) * 1e6))},"
-                         f"{int(r['ID'], 16):08X},"
-                         f"{'true' if r.get('Extended') else 'false'},Rx,"
-                         f"{int(r.get('Bus', 0) or 0)},{dlc},{','.join(cells)},\n")
+        write_savvycan_csv(df, out)
     elif suffix in (".blf", ".asc", ".log"):
         import can
         writer = {".blf": can.BLFWriter, ".asc": can.ASCWriter,

@@ -37,6 +37,11 @@ dev = ["pytest==9.1.1", "ruff==0.16.7", "httpx==0.28.1", "pyinstaller", "lupa"]
 # Regenerating docs/canlab-demo.mp4; also needs ffmpeg on PATH.
 demo = ["edge-tts>=7.0.0"]
 
+# python-can discovers third-party buses through this group, which is what
+# makes can.Bus(interface="gvret") work for anything in the environment.
+[project.entry-points."can.interface"]
+gvret = "canlab.core.gvret:_BusEntry"
+
 [project.scripts]
 canlab = "canlab.main:main"
 canlab-mcp = "canlab.mcp_server:main"

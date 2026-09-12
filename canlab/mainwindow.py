@@ -15,6 +15,7 @@ from canlab.core.dbc_manager import load_dbc
 from canlab.panels.id_panel import IDPanel
 from canlab.panels.inspector_panel import InspectorPanel
 from canlab.tabs.frames_tab import FramesTab
+from canlab.tabs.sniffer_tab import SnifferTab
 from canlab.tabs.signals_tab import SignalsTab
 from canlab.tabs.plot_tab import PlotTab
 from canlab.tabs.ai_engine_tab import AIEngineTab
@@ -309,6 +310,7 @@ class MainWindow(QMainWindow):
             ("Export decoded time-series…", self._export_timeseries),
             ("Detect multiplexed signals…", self._detect_mux),
             ("Calibrate signal from reference CSV…", self._calibrate_ref),
+            ("Trim capture…",            self._trim_capture),
             ("MCP server: start / stop",  self._toggle_mcp),
             ("Connect an assistant over MCP…", self._open_mcp_settings),
         ]:
@@ -520,6 +522,7 @@ class MainWindow(QMainWindow):
 
         # Core tabs (0–5)
         self.frames_tab  = FramesTab()
+        self.sniffer_tab = SnifferTab()
         self.signals_tab = SignalsTab()
         self.plot_tab    = PlotTab()
         self.ai_tab      = AIEngineTab()
@@ -538,6 +541,7 @@ class MainWindow(QMainWindow):
         self.gateway_tab      = GatewayTab()
 
         self.tabs.addTab(self.frames_tab,       "FRAMES")
+        self.tabs.addTab(self.sniffer_tab,      "SNIFFER")
         self.tabs.addTab(self.signals_tab,      "SIGNALS")
         self.tabs.addTab(self.plot_tab,         "PLOT")
         self.tabs.addTab(self.ai_tab,           "AI ENGINE ★")
@@ -1052,6 +1056,35 @@ class MainWindow(QMainWindow):
             )
         except Exception as e:
             QMessageBox.warning(self, "REST API", f"Could not start: {e}")
+
+    def _trim_capture(self):
+        """Cut the loaded capture down to a window, a set of IDs or one bus."""
+        from canlab.ui.trim_dialog import TrimDialog
+        df = self._state.frames_snapshot()
+        if df is None or df.empty:
+            QMessageBox.information(self, "Trim capture", "Open a capture first.")
+            return
+        dlg = TrimDialog(df, self)
+        if not dlg.exec():
+            return
+        kept = dlg.result_frames
+        if kept is None or kept.empty:
+            return
+        if dlg.replace_loaded:
+            self._state.load_frames(kept, f"{self._loaded_name or 'capture'} (trimmed)")
+            self.statusBar().showMessage(
+                f"Trimmed to {len(kept)} frames. Reopen the file to get the rest back.",
+                6000)
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save trimmed capture", "", "SavvyCAN CSV (*.csv)")
+        if not path:
+            return
+        if not path.lower().endswith(".csv"):
+            path += ".csv"
+        from canlab.cli import write_savvycan_csv
+        write_savvycan_csv(kept, path)
+        self.statusBar().showMessage(f"Wrote {len(kept)} frames to {path}", 5000)
 
     # ── MCP server ────────────────────────────────────────────────────────────
 
