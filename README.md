@@ -105,6 +105,7 @@ They are also attached to the
 | [2. Defining signals and checking them](docs/canlab-demo-part2-signals.mp4?raw=1) | DBC BUILDER and its bit grid, the live decode preview, PLOT, INTELLIGENCE, ML INTEL, DASHBOARD | 2.6 min |
 | [3. Timeline, code generation and exports](docs/canlab-demo-part3-outputs.mp4?raw=1) | TIMELINE, CODE GEN, the five export formats, DIAGNOSTICS including XCP and DoIP, security access | 2.4 min |
 | [4. The transmit gate, injection and live capture](docs/canlab-demo-part4-transmitting.mp4?raw=1) | ARM TX, INJECTION, replay, fuzzing, GATEWAY, OBD-II, the AI engine, live capture | 3.3 min |
+| [Real vehicle capture](docs/canlab-demo-realdata.mp4?raw=1) | The same application driven through a real 180-ID capture: detection, entropy, decoding, and the transmit gate | 2.0 min |
 
 Subtitles: [part 1](docs/canlab-demo-part1-analysis.srt),
 [part 2](docs/canlab-demo-part2-signals.srt),

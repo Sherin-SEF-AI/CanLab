@@ -1,0 +1,129 @@
+1
+00:00:00,000 --> 00:00:04,940
+This is CanLab running against a real vehicle capture, not a
+synthetic one.
+
+2
+00:00:04,940 --> 00:00:08,430
+Twelve thousand nine hundred and seventy four frames,
+
+3
+00:00:08,430 --> 00:00:13,238
+one hundred and eighty distinct arbitration IDs, published
+with SavvyCAN.
+
+4
+00:00:13,238 --> 00:00:19,297
+The frame table fills, and a byte lights up when it changes
+from the previous frame with the
+
+5
+00:00:19,297 --> 00:00:19,824
+same ID.
+
+6
+00:00:19,824 --> 00:00:22,293
+The panel on the left is the real bus:
+
+7
+00:00:22,293 --> 00:00:27,101
+one hundred and eighty IDs, the busiest running at over one
+hundred hertz.
+
+8
+00:00:27,101 --> 00:00:33,144
+Selecting one opens it in the inspector, with the last frames
+in hex and per-byte statistics.
+
+9
+00:00:33,144 --> 00:00:37,215
+SIGNALS classifies all one hundred and eighty messages
+offline.
+
+10
+00:00:37,215 --> 00:00:43,224
+On a real bus this is the difference between a wall of hex and
+a short list worth looking at.
+
+11
+00:00:43,224 --> 00:00:48,717
+AUTO-RE sweeps every message for rolling counters and checksum
+bytes.
+
+12
+00:00:48,717 --> 00:00:53,891
+On this capture it finds twenty five counters and five
+checksums,
+
+13
+00:00:53,891 --> 00:00:56,916
+including CRC-8 in its SAE J1850 form.
+
+14
+00:00:56,916 --> 00:01:02,568
+Testing only the simple sums, as it used to, found nothing at
+all here.
+
+15
+00:01:02,568 --> 00:01:08,496
+Per-bit entropy across the same real traffic suggests where
+one field ends and the next begins:
+
+16
+00:01:08,496 --> 00:01:11,616
+ninety two candidate fields across fifty messages.
+
+17
+00:01:11,616 --> 00:01:15,957
+A signal is defined on the byte that moves most in the busiest
+message,
+
+18
+00:01:15,957 --> 00:01:19,992
+and the live preview decodes real frames through it straight
+away.
+
+19
+00:01:19,992 --> 00:01:23,654
+Plotted over time against the raw byte it came from.
+
+20
+00:01:23,654 --> 00:01:28,584
+This is real vehicle data, so the shape is whatever the car
+was doing.
+
+21
+00:01:28,584 --> 00:01:34,635
+The heatmap shows how much each byte of each message moves
+across all one hundred and eighty
+
+22
+00:01:34,635 --> 00:01:35,424
+IDs at once.
+
+23
+00:01:35,424 --> 00:01:37,642
+Periodicity across the real bus:
+
+24
+00:01:37,642 --> 00:01:43,464
+eighty IDs are cyclic, and the tab also correlates bytes
+between different messages.
+
+25
+00:01:43,464 --> 00:01:45,692
+Everything so far only listened.
+
+26
+00:01:45,692 --> 00:01:52,165
+Connected to a bus with ARM TX off, injection and diagnostics
+were both exercised and nothing
+
+27
+00:01:52,165 --> 00:01:53,140
+left the tool:
+
+28
+00:01:53,140 --> 00:01:58,152
+zero frames while disarmed, and the frame appears only once it
+is armed.
