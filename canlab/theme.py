@@ -230,6 +230,52 @@ QToolBar::separator {{
     margin: {_SM}px {_XS}px;
 }}
 
+/* ── workspace bar ──────────────────────────────────────────────────────── */
+#workspace_bar {{
+    background: {_C['window']};
+    border-bottom: 1px solid {_C['border']};
+}}
+
+#strip_inner {{
+    background: transparent;
+}}
+
+#ws_button, #ws_tab_button {{
+    background: transparent;
+    border: none;
+    border-radius: {_R}px;
+    padding: {_XS}px {_MD}px;
+    margin: 0px;
+    color: {_C['dim']};
+}}
+
+#ws_button {{
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: {_C['text_dim']};
+}}
+
+#ws_button:hover, #ws_tab_button:hover {{
+    background: {_C['panel']};
+    color: {_C['text']};
+}}
+
+#ws_button:checked {{
+    color: {_C['text']};
+    background: transparent;
+}}
+
+#ws_tab_button:checked {{
+    color: {_C['active']};
+    background: {_C['editor']};
+}}
+
+#ws_sep {{
+    color: {_C['border']};
+    max-width: 1px;
+    margin: {_SM}px {_MD}px;
+}}
+
 /* ── tabs ───────────────────────────────────────────────────────────────── */
 /* The layering is the whole point of this palette: the window is the darkest
    tone, a tab page sits one step above it, and a panel one step above that.

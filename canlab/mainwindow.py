@@ -3,7 +3,7 @@ import can
 import pandas as pd
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QTabWidget, QToolBar, QStatusBar, QLabel, QFileDialog,
-    QMessageBox, QProgressBar, QMenu, QComboBox, QToolButton, QSizePolicy,
+    QMessageBox, QProgressBar, QMenu, QComboBox, QToolButton, QSizePolicy, QVBoxLayout,
 )
 from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence, QColor
@@ -31,6 +31,7 @@ from canlab.tabs.obd_dashboard_tab import OBDDashboardTab
 from canlab.tabs.signal_intelligence_tab import SignalIntelligenceTab
 from canlab.tabs.gateway_tab import GatewayTab
 from canlab.ui.animations import PulsingDot, CountUpLabel
+from canlab.ui.workspace_bar import WorkspaceBar
 from canlab.settings_dialog import (
     SettingsDialog, load_api_key,
     load_groq_key, load_openai_key, load_ai_provider, load_ai_model,
@@ -454,6 +455,8 @@ class MainWindow(QMainWindow):
 
         view_menu.addSeparator()
         for text, sequence, handler in [
+            ("Next Workspace",     "Ctrl+PgDown", lambda: self.workspace_bar.step_workspace(1)),
+            ("Previous Workspace", "Ctrl+PgUp",   lambda: self.workspace_bar.step_workspace(-1)),
             ("Connect / Disconnect Bus", "Ctrl+D", self._toggle_connection),
             ("Arm / Disarm TX",          "Ctrl+E", lambda: self._act_arm.trigger()),
         ]:
@@ -501,7 +504,12 @@ class MainWindow(QMainWindow):
     def _build_central(self):
         central = QWidget()
         self.setCentralWidget(central)
-        main_lay = QHBoxLayout(central)
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        body = QWidget()
+        main_lay = QHBoxLayout(body)
         main_lay.setContentsMargins(0, 0, 0, 0)
         main_lay.setSpacing(0)
 
@@ -544,23 +552,41 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.sniffer_tab,      "SNIFFER")
         self.tabs.addTab(self.signals_tab,      "SIGNALS")
         self.tabs.addTab(self.plot_tab,         "PLOT")
-        self.tabs.addTab(self.ai_tab,           "AI ENGINE ★")
+        self.tabs.addTab(self.ai_tab,           "AI ENGINE")
         self.tabs.addTab(self.dbc_tab,          "DBC BUILDER")
         self.tabs.addTab(self.codegen_tab,      "CODE GEN")
         self.tabs.addTab(self.intelligence_tab, "INTELLIGENCE")
         self.tabs.addTab(self.injection_tab,    "INJECTION")
         self.tabs.addTab(self.diagnostics_tab,  "DIAGNOSTICS")
         self.tabs.addTab(self.dashboard_tab,    "DASHBOARD")
-        self.tabs.addTab(self.auto_re_tab,      "AUTO-RE ★")
-        self.tabs.addTab(self.timeline_tab,     "TIMELINE ★")
-        self.tabs.addTab(self.obd_tab,          "OBD-II ★")
-        self.tabs.addTab(self.ml_intel_tab,     "ML INTEL ★")
-        self.tabs.addTab(self.gateway_tab,      "GATEWAY ★")
+        self.tabs.addTab(self.auto_re_tab,      "AUTO-RE")
+        self.tabs.addTab(self.timeline_tab,     "TIMELINE")
+        self.tabs.addTab(self.obd_tab,          "OBD-II")
+        self.tabs.addTab(self.ml_intel_tab,     "ML INTEL")
+        self.tabs.addTab(self.gateway_tab,      "GATEWAY")
 
         main_lay.addWidget(self.tabs, stretch=1)
 
         self.inspector = InspectorPanel()
         main_lay.addWidget(self.inspector)
+
+        # The workspace bar replaces the tab bar rather than sitting beside
+        # it. Hide the bar only now that every page exists, because addTab
+        # shows it again. Everything else about the tab widget is unchanged:
+        # count(), tabText(), setCurrentIndex() and currentChanged do not care
+        # whether the bar is visible, which is what lets the shortcuts, the
+        # View menu, the acceptance scripts and both demo recorders keep
+        # driving it exactly as before.
+        self.workspace_bar = WorkspaceBar(self.tabs, self)
+        self.tabs.tabBar().hide()
+        self.tabs.setDocumentMode(True)
+        outer.addWidget(self.workspace_bar)
+        outer.addWidget(body, stretch=1)
+
+        # Connect last: the first addTab already emitted currentChanged while
+        # the bar did not exist yet, so sync once explicitly afterwards.
+        self.tabs.currentChanged.connect(self.workspace_bar.select_index)
+        self.workspace_bar.select_index(self.tabs.currentIndex(), instant=True)
 
     # ── Status bar ────────────────────────────────────────────────────────────
 
