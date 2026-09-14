@@ -24,7 +24,16 @@ class WorkerPool:
     def __len__(self) -> int:
         return len(self._workers)
 
-    def stop_all(self, timeout_ms: int = 2000) -> None:
+    def stop_all(self, timeout_ms: int = 5000) -> list:
+        """Stop every worker and wait for it. Returns the ones that would not.
+
+        The list used to be cleared whether or not the threads had actually
+        stopped. A worker whose ``run`` is a long pandas loop ignores both
+        ``quit`` and ``requestInterruption`` until it next looks, so clearing
+        the list let the interpreter tear down while a thread was still inside
+        numpy, which segfaults rather than raising.
+        """
+        stubborn = []
         for w in list(self._workers):
             try:
                 if hasattr(w, "stop"):
@@ -32,8 +41,13 @@ class WorkerPool:
                 else:
                     w.requestInterruption()
                     w.quit()
-                if w.isRunning():
-                    w.wait(timeout_ms)
+                if w.isRunning() and not w.wait(timeout_ms):
+                    stubborn.append(w)
+                    log.warning("worker %s did not stop within %d ms",
+                                type(w).__name__, timeout_ms)
             except Exception:
                 log.debug("worker stop failed", exc_info=True)
-        self._workers.clear()
+        # Anything still running keeps its reference, so it is not collected
+        # out from under itself.
+        self._workers = stubborn
+        return stubborn

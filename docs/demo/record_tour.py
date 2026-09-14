@@ -160,14 +160,14 @@ def main() -> int:
     bar = window.workspace_bar
 
     # 1 ── what this is ──────────────────────────────────────────────────────
-    df = load("canedge_c.MF4")
+    load("canedge_c.MF4")
     tab("FRAMES")
     shot("open",
          """CanLab reverse-engineers a CAN bus. This is a real recording from a
-            CANedge logger, nine thousand six hundred frames across fifty
-            arbitration identifiers, and every one of them is a twenty-nine bit
-            extended identifier, because this is a heavy vehicle running J1939
-            rather than a car.""",
+            CANedge logger: nine thousand six hundred frames across fifty
+            arbitration identifiers, every one of them twenty-nine bit
+            extended. Nothing here was simulated and nothing was labelled in
+            advance.""",
          seconds=9.0)
 
     shot("workspaces",
@@ -175,17 +175,42 @@ def main() -> int:
             a row. Capture is what is on the wire, Explore is what it looks
             like over time, Detect is the automatic analysis, Define is where
             you write down what you worked out, and Bus is everything that
-            talks back to the vehicle.""",
+            talks back.""",
          focus=bar, caption="Five workspaces, not sixteen tabs", seconds=11.0)
 
-    # 2 ── the sniffer ───────────────────────────────────────────────────────
-    sniffer = tab("SNIFFER")
+    # 2 ── what protocol is this ─────────────────────────────────────────────
+    tab("INTELLIGENCE")
+    window.intelligence_tab._run_j1939()
+    pump(0.5)
+    shot("protocol",
+         """First question on an unknown bus: what is it. Twenty-nine bit
+            identifiers usually mean a truck running J1939, but these carry
+            data page one in the hundred and twenty-six thousand range, which
+            is NMEA 2000. This is a boat. Vessel heading, rate of turn, wind,
+            satellite positioning.""",
+         focus=window.intelligence_tab.j1939_table,
+         caption="Data page 1 in the 126k range: NMEA 2000, not J1939",
+         seconds=12.0)
+
+    shot("position",
+         """Which the decoded fields then confirm from three directions at
+            once. Position puts the vessel at forty-two point six six north,
+            eighty-one point two one west, on Lake Erie. Magnetic variation
+            reads eight point nine degrees west, which is the published value
+            for there. Speed over ground is exactly zero, so she was moored,
+            and the wind was under a metre per second.""",
+         focus=window.intelligence_tab.lbl_j1939,
+         caption="Position, variation and speed agree with each other",
+         seconds=13.0)
+
+    # 3 ── the sniffer ───────────────────────────────────────────────────────
+    tab("SNIFFER")
     window.sniffer_tab._tick()
     shot("sniffer",
          """The frames table is a log, which is the wrong shape for the question
-            you actually ask at the bench. The sniffer collapses the bus to one
-            row per message: a byte turns green when it rises and red when it
-            falls, and bytes that never move stay dim.""",
+            you ask at the bench. The sniffer collapses the bus to one row per
+            message: a byte turns green when it rises and red when it falls,
+            and bytes that never move stay dim.""",
          focus=(window.sniffer_tab.table.mapTo(window, QPoint(0, 0)).x(),
                 window.sniffer_tab.table.mapTo(window, QPoint(0, 0)).y(),
                 760, 300),
@@ -194,9 +219,9 @@ def main() -> int:
 
     shot("notch",
          """Notch is why this beats scrolling. It records every bit that is
-            moving right now and ignores it from then on, so the counters and
-            checksums that never stop go quiet and the next thing that lights
-            up is the thing you did.""",
+            moving right now and ignores it from then on, so the counters that
+            never stop go quiet and the next thing that lights up is the thing
+            you did.""",
          focus=window.sniffer_tab.btn_notch,
          caption="Notch: ignore everything already moving", seconds=9.5)
 
@@ -207,69 +232,82 @@ def main() -> int:
             on this log.""",
          seconds=4.0)
 
-    # 3 ── detection ─────────────────────────────────────────────────────────
+    # 4 ── detection ─────────────────────────────────────────────────────────
     auto = tab("AUTO-RE")
     window.auto_re_tab._run_counter_checksum()
     wait_until(lambda: window.auto_re_tab.ctr_table.rowCount() > 0, 120)
     shot("detect",
-         """The detectors run over the capture with no knowledge of the vehicle
-            at all. Rolling counters, checksum bytes and the algorithm that
-            reproduces them, bit level flags, enumerated bytes, field
-            boundaries from entropy, and multiplexed messages.""",
+         """The detectors run with no knowledge of the protocol at all. Here
+            they find twenty-four counter bytes across twenty-three messages,
+            twenty-one of them in byte zero, and on five of those the count
+            wraps at two hundred and fifty one. NMEA 2000 calls byte zero the
+            sequence identifier and specifies that wrap. The detector got there
+            from the data.""",
          focus=window.auto_re_tab.ctr_table,
-         caption="Twenty-four counters found, with the algorithm for each",
-         seconds=11.0)
+         caption="Byte 0 counters, wrap 251, found without the spec",
+         seconds=12.0)
 
     subtab(auto, "ENTROPY")
     window.auto_re_tab._run_entropy()
     wait_until(lambda: window.auto_re_tab.entropy_table.rowCount() > 0, 120)
     shot("entropy",
-         """Entropy per bit finds where one field ends and the next begins.
-            Forty-two candidate boundaries here, each with a confidence that is
-            a match fraction over the frames loaded, not a proof.""",
+         """Entropy per bit finds where one field ends and the next begins. Each
+            candidate boundary carries a confidence, which is a match fraction
+            over the frames loaded, not a proof.""",
          focus=window.auto_re_tab.entropy_table,
          caption="Field boundaries, ranked by confidence", seconds=9.0)
 
-    # 4 ── defining a signal ─────────────────────────────────────────────────
-    busiest = df["ID"].value_counts().index[0]
-    sig = {"message_id": busiest, "message_name": f"PGN_{busiest}",
-           "signal_name": "ENGINE_SPEED", "start_bit": 24, "length": 16,
-           "byte_order": "little", "value_type": "unsigned",
-           "scale": 0.125, "offset": 0.0, "min_val": 0, "max_val": 8031.875,
-           "unit": "rpm", "description": "drafted against a real J1939 message"}
-    state.add_dbc_signal(sig)
+    # 5 ── defining a signal ─────────────────────────────────────────────────
+    # Wind speed on PGN 130306: bytes one and two, hundredths of a metre per
+    # second. Everything about this definition is checkable against the
+    # recording, which is the point of putting it in a demo.
+    wind = {"message_id": "9FD0223", "message_name": "WIND_DATA",
+            "signal_name": "WIND_SPEED", "start_bit": 8, "length": 16,
+            "byte_order": "little", "value_type": "unsigned",
+            "scale": 0.01, "offset": 0.0, "min_val": 0.0, "max_val": 100.0,
+            "unit": "m/s", "description": "PGN 130306 wind speed"}
+    state.add_dbc_signal(wind)
     pump(0.4)
-    dbc = tab("DBC")
+    tab("DBC")
     window.dbc_tab._on_list_select(0)
     pump(0.4)
     shot("dbc",
-         """A signal is a message, a start bit, a length and a scale. The bit
-            grid shows exactly which bits it claims, and the preview decodes
-            real frames through it as you type, so a definition is checked
-            against the bus rather than against your arithmetic.""",
+         """A signal is a message, a start bit, a length and a scale. The
+            preview decodes real frames through the definition as you type, so
+            it is checked against the bus rather than against your arithmetic.
+            Nought point seven seven metres per second: light air, which is
+            what a moored boat on a calm lake should read.""",
          focus=window.dbc_tab.preview_table,
-         caption="Live decode of real frames, as you edit", seconds=11.0)
+         caption="Live decode of real frames, as you edit", seconds=12.0)
 
     shot("bitgrid",
          """Drag across the grid to claim bits. Motorola byte order and
-            non-contiguous layouts are handled by the same coordinate map the
+            non-contiguous layouts go through the same coordinate map the
             exporter uses, so what you select is what gets written out.""",
          focus=window.dbc_tab.bit_editor,
          caption="Drag to claim bits; Motorola layouts included", seconds=9.0)
 
-    # 5 ── seeing it ─────────────────────────────────────────────────────────
+    # 6 ── seeing it ─────────────────────────────────────────────────────────
+    # The same bits, decoded right and decoded wrong. This is the one demo
+    # claim worth making visually rather than in words.
+    wrong = dict(wind, signal_name="WIND_SPEED_BE", byte_order="big")
+    state.add_dbc_signal(wrong)
+    pump(0.3)
     tab("PLOT")
-    window.plot_tab._add_signal(f"{busiest}:dbc:ENGINE_SPEED", "dbc", busiest, sig)
-    window.plot_tab._add_signal(f"{busiest}:B3", "byte", busiest, "B3")
-    pump(1.0)
+    window.plot_tab._add_signal("9FD0223:dbc:WIND_SPEED", "dbc", "9FD0223", wind)
+    window.plot_tab._add_signal("9FD0223:dbc:WIND_SPEED_BE", "dbc", "9FD0223", wrong)
+    pump(1.2)
     shot("plot",
          """Plotted against time is where a definition is confirmed or refuted.
-            A physical quantity moves smoothly; a sawtooth means the byte order
-            is wrong. Raw bytes and decoded signals share the axis, each with
-            its own scale.""",
-         seconds=9.0)
+            Both traces are the same two bytes of the same message. The upper
+            one reads them little-endian and wanders between nought point seven
+            two and nought point eight seven metres per second. The lower one
+            reads them the other way round and swings between a hundred and
+            eighty four and two hundred and twenty three. You do not need the
+            spec to see which of those is a wind speed.""",
+         seconds=13.0)
 
-    # 6 ── the transmit gate ─────────────────────────────────────────────────
+    # 7 ── the transmit gate ─────────────────────────────────────────────────
     tab("INJECTION")
     shot("arm",
          """Everything that can put a frame on a wire is behind one gate. ARM
@@ -279,16 +317,27 @@ def main() -> int:
          focus=window._toolbar.widgetForAction(window._act_arm),
          caption="Nothing transmits until this is armed", seconds=11.0)
 
+    window.injection_tab.val_spin.setValue(0.77)
+    pump(0.4)
+    shot("preview",
+         """Before any of that, the page shows the frame it would send. Byte one
+            holds four D, which is seventy-seven hundredths of a metre per
+            second, and the bytes the signal does not touch stay dim. If the
+            vehicle profile writes a counter or a checksum, the bytes it
+            overwrites turn amber.""",
+         focus=window.injection_tab.preview_bytes,
+         caption="The eight bytes the controls above actually produce",
+         seconds=12.0)
+
     shot("inject",
-         """The injection page itself is three rows: which signal, what value,
-            and how often. Checksum and counter are applied from the vehicle
-            profile, so a frame the ECU will accept does not have to be
-            assembled by hand.""",
+         """The controls themselves are three rows: which signal, what value,
+            and how often. The slider spans whatever range the signal declares,
+            and every send lands in the log underneath with its result.""",
          focus=window.injection_tab.sig_combo,
          caption="Pick a signal, set a value, send once or on a loop",
          seconds=10.0)
 
-    # 7 ── assistants and adapters ───────────────────────────────────────────
+    # 8 ── assistants and adapters ───────────────────────────────────────────
     shot("services",
          """Three things can run alongside: a REST API, an MCP server that lets
             an assistant drive the analysis, and the plugin list. None of the
@@ -306,20 +355,21 @@ def main() -> int:
          focus=window.adapter_combo,
          caption="Any python-can backend, plus GVRET", seconds=11.0)
 
-    # 8 ── scale ─────────────────────────────────────────────────────────────
+    # 9 ── scale ─────────────────────────────────────────────────────────────
     load("canedge_nissan.MF4")
     tab("SNIFFER")
     window.sniffer_tab._clear()
     window.sniffer_tab._tick()
     shot("scale",
-         """A second recording: twenty-three minutes from a two-channel logger,
-            one hundred and fifty five thousand frames. Both channels keep
-            their bus tags, and the sniffer folds the whole thing into sixteen
-            rows in half a second.""",
-         seconds=9.0)
+         """A second recording, and a different vehicle entirely: twenty-three
+            minutes off a car, eleven bit identifiers, a hundred and fifty five
+            thousand frames. One identifier carries a hundred and thirty three
+            thousand of them. The sniffer folds the whole capture into sixteen
+            rows in under a second.""",
+         seconds=11.0)
 
     shot("close",
-         """Load a capture, work out which bytes carry what, write it down, and
+         """Load a capture, work out what the bytes carry, write it down, and
             export a DBC other tools can read. Everything shown here ran
             against real recordings from hardware this project did not
             produce.""",

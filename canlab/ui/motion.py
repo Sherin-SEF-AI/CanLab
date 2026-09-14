@@ -57,6 +57,10 @@ class Motion:
         cls.busy = bool(capturing)
 
 
+#: Object name of the single reusable interpolator kept on each owner.
+_INTERPOLATOR = "__anim_interpolate"
+
+
 def _duration(dur) -> int:
     return dur if isinstance(dur, int) else DURATION.get(dur, DURATION["base"])
 
@@ -72,8 +76,6 @@ def animate(target, prop: bytes, to, *, dur="base", frm=None,
     name = f"__anim_{prop.decode()}"
     existing = target.findChild(QAbstractAnimation, name)
     if existing is not None:
-        # stop() on a DeleteWhenStopped animation already schedules deletion;
-        # calling deleteLater() as well would be a double free.
         existing.stop()
 
     if instant or Motion.off(critical):
@@ -82,8 +84,24 @@ def animate(target, prop: bytes, to, *, dur="base", frm=None,
             on_done()
         return None
 
-    anim = QPropertyAnimation(target, prop, target)
-    anim.setObjectName(name)
+    # One animation per (widget, property), reused, parented to the widget and
+    # never self-deleting.
+    #
+    # It used to allocate a new QPropertyAnimation per call, parent it to the
+    # target *and* pass DeleteWhenStopped. Those two owners both free the
+    # object: when a widget is destroyed while an animation on it is running,
+    # the parent deletes the animation and the stop that destruction triggers
+    # deletes it again. The result is a segfault with no Python traceback, at
+    # whatever unrelated point the event loop next runs.
+    anim = existing if isinstance(existing, QPropertyAnimation) else None
+    if anim is None:
+        anim = QPropertyAnimation(target, prop, target)
+        anim.setObjectName(name)
+    else:
+        try:
+            anim.finished.disconnect()       # last call's on_done, if any
+        except TypeError:
+            pass
     anim.setDuration(_duration(dur))
     anim.setEasingCurve(ease)
     anim.setStartValue(target.property(prop.decode()) if frm is None else frm)
@@ -91,7 +109,7 @@ def animate(target, prop: bytes, to, *, dur="base", frm=None,
     anim.setLoopCount(loop)
     if on_done is not None:
         anim.finished.connect(on_done)
-    anim.start(QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)
+    anim.start()
     return anim
 
 
@@ -108,7 +126,18 @@ def interpolate(owner: QObject, start, end, setter, *, dur="base",
         if on_done is not None:
             on_done()
         return None
-    anim = QVariantAnimation(owner)
+    # Reused and owned by `owner`, for the reason given in animate() above.
+    anim = owner.findChild(QVariantAnimation, _INTERPOLATOR)
+    if anim is None:
+        anim = QVariantAnimation(owner)
+        anim.setObjectName(_INTERPOLATOR)
+    else:
+        anim.stop()
+        for signal in (anim.valueChanged, anim.finished):
+            try:
+                signal.disconnect()
+            except TypeError:
+                pass
     anim.setDuration(_duration(dur))
     anim.setEasingCurve(ease)
     anim.setStartValue(start)
@@ -117,7 +146,7 @@ def interpolate(owner: QObject, start, end, setter, *, dur="base",
     anim.finished.connect(lambda: setter(end))
     if on_done is not None:
         anim.finished.connect(on_done)
-    anim.start(QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)
+    anim.start()
     return anim
 
 

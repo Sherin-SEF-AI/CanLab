@@ -447,5 +447,10 @@ def scan_for_j1939(df) -> list[dict]:
             "frame_count": count,
         })
 
-    results.sort(key=lambda x: x["pgn"])
+    # Named messages first, then by how much of the bus they are. Sorting by
+    # PGN put the four unnamed low-numbered messages at the top of a marine
+    # capture, so the visible rows all read "no idea" while the twenty named
+    # ones sat below the fold.
+    results.sort(key=lambda x: (x["pgn_name"].startswith("PGN "),
+                                -x["frame_count"]))
     return results

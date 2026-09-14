@@ -177,7 +177,11 @@ class EmbeddingWorker(QThread):
     def run(self):
         try:
             from canlab.core.signal_embedding import build_index
-            self.finished.emit(build_index(self._frames))
+            index = build_index(self._frames,
+                                should_stop=self.isInterruptionRequested)
+            if self.isInterruptionRequested():
+                return
+            self.finished.emit(index)
         except Exception as e:
             self.error.emit(str(e))
 

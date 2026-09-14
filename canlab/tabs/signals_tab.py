@@ -36,7 +36,9 @@ class AnalyzeWorker(QThread):
         self.df = df
 
     def run(self):
-        result = analyze_all(self.df)
+        result = analyze_all(self.df, should_stop=self.isInterruptionRequested)
+        if self.isInterruptionRequested():
+            return          # the tab is going away; nothing wants this
         self.done.emit(result)
 
 
@@ -46,6 +48,9 @@ class SignalsTab(QWidget):
         self._state       = get_state()
         self._signals_df  = pd.DataFrame()
         self._filter_type = "ALL"
+        self._worker      = None
+        from canlab.ui.worker_pool import WorkerPool
+        self._pool        = WorkerPool()
         self._build_ui()
         self._state.frames_loaded.connect(lambda _: self._auto_analyze())
         self._state.dbc_updated.connect(self._update_dbc_status)
@@ -105,16 +110,39 @@ class SignalsTab(QWidget):
         df = self._state.frames_df
         if df.empty:
             return
+        # Stop whatever is already running first. This used to just rebind
+        # self._worker, which dropped the only Python reference to a QThread
+        # that was still inside pandas: Qt destroys the thread object under
+        # the running thread and the process dies. Loading a second capture
+        # before the first finished classifying was enough to do it.
+        self._stop_worker()
         self.lbl_status.setText("Analyzing...")
         self.btn_classify.setEnabled(False)
-        self._worker = AnalyzeWorker(df)
-        self._worker.done.connect(self._on_analyze_done)
-        self._worker.start()
+        worker = AnalyzeWorker(df)
+        worker.done.connect(self._on_analyze_done)
+        self._worker = self._pool.add(worker)
+        worker.start()
+
+    def _stop_worker(self) -> None:
+        w = getattr(self, "_worker", None)
+        if w is None:
+            return
+        self._worker = None
+        try:
+            if w.isRunning():
+                # quit() only unwinds an event loop and run() has none, so the
+                # interruption flag is what actually stops it. The pool keeps
+                # holding anything that will not stop, rather than letting it
+                # be collected mid-loop.
+                w.requestInterruption()
+                w.quit()
+                w.wait(5000)
+        except RuntimeError:
+            pass                    # already gone
 
     def cleanup(self):
-        w = getattr(self, "_worker", None)
-        if w is not None and w.isRunning():
-            w.requestInterruption(); w.quit(); w.wait(2000)
+        self._stop_worker()
+        self._pool.stop_all()
 
     def _on_analyze_done(self, result_df):
         self._signals_df = result_df

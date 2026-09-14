@@ -69,7 +69,7 @@ def compute_byte_entropy(series: pd.Series) -> float:
     return float(-np.sum(probs * np.log2(probs)))
 
 
-def analyze_id(frames: pd.DataFrame) -> dict:
+def analyze_id(frames: pd.DataFrame, should_stop=None) -> dict:
     if frames.empty:
         return {}
 
@@ -107,11 +107,11 @@ def analyze_id(frames: pd.DataFrame) -> dict:
         }
 
     stats["mean_entropy"]  = float(np.mean(byte_entropies)) if byte_entropies else 0.0
-    stats["suspected_type"] = _classify(stats, frames)
+    stats["suspected_type"] = _classify(stats, frames, should_stop)
     return stats
 
 
-def _classify(stats: dict, frames: pd.DataFrame) -> str:
+def _classify(stats: dict, frames: pd.DataFrame, should_stop=None) -> str:
     freq   = stats.get("freq", 0)
     iat_cv = stats.get("iat_cv", 1.0)
 
@@ -129,7 +129,8 @@ def _classify(stats: dict, frames: pd.DataFrame) -> str:
     # incremented, which nearly every OEM message does, and called the
     # LOWEST-entropy byte the checksum — a checksum is high-entropy.)
     counter_cols = {col for col in byte_stats if _is_counter_byte(frames, col)}
-    checksum_cols = _checksum_byte_candidates(frames, byte_stats, counter_cols)
+    checksum_cols = _checksum_byte_candidates(frames, byte_stats, counter_cols,
+                                              should_stop)
 
     constant_cols = {col for col, b in byte_stats.items() if b.get("range", 0) == 0}
     payload = {col: b for col, b in byte_stats.items()
@@ -165,14 +166,23 @@ def _classify(stats: dict, frames: pd.DataFrame) -> str:
     return "UNKNOWN"
 
 
-def analyze_all(df: pd.DataFrame) -> pd.DataFrame:
+def analyze_all(df: pd.DataFrame, should_stop=None) -> pd.DataFrame:
+    """Classify every ID in `df`.
+
+    `should_stop` is checked once per ID. Without it this loop runs to
+    completion whatever happens, which is how a closing window could leave a
+    worker thread several seconds deep in pandas with nothing left to hand its
+    result to.
+    """
     if df.empty:
         return pd.DataFrame()
 
     records = []
     for can_id in df["ID"].unique():
+        if should_stop is not None and should_stop():
+            break
         id_frames = df[df["ID"] == can_id]
-        stats = analyze_id(id_frames)
+        stats = analyze_id(id_frames, should_stop=should_stop)
         if not stats:
             continue
 
@@ -300,15 +310,21 @@ def _is_counter_byte(frames: pd.DataFrame, col: str, threshold: float = 0.75) ->
 
 
 def _checksum_byte_candidates(frames: pd.DataFrame, byte_stats: dict,
-                              counter_cols: set) -> set:
+                              counter_cols: set, should_stop=None) -> set:
     """Bytes whose value is reproduced by a known checksum algorithm.
 
     Entropy alone cannot identify a checksum — it looks like any other
     high-entropy byte — so this asks the algorithms directly.
+
+    This is where nearly all of the classifier's time goes: on a 133 000 frame
+    message it is about five seconds, which is why the stop check reaches down
+    this far rather than stopping at the per-message loop above.
     """
     from canlab.core.checksum_guesser import guess_checksum
     found = set()
     for col in byte_stats:
+        if should_stop is not None and should_stop():
+            break
         if col in counter_cols:
             continue
         idx = int(col[1:])

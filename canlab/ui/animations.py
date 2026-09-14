@@ -120,36 +120,55 @@ class CountUpLabel(QLabel):
     def __init__(self, text: str = "0", suffix: str = "", parent=None):
         super().__init__(text, parent)
         self._current = 0
+        self._target = 0
         self._suffix = suffix
         self._anim: QVariantAnimation | None = None
 
     def animate_to(self, value: int):
+        """Ease to `value`, reusing this label's one animation.
+
+        The animation is parented to the label and never self-deletes. It used
+        to be created per call with DeleteWhenStopped *and* a parent, which
+        gives the object two owners: destroying the label frees the animation,
+        and the stop that destruction triggers frees it again. That is a
+        segfault with no Python traceback, surfacing at whatever unrelated
+        point the event loop next runs.
+        """
+        from canlab.ui.motion import Motion
+
         target = max(0, int(value))
-        # DeleteWhenStopped frees the C++ object, so a finished animation
-        # leaves a dangling wrapper here; clearing it on finish is not enough
-        # because stop() can also be reached from a re-target.
         if self._anim is not None:
-            try:
-                self._anim.stop()
-            except RuntimeError:
-                pass
-            self._anim = None
-        if target == self._current:
+            self._anim.stop()
+        # This counter is the frame total in the status bar. It sat outside the
+        # reduce-motion and live-capture gates that every other animation
+        # obeys, so a capture running at full rate was still easing a number
+        # four hundred milliseconds at a time.
+        if target == self._current or Motion.off():
             self._show(target)
             return
-        anim = QVariantAnimation(self)
+        anim = self._animation()
+        self._target = target
         anim.setStartValue(int(self._current))
         anim.setEndValue(target)
-        anim.setDuration(self.DURATION_MS)
-        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        anim.valueChanged.connect(lambda v: self._show(int(v)))
-        anim.finished.connect(lambda: self._finished(target))
-        self._anim = anim
-        anim.start(QVariantAnimation.DeletionPolicy.DeleteWhenStopped)
+        anim.start()
 
-    def _finished(self, target: int) -> None:
-        self._anim = None
-        self._show(target)
+    def _animation(self) -> QVariantAnimation:
+        if self._anim is None:
+            anim = QVariantAnimation(self)
+            anim.setDuration(self.DURATION_MS)
+            anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+            # Bound methods, not closures over a loop variable: Qt drops these
+            # connections when the label is destroyed.
+            anim.valueChanged.connect(self._on_step)
+            anim.finished.connect(self._on_finished)
+            self._anim = anim
+        return self._anim
+
+    def _on_step(self, value) -> None:
+        self._show(int(value))
+
+    def _on_finished(self) -> None:
+        self._show(self._target)
 
     def _show(self, value: int) -> None:
         self._current = value

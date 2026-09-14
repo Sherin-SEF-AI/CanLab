@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
 
 from canlab.theme import COLORS, mono_font, desc_label
+from canlab.ui.tokens import MAX_H
 from canlab.core.state import get_state
 from canlab.ui.widgets import set_status
 
@@ -19,6 +20,23 @@ STATUS_COLORS = {
     "changed": COLORS["amber"],
     "same":    COLORS["dim"],
 }
+
+
+def _frame_bytes(row) -> bytes:
+    """The payload of one frames row, as bytes.
+
+    A frame shorter than eight bytes leaves NaN in the columns it does not
+    reach. `row.get("B7", 0) or 0` looks like it handles that and does not:
+    NaN is truthy, so the NaN survives the `or` and int() raises on it, which
+    took down the whole PGN scan on the first short frame in a capture.
+    """
+    out = bytearray()
+    for i in range(8):
+        value = row.get(f"B{i}", None)
+        if value is None or value != value:        # NaN is not equal to itself
+            break
+        out.append(int(value) & 0xFF)
+    return bytes(out)
 
 
 class IntelligenceTab(QWidget):
@@ -277,7 +295,7 @@ class IntelligenceTab(QWidget):
         self.j1939_table.verticalHeader().setDefaultSectionSize(20)
         self.j1939_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.j1939_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.j1939_table.setMaximumHeight(160)
+        self.j1939_table.setMaximumHeight(MAX_H["xl"])
         rl.addWidget(QLabel("PGN SCAN RESULTS", font=mono_font(8)))
         rl.addWidget(self.j1939_table)
 
@@ -575,7 +593,7 @@ class IntelligenceTab(QWidget):
             self._state.add_dbc_signal(candidate_to_signal(cands[row]))
             self.lbl_ann_status.setText(f"Added {cands[row].location} to the DBC.")
 
-    # ── J1939 ─────────────────────────────────────────────────────────────────
+    # ── J1939 / NMEA 2000 ─────────────────────────────────────────────────────
 
     def _run_j1939(self):
         df = self._state.frames_df
@@ -611,9 +629,7 @@ class IntelligenceTab(QWidget):
                 # a confident wrong answer, so say nothing instead.
                 spn_preview = "fast packet — needs reassembly"
             elif not frames.empty:
-                row = frames.iloc[0]
-                data = bytes(int(row.get(f"B{i}", 0) or 0) for i in range(8))
-                spns = decode_pgn(h["pgn"], data)
+                spns = decode_pgn(h["pgn"], _frame_bytes(frames.iloc[0]))
                 if spns:
                     spn_preview = "  |  ".join(
                         f"{name}={v:g} {unit}".rstrip()
