@@ -1,0 +1,185 @@
+[
+ {
+  "key": "open",
+  "still": "0001.png",
+  "narration": "CanLab reverse-engineers a CAN bus. This is a real recording from a CANedge logger, nine thousand six hundred frames across fifty arbitration identifiers, and every one of them is a twenty-nine bit extended identifier, because this is a heavy vehicle running J1939 rather than a car.",
+  "caption": "",
+  "focus": null,
+  "seconds": 9.0
+ },
+ {
+  "key": "workspaces",
+  "still": "0002.png",
+  "narration": "The work is grouped into five workspaces rather than sixteen tabs in a row. Capture is what is on the wire, Explore is what it looks like over time, Detect is the automatic analysis, Define is where you write down what you worked out, and Bus is everything that talks back to the vehicle.",
+  "caption": "Five workspaces, not sixteen tabs",
+  "focus": {
+   "x": 0,
+   "y": 55,
+   "w": 1920,
+   "h": 26
+  },
+  "seconds": 11.0
+ },
+ {
+  "key": "sniffer",
+  "still": "0003.png",
+  "narration": "The frames table is a log, which is the wrong shape for the question you actually ask at the bench. The sniffer collapses the bus to one row per message: a byte turns green when it rises and red when it falls, and bytes that never move stay dim.",
+  "caption": "One row per message, coloured by what just moved",
+  "focus": {
+   "x": 231,
+   "y": 113,
+   "w": 760,
+   "h": 300
+  },
+  "seconds": 10.0
+ },
+ {
+  "key": "notch",
+  "still": "0004.png",
+  "narration": "Notch is why this beats scrolling. It records every bit that is moving right now and ignores it from then on, so the counters and checksums that never stop go quiet and the next thing that lights up is the thing you did.",
+  "caption": "Notch: ignore everything already moving",
+  "focus": {
+   "x": 231,
+   "y": 87,
+   "w": 58,
+   "h": 20
+  },
+  "seconds": 9.5
+ },
+ {
+  "key": "notched",
+  "still": "0005.png",
+  "narration": "One press masked four hundred and sixty four bits of steady traffic on this log.",
+  "caption": "",
+  "focus": null,
+  "seconds": 4.0
+ },
+ {
+  "key": "detect",
+  "still": "0006.png",
+  "narration": "The detectors run over the capture with no knowledge of the vehicle at all. Rolling counters, checksum bytes and the algorithm that reproduces them, bit level flags, enumerated bytes, field boundaries from entropy, and multiplexed messages.",
+  "caption": "Twenty-four counters found, with the algorithm for each",
+  "focus": {
+   "x": 234,
+   "y": 158,
+   "w": 1392,
+   "h": 871
+  },
+  "seconds": 11.0
+ },
+ {
+  "key": "entropy",
+  "still": "0007.png",
+  "narration": "Entropy per bit finds where one field ends and the next begins. Forty-two candidate boundaries here, each with a confidence that is a match fraction over the frames loaded, not a proof.",
+  "caption": "Field boundaries, ranked by confidence",
+  "focus": {
+   "x": 234,
+   "y": 158,
+   "w": 1392,
+   "h": 520
+  },
+  "seconds": 9.0
+ },
+ {
+  "key": "dbc",
+  "still": "0008.png",
+  "narration": "A signal is a message, a start bit, a length and a scale. The bit grid shows exactly which bits it claims, and the preview decodes real frames through it as you type, so a definition is checked against the bus rather than against your arithmetic.",
+  "caption": "Live decode of real frames, as you edit",
+  "focus": {
+   "x": 544,
+   "y": 420,
+   "w": 1085,
+   "h": 120
+  },
+  "seconds": 11.0
+ },
+ {
+  "key": "bitgrid",
+  "still": "0009.png",
+  "narration": "Drag across the grid to claim bits. Motorola byte order and non-contiguous layouts are handled by the same coordinate map the exporter uses, so what you select is what gets written out.",
+  "caption": "Drag to claim bits; Motorola layouts included",
+  "focus": {
+   "x": 544,
+   "y": 566,
+   "w": 1085,
+   "h": 289
+  },
+  "seconds": 9.0
+ },
+ {
+  "key": "plot",
+  "still": "0010.png",
+  "narration": "Plotted against time is where a definition is confirmed or refuted. A physical quantity moves smoothly; a sawtooth means the byte order is wrong. Raw bytes and decoded signals share the axis, each with its own scale.",
+  "caption": "",
+  "focus": null,
+  "seconds": 9.0
+ },
+ {
+  "key": "arm",
+  "still": "0011.png",
+  "narration": "Everything that can put a frame on a wire is behind one gate. ARM TX is off by default and it covers injection, replay, fuzzing, gateway forwarding and every diagnostic request. Disarming stops a running worker within two seconds.",
+  "caption": "Nothing transmits until this is armed",
+  "focus": {
+   "x": 1623,
+   "y": 25,
+   "w": 85,
+   "h": 23
+  },
+  "seconds": 11.0
+ },
+ {
+  "key": "inject",
+  "still": "0012.png",
+  "narration": "The injection page itself is three rows: which signal, what value, and how often. Checksum and counter are applied from the vehicle profile, so a frame the ECU will accept does not have to be assembled by hand.",
+  "caption": "Pick a signal, set a value, send once or on a loop",
+  "focus": {
+   "x": 276,
+   "y": 131,
+   "w": 240,
+   "h": 22
+  },
+  "seconds": 10.0
+ },
+ {
+  "key": "services",
+  "still": "0013.png",
+  "narration": "Three things can run alongside: a REST API, an MCP server that lets an assistant drive the analysis, and the plugin list. None of the twenty-five assistant tools can transmit; putting frames on a wire stays behind the gate where a person is watching.",
+  "caption": "REST and MCP: read and analyse, never transmit",
+  "focus": {
+   "x": 1782,
+   "y": 25,
+   "w": 64,
+   "h": 23
+  },
+  "seconds": 11.0
+ },
+ {
+  "key": "adapter",
+  "still": "0014.png",
+  "narration": "Hardware is picked here. Every python-can backend is available, plus GVRET, which CanLab adds itself for the boards SavvyCAN runs on. Detect finds what is plugged in, and Test opens the adapter and listens for a second without transmitting.",
+  "caption": "Any python-can backend, plus GVRET",
+  "focus": {
+   "x": 227,
+   "y": 25,
+   "w": 150,
+   "h": 22
+  },
+  "seconds": 11.0
+ },
+ {
+  "key": "scale",
+  "still": "0015.png",
+  "narration": "A second recording: twenty-three minutes from a two-channel logger, one hundred and fifty five thousand frames. Both channels keep their bus tags, and the sniffer folds the whole thing into sixteen rows in half a second.",
+  "caption": "",
+  "focus": null,
+  "seconds": 9.0
+ },
+ {
+  "key": "close",
+  "still": "0016.png",
+  "narration": "Load a capture, work out which bytes carry what, write it down, and export a DBC other tools can read. Everything shown here ran against real recordings from hardware this project did not produce.",
+  "caption": "",
+  "focus": null,
+  "seconds": 8.0
+ }
+]

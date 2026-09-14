@@ -164,9 +164,9 @@ class IntelligenceTab(QWidget):
         ll.addWidget(ann_grp)
 
         # J1939 Decoder
-        j1939_grp = QGroupBox("J1939 PGN DECODER")
+        j1939_grp = QGroupBox("J1939 / NMEA 2000 PGN DECODER")
         j1939_lay = QVBoxLayout(j1939_grp)
-        self.btn_j1939 = QPushButton("Scan for J1939 IDs")
+        self.btn_j1939 = QPushButton("Scan for PGNs")
         self.btn_j1939.clicked.connect(self._run_j1939)
         j1939_lay.addWidget(self.btn_j1939)
         self.lbl_j1939 = QLabel("—")
@@ -268,9 +268,9 @@ class IntelligenceTab(QWidget):
         rl.addWidget(self.delta_table)
 
         # J1939 table
-        self.j1939_table = QTableWidget(0, 6)
+        self.j1939_table = QTableWidget(0, 7)
         self.j1939_table.setHorizontalHeaderLabels(
-            ["ID", "PGN", "PGN Name", "Source", "Frames", "SPN Preview"]
+            ["ID", "PGN", "PGN Name", "Protocol", "Source", "Frames", "Decoded"]
         )
         self.j1939_table.setFont(mono_font(8))
         self.j1939_table.verticalHeader().setVisible(False)
@@ -278,7 +278,7 @@ class IntelligenceTab(QWidget):
         self.j1939_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.j1939_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.j1939_table.setMaximumHeight(160)
-        rl.addWidget(QLabel("J1939 PGN SCAN RESULTS", font=mono_font(8)))
+        rl.addWidget(QLabel("PGN SCAN RESULTS", font=mono_font(8)))
         rl.addWidget(self.j1939_table)
 
         # Value Reverse table
@@ -585,9 +585,19 @@ class IntelligenceTab(QWidget):
         from canlab.core.j1939 import scan_for_j1939, decode_pgn
         hits = scan_for_j1939(df)
         if not hits:
-            self.lbl_j1939.setText("No J1939 IDs detected (all IDs are ≤ 0x7FF).")
+            self.lbl_j1939.setText(
+                "No 29-bit IDs, so neither J1939 nor NMEA 2000 (all IDs are ≤ 0x7FF).")
             return
-        self.lbl_j1939.setText(f"{len(hits)} J1939 PGN(s) found.")
+        # Say which protocol the bus actually is. Both use the same 29-bit
+        # frame, and reporting a marine bus as J1939 was misleading enough that
+        # the PGN names came out blank.
+        counts: dict[str, int] = {}
+        for h in hits:
+            counts[h["protocol"]] = counts.get(h["protocol"], 0) + 1
+        named = sum(1 for h in hits if not h["pgn_name"].startswith("PGN "))
+        summary = ", ".join(f"{n} {proto}" for proto, n in
+                            sorted(counts.items(), key=lambda kv: -kv[1]))
+        self.lbl_j1939.setText(f"{len(hits)} PGNs: {summary}. {named} named.")
 
         # Populate right-panel J1939 table
         self.j1939_table.setRowCount(0)
@@ -595,20 +605,27 @@ class IntelligenceTab(QWidget):
             frames = df[df["ID"] == h["id_hex"]]
             # Decode first frame for SPN preview
             spn_preview = ""
-            if not frames.empty:
+            if not h["single_frame"]:
+                # An NMEA 2000 fast-packet message is split across frames with
+                # a sequence byte. Decoding one frame of it in isolation gives
+                # a confident wrong answer, so say nothing instead.
+                spn_preview = "fast packet — needs reassembly"
+            elif not frames.empty:
                 row = frames.iloc[0]
                 data = bytes(int(row.get(f"B{i}", 0) or 0) for i in range(8))
                 spns = decode_pgn(h["pgn"], data)
                 if spns:
                     spn_preview = "  |  ".join(
-                        f"{name}={v:.2f} {unit}" for name, (v, unit) in list(spns.items())[:3]
+                        f"{name}={v:g} {unit}".rstrip()
+                        for name, (v, unit) in list(spns.items())[:3]
                     )
             r = self.j1939_table.rowCount()
             self.j1939_table.insertRow(r)
             cells = [
                 h["id_hex"],
-                f"0x{h['pgn']:04X}",
+                f"0x{h['pgn']:04X}" if h["protocol"] == "J1939" else str(h["pgn"]),
                 h["pgn_name"],
+                h["protocol"],
                 h["sa_name"],
                 str(h["frame_count"]),
                 spn_preview,
@@ -616,8 +633,10 @@ class IntelligenceTab(QWidget):
             for ci, txt in enumerate(cells):
                 item = QTableWidgetItem(txt)
                 item.setFont(mono_font(8))
-                if ci == 2:
+                if ci == 2 and not txt.startswith("PGN "):
                     item.setForeground(QBrush(QColor(COLORS["green"])))
+                elif ci == 6 and txt.startswith("fast packet"):
+                    item.setForeground(QBrush(QColor(COLORS["dim"])))
                 self.j1939_table.setItem(r, ci, item)
 
     # ── Value Reverse Lookup ──────────────────────────────────────────────────

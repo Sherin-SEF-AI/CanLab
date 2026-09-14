@@ -1,5 +1,13 @@
 """
-SAE J1939 PGN / SPN decoder.
+SAE J1939 and NMEA 2000 PGN decoder.
+
+Both protocols sit on the same 29-bit CAN frame and split the identifier the
+same way, so one ID decoder serves both. They part company at the data page:
+J1939 messages are almost all data page 0, while NMEA 2000 puts its own PGNs on
+data page 1 in the 126 208 to 130 836 range. Reading a marine bus with the
+J1939 tables produces a screen full of plausible-looking source addresses and
+no PGN names at all, which is worse than saying nothing, so the protocol is
+worked out from the identifier and the right table is used.
 
 J1939 uses 29-bit extended CAN IDs:
   bits 28-26 : Priority (3 bits)
@@ -154,7 +162,7 @@ def parse_j1939_id(arb_id: int) -> dict:
         }
     """
     priority = (arb_id >> 26) & 0x07
-    dp       = (arb_id >> 24) & 0x01
+    dp       = (arb_id >> 24) & 0x03
     pf       = (arb_id >> 16) & 0xFF
     ps       = (arb_id >>  8) & 0xFF
     sa       =  arb_id        & 0xFF
@@ -166,6 +174,19 @@ def parse_j1939_id(arb_id: int) -> dict:
         pgn = (dp << 16) | (pf << 8)
         da  = ps
 
+    if is_nmea2000(pgn):
+        name, single = _N2K_NAMES.get(pgn, (f"PGN {pgn}", True))
+        return {
+            "priority": priority,
+            "pgn":      pgn,
+            "sa":       sa,
+            "da":       da,
+            "sa_name":  f"Device 0x{sa:02X}",
+            "pgn_name": name,
+            "protocol": "NMEA 2000",
+            "single_frame": single,
+        }
+
     pgn_info = _PGN_DB.get(pgn, {})
     return {
         "priority": priority,
@@ -174,7 +195,141 @@ def parse_j1939_id(arb_id: int) -> dict:
         "da":       da,
         "sa_name":  _SA_NAMES.get(sa, f"SA 0x{sa:02X}"),
         "pgn_name": pgn_info.get("name", f"PGN 0x{pgn:04X}"),
+        "protocol": "J1939",
+        "single_frame": True,
     }
+
+
+# ── NMEA 2000 ────────────────────────────────────────────────────────────────
+# Marine electronics. Same frame format, different PGN space, different units:
+# angles are radians, speeds metres per second, temperatures kelvin.
+#
+# Only single-frame PGNs carry field definitions here. NMEA 2000 also has a
+# "fast packet" transport that spreads one message over several frames with a
+# sequence byte, and decoding a fast-packet PGN from a single frame produces
+# confident nonsense: PGN 129029 read that way dates a 2024 recording to 2002.
+# Those PGNs are named and left undecoded until reassembly exists.
+
+#: PGN → (name, is_single_frame)
+_N2K_NAMES: dict[int, tuple[str, bool]] = {
+    59392: ("ISO Acknowledgement", True),
+    59904: ("ISO Request", True),
+    60928: ("ISO Address Claim", True),
+    126208: ("NMEA Group Function", False),
+    126992: ("System Time", True),
+    126993: ("Heartbeat", True),
+    126996: ("Product Information", False),
+    126998: ("Configuration Information", False),
+    127245: ("Rudder", True),
+    127250: ("Vessel Heading", True),
+    127251: ("Rate of Turn", True),
+    127257: ("Attitude", True),
+    127258: ("Magnetic Variation", True),
+    127488: ("Engine Parameters, Rapid Update", True),
+    127489: ("Engine Parameters, Dynamic", False),
+    127493: ("Transmission Parameters, Dynamic", True),
+    127497: ("Trip Parameters, Engine", False),
+    127505: ("Fluid Level", True),
+    127508: ("Battery Status", True),
+    128259: ("Speed", True),
+    128267: ("Water Depth", True),
+    128275: ("Distance Log", False),
+    129025: ("Position, Rapid Update", True),
+    129026: ("COG & SOG, Rapid Update", True),
+    129029: ("GNSS Position Data", False),
+    129033: ("Local Time Offset", True),
+    129038: ("AIS Class A Position Report", False),
+    129039: ("AIS Class B Position Report", False),
+    129283: ("Cross Track Error", True),
+    129284: ("Navigation Data", False),
+    129285: ("Route/WP Information", False),
+    129539: ("GNSS DOPs", True),
+    129540: ("GNSS Satellites in View", False),
+    130306: ("Wind Data", True),
+    130310: ("Environmental Parameters", True),
+    130311: ("Environmental Parameters", True),
+    130312: ("Temperature", True),
+    130313: ("Humidity", True),
+    130314: ("Actual Pressure", True),
+    130316: ("Temperature, Extended Range", True),
+    130323: ("Meteorological Station Data", False),
+}
+
+#: PGN → {field name: (start_byte, length_bytes, scale, offset, unit, signed)}
+#: Every layout below was checked against a real recording; see the tests.
+_N2K_FIELDS: dict[int, dict] = {
+    127250: {
+        "Heading":   (1, 2, 1e-4, 0.0, "rad", False),
+        "Deviation": (3, 2, 1e-4, 0.0, "rad", True),
+        "Variation": (5, 2, 1e-4, 0.0, "rad", True),
+    },
+    127251: {"Rate of Turn": (1, 4, 3.125e-8, 0.0, "rad/s", True)},
+    127257: {
+        "Yaw":   (1, 2, 1e-4, 0.0, "rad", True),
+        "Pitch": (3, 2, 1e-4, 0.0, "rad", True),
+        "Roll":  (5, 2, 1e-4, 0.0, "rad", True),
+    },
+    128259: {
+        "Speed Through Water": (1, 2, 0.01, 0.0, "m/s", False),
+        "Speed Over Ground":   (3, 2, 0.01, 0.0, "m/s", False),
+    },
+    128267: {
+        "Water Depth": (1, 4, 0.01, 0.0, "m", False),
+        "Offset":      (5, 2, 0.001, 0.0, "m", True),
+    },
+    129025: {
+        "Latitude":  (0, 4, 1e-7, 0.0, "deg", True),
+        "Longitude": (4, 4, 1e-7, 0.0, "deg", True),
+    },
+    129026: {
+        "Course Over Ground": (2, 2, 1e-4, 0.0, "rad", False),
+        "Speed Over Ground":  (4, 2, 0.01, 0.0, "m/s", False),
+    },
+    130306: {
+        "Wind Speed": (1, 2, 0.01, 0.0, "m/s", False),
+        "Wind Angle": (3, 2, 1e-4, 0.0, "rad", False),
+    },
+    130310: {"Water Temperature": (1, 2, 0.01, -273.15, "\u00b0C", False)},
+    130311: {"Temperature": (2, 2, 0.01, -273.15, "\u00b0C", False)},
+    130312: {"Temperature": (3, 2, 0.01, -273.15, "\u00b0C", False)},
+    130314: {"Pressure": (3, 4, 0.1, 0.0, "Pa", False)},
+    130316: {"Temperature": (3, 3, 0.001, -273.15, "\u00b0C", False)},
+}
+
+#: Data page 1 identifiers in this range belong to NMEA 2000, not J1939.
+N2K_PGN_RANGE = (126208, 130836)
+
+
+def is_nmea2000(pgn: int) -> bool:
+    """True if this PGN is in the NMEA 2000 range rather than J1939's."""
+    return N2K_PGN_RANGE[0] <= pgn <= N2K_PGN_RANGE[1]
+
+
+def _n2k_value(data: bytes, start: int, length: int, signed: bool):
+    """One little-endian field, or None if the sender marked it unavailable."""
+    if start + length > len(data):
+        return None
+    raw_bytes = data[start:start + length]
+    if raw_bytes == b"\xFF" * length:
+        return None                      # NMEA 2000's "data not available"
+    raw = int.from_bytes(raw_bytes, "little")
+    if signed and raw >= 1 << (length * 8 - 1):
+        raw -= 1 << (length * 8)
+    return raw
+
+
+def decode_n2k(pgn: int, data: bytes) -> dict:
+    """Decode an NMEA 2000 single-frame PGN into {field: (value, unit)}."""
+    fields = _N2K_FIELDS.get(pgn)
+    if not fields:
+        return {}
+    out = {}
+    for name, (start, length, scale, offset, unit, signed) in fields.items():
+        raw = _n2k_value(data, start, length, signed)
+        if raw is None:
+            continue
+        out[name] = (round(raw * scale + offset, 6), unit)
+    return out
 
 
 # FMI (Failure Mode Identifier) short names — SAE J1939-73 Appendix A.
@@ -232,6 +387,8 @@ def decode_pgn(pgn: int, data: bytes) -> dict:
     Returns {spn_name: (value, unit)} or {} if PGN unknown / data too short.
     DM1 (0xFECA) is decoded into structured DTCs via decode_dm1.
     """
+    if is_nmea2000(pgn):
+        return decode_n2k(pgn, data)
     if pgn == 0xFECA:
         return decode_dm1(data)
     info = _PGN_DB.get(pgn)
@@ -285,6 +442,8 @@ def scan_for_j1939(df) -> list[dict]:
             "pgn_name":    parsed["pgn_name"],
             "sa":          parsed["sa"],
             "sa_name":     parsed["sa_name"],
+            "protocol":    parsed["protocol"],
+            "single_frame": parsed["single_frame"],
             "frame_count": count,
         })
 
