@@ -19,6 +19,7 @@ from PyQt6.QtGui import QColor, QBrush
 from canlab.theme import COLORS, mono_font, desc_label
 from canlab.core.state import get_state
 from canlab.core.canid import normalize_id
+from canlab.ui.widgets import set_status
 
 
 class AutoRETab(QWidget):
@@ -95,7 +96,7 @@ class AutoRETab(QWidget):
 
     def _on_counter_checksum_failed(self, err: str):
         self.lbl_ctr_status.setText(f"Error: {err}")
-        self.lbl_ctr_status.setStyleSheet(f"color:{COLORS['error']}")
+        set_status(self.lbl_ctr_status, "error")
         self.btn_run_ctr.setEnabled(True)
 
     def _on_counter_checksum_done(self, results: dict):
@@ -128,7 +129,7 @@ class AutoRETab(QWidget):
             f"Found {n_ctr} counter byte(s) and {n_chk} checksum byte(s) "
             f"across {len(results)} message(s)."
         )
-        self.lbl_ctr_status.setStyleSheet(f"color:{COLORS['green']}")
+        set_status(self.lbl_ctr_status, "ok")
         self.btn_run_ctr.setEnabled(True)
 
     # ── 2. Entropy Boundary Detector ─────────────────────────────────────────
@@ -208,7 +209,7 @@ class AutoRETab(QWidget):
 
     def _on_entropy_failed(self, err: str):
         self.lbl_entropy_status.setText(f"Error: {err}")
-        self.lbl_entropy_status.setStyleSheet(f"color:{COLORS['error']}")
+        set_status(self.lbl_entropy_status, "error")
         self.btn_run_entropy.setEnabled(True)
 
     def _on_entropy_done(self, result):
@@ -240,7 +241,7 @@ class AutoRETab(QWidget):
         self.lbl_entropy_status.setText(
             f"Found {len(suggestions)} candidate signal range(s)."
         )
-        self.lbl_entropy_status.setStyleSheet(f"color:{COLORS['green']}")
+        set_status(self.lbl_entropy_status, "ok")
         self.btn_run_entropy.setEnabled(True)
 
     def _on_entropy_row_click(self, row, _col):
@@ -330,7 +331,7 @@ class AutoRETab(QWidget):
 
     def _on_correlation_failed(self, err: str):
         self.lbl_corr_status.setText(f"Error: {err}")
-        self.lbl_corr_status.setStyleSheet(f"color:{COLORS['error']}")
+        set_status(self.lbl_corr_status, "error")
         self.btn_run_corr.setEnabled(True)
 
     def _on_correlation_done(self, corr_df):
@@ -368,7 +369,7 @@ class AutoRETab(QWidget):
             f"Matrix: {len(ids)}×{len(ids)} IDs  |  "
             f"{len(pairs)} high-correlation pair(s) found."
         )
-        self.lbl_corr_status.setStyleSheet(f"color:{COLORS['green']}")
+        set_status(self.lbl_corr_status, "ok")
         self.btn_run_corr.setEnabled(True)
 
     # ── 4. Checksum Guesser ───────────────────────────────────────────────────
@@ -592,14 +593,14 @@ class AutoRETab(QWidget):
             self.lbl_guesser_status.setText(
                 f"Found {len(results)} matching algorithm(s) for B{byte_idx} of 0x{can_id}."
             )
-            self.lbl_guesser_status.setStyleSheet(f"color:{COLORS['green']}")
+            set_status(self.lbl_guesser_status, "ok")
         else:
             self.guesser_detail.setPlainText(
                 f"No algorithm matched B{byte_idx} of 0x{can_id}.\n"
                 "This byte may not be a checksum, or uses a proprietary algorithm."
             )
             self.lbl_guesser_status.setText("No matches found.")
-            self.lbl_guesser_status.setStyleSheet(f"color:{COLORS['dim']}")
+            set_status(self.lbl_guesser_status, "dim")
 
     # ── State handlers ────────────────────────────────────────────────────────
 

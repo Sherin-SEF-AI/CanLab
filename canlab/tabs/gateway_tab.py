@@ -11,6 +11,7 @@ from PyQt6.QtGui import QColor, QBrush, QFont
 from canlab.theme import COLORS, mono_font
 from canlab.core.state import get_state
 from canlab.core.canid import normalize_id
+from canlab.ui.widgets import set_status
 
 
 _DIR_OPTIONS    = ["A→B", "B→A", "Both"]
@@ -77,7 +78,7 @@ class GatewayTab(QWidget):
         for lbl in [self.lbl_fwd_ab, self.lbl_fwd_ba, self.lbl_blocked,
                     self.lbl_mod, self.lbl_rate_ab, self.lbl_rate_ba]:
             lbl.setFont(mono_font(9, bold=True))
-            lbl.setStyleSheet(f"color:{COLORS['green']}")
+            set_status(lbl, "ok")
         sg.addWidget(QLabel("A→B fwd:", font=mono_font(8)), 0, 0)
         sg.addWidget(self.lbl_fwd_ab, 0, 1)
         sg.addWidget(QLabel("B→A fwd:", font=mono_font(8)), 1, 0)

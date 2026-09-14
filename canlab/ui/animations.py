@@ -157,46 +157,61 @@ class CountUpLabel(QLabel):
 
 
 class ButtonPulse:
-    """Cycles a button's stylesheet to create a pulsing glow while active."""
+    """Draw attention to a button while a long job runs.
 
-    _STEPS = [
-        f"QPushButton {{ color:{COLORS['amber']}; border:1px solid {COLORS['amber']}; background:{COLORS['panel_bg']}; }}",
-        f"QPushButton {{ color:{COLORS['amber']}; border:2px solid {COLORS['amber']}; background:#2a1800; }}",
-        "QPushButton { color:#ffffff;            border:2px solid #ffdd88;          background:#3a2200; }",
-        f"QPushButton {{ color:{COLORS['amber']}; border:2px solid {COLORS['amber']}; background:#2a1800; }}",
-    ]
+    It used to swap four complete stylesheet strings on a 180 ms timer. Each
+    assignment re-parses the sheet and invalidates the widget's whole styled
+    subtree, which is an expensive way to change one colour. This animates the
+    button's own opacity instead, through the shared motion module, so it
+    obeys the reduce-motion and live-capture gates like everything else.
+    """
 
     def __init__(self, button):
-        self._btn   = button
-        self._step  = 0
-        self._orig  = button.styleSheet()
-        self._timer = QTimer()
-        self._timer.setInterval(180)
-        self._timer.timeout.connect(self._tick)
+        self._button = button
+        self._effect = None
+        self._anim = None
 
     def start(self):
-        self._step = 0
-        self._timer.start()
+        from PyQt6.QtWidgets import QGraphicsOpacityEffect
+
+        from canlab.ui.motion import DURATION, Motion, animate
+        if self._anim is not None or Motion.off():
+            return
+        if self._effect is None:
+            self._effect = QGraphicsOpacityEffect(self._button)
+            self._button.setGraphicsEffect(self._effect)
+        self._effect.setOpacity(1.0)
+        self._anim = animate(self._effect, b"opacity", 0.45,
+                             dur=DURATION["pulse"] // 2, frm=1.0, loop=-1)
 
     def stop(self):
-        self._timer.stop()
-        self._btn.setStyleSheet(self._orig)
-
-    def _tick(self):
-        self._btn.setStyleSheet(self._STEPS[self._step % len(self._STEPS)])
-        self._step += 1
-
-
-# ── Scan-line flash (for text areas receiving new data) ───────────────────────
-
-def flash_widget(widget: QWidget, color: str = COLORS["green"], duration_ms: int = 300):
-    """Briefly set a widget's background to `color` then fade back."""
-    orig = widget.styleSheet()
-    widget.setStyleSheet(orig + f"; background: {color}22;")
-    QTimer.singleShot(duration_ms, lambda: widget.setStyleSheet(orig))
+        if self._anim is not None:
+            self._anim.stop()
+            self._anim = None
+        if self._effect is not None:
+            self._effect.setOpacity(1.0)
 
 
-# ── Typewriter cursor blink ───────────────────────────────────────────────────
+def flash_widget(widget, color: str = None, duration_ms: int = 300):
+    """Briefly tint a widget to say something happened.
+
+    The old version appended to the widget's stylesheet and restored it from a
+    bare QTimer.singleShot, so a widget destroyed inside the delay was written
+    to after deletion. This drives a colour property through the motion
+    module, which parents the animation to the widget.
+    """
+    from PyQt6.QtWidgets import QGraphicsOpacityEffect
+
+    from canlab.ui.motion import Motion, animate
+    if Motion.off():
+        return
+    effect = widget.graphicsEffect()
+    if not isinstance(effect, QGraphicsOpacityEffect):
+        effect = QGraphicsOpacityEffect(widget)
+        widget.setGraphicsEffect(effect)
+    effect.setOpacity(0.35)
+    animate(effect, b"opacity", 1.0, dur=duration_ms, frm=0.35)
+
 
 class TypewriterCursor:
     """Appends a blinking block cursor to a QTextEdit while streaming."""

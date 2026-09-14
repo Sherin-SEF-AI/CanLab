@@ -751,6 +751,43 @@ QLabel[state="error"] {{ color: {_S['error']}; }}
 QLabel[state="dim"]   {{ color: {_C['dim']}; }}
 QLabel[state="info"]  {{ color: {_C['text']}; }}
 
+/* ── sections and toolstrips ────────────────────────────────────────────── */
+#toolstrip {{
+    background: {_C['panel']};
+    border-bottom: 1px solid {_C['border']};
+}}
+
+#section {{
+    background: transparent;
+}}
+
+#section_header {{
+    background: {_C['panel']};
+    color: {_C['text_dim']};
+    border: none;
+    border-radius: {_R}px;
+    padding: 0px {_SM}px;
+    text-align: left;
+    text-transform: uppercase;
+}}
+
+#section_header:hover {{
+    background: {_C['raised']};
+    color: {_C['text']};
+}}
+
+#section_header:checked {{
+    color: {_C['text']};
+}}
+
+#section_body {{
+    background: {_C['panel']};
+    border: 1px solid {_C['border']};
+    border-top: none;
+    border-bottom-left-radius: {_RM}px;
+    border-bottom-right-radius: {_RM}px;
+}}
+
 /* ── progress ───────────────────────────────────────────────────────────── */
 QProgressBar {{
     background: {_C['input']};
@@ -764,6 +801,25 @@ QProgressBar {{
 QProgressBar::chunk {{
     background: {_C['select']};
     border-radius: {_R - 1}px;
+}}
+
+#command_palette {{
+    background: {_C['panel']};
+    border: 1px solid {_C['border_strong']};
+    border-radius: {_RM}px;
+}}
+
+#command_palette QLineEdit {{
+    background: {_C['input']};
+    border: 1px solid {_C['border_strong']};
+    padding: {_MD}px {_SM}px;
+    font-family: {FAMILY_UI};
+}}
+
+#command_palette QListWidget {{
+    background: transparent;
+    border: none;
+    font-family: {FAMILY_UI};
 }}
 
 /* ── tooltip ────────────────────────────────────────────────────────────── */

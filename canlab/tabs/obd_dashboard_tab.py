@@ -10,6 +10,7 @@ from PyQt6.QtGui import QPainter, QPen, QColor, QFont
 from canlab.theme import COLORS, mono_font
 from canlab.core.state import get_state
 from canlab.core.obd2_pids import PID_TABLE, DEFAULT_PIDS
+from canlab.ui.widgets import set_status
 
 
 class _GaugeWidget(QWidget):
@@ -89,7 +90,7 @@ class OBDDashboardTab(QWidget):
 
         self.lbl_can = QLabel("CAN: disconnected")
         self.lbl_can.setFont(mono_font(8))
-        self.lbl_can.setStyleSheet(f"color:{COLORS['dim']}")
+        set_status(self.lbl_can, "dim")
         ll.addWidget(self.lbl_can)
 
         rate_row = QHBoxLayout()
@@ -242,8 +243,8 @@ class OBDDashboardTab(QWidget):
     def _on_can_status(self, connected: bool):
         if connected:
             self.lbl_can.setText("CAN: connected")
-            self.lbl_can.setStyleSheet(f"color:{COLORS['green']}")
+            set_status(self.lbl_can, "ok")
         else:
             self.lbl_can.setText("CAN: disconnected")
-            self.lbl_can.setStyleSheet(f"color:{COLORS['dim']}")
+            set_status(self.lbl_can, "dim")
             self._stop_polling()

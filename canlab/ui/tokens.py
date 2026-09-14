@@ -87,6 +87,12 @@ SYNTAX = {
 }
 
 
+# Height caps for scrollable sub-panels. These replace 22 calls spread over
+# thirteen different numbers (55, 60, 80, 100, 110, 120, 140, 150, 160, 180,
+# 200), none of which agreed with any other.
+MAX_H = {"xs": 80, "sm": 110, "md": 150, "lg": 190, "xl": 260}
+
+
 def px(value: int) -> str:
     return f"{value}px"
 

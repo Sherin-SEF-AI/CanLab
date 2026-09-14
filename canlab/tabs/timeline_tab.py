@@ -32,6 +32,7 @@ except ImportError as exc:                       # pragma: no cover
 
 from canlab.theme import COLORS, mono_font
 from canlab.core.state import get_state
+from canlab.ui.widgets import set_status
 import logging
 
 log = logging.getLogger(__name__)
@@ -102,7 +103,7 @@ class TimelineTab(QWidget):
         ll.addWidget(self.btn_clear)
 
         self.lbl_status = QLabel("Load frames to begin.", font=mono_font(8))
-        self.lbl_status.setStyleSheet(f"color:{COLORS['dim']}")
+        set_status(self.lbl_status, "dim")
         ll.addWidget(self.lbl_status)
 
         splitter.addWidget(left)
@@ -162,7 +163,7 @@ class TimelineTab(QWidget):
         toolbar.addWidget(self.spin_offset)
 
         self.lbl_vid_time = QLabel("0.000 s  /  log: —", font=mono_font(8))
-        self.lbl_vid_time.setStyleSheet(f"color:{COLORS['green']}")
+        set_status(self.lbl_vid_time, "ok")
         toolbar.addWidget(self.lbl_vid_time)
 
         toolbar.addStretch()
@@ -201,7 +202,7 @@ class TimelineTab(QWidget):
             "4. Click any spike in SIGNAL VIEW — video jumps to that moment",
             font=mono_font(7)
         )
-        help_lbl.setStyleSheet(f"color:{COLORS['dim']}")
+        set_status(help_lbl, "dim")
         help_lbl.setWordWrap(True)
         lay.addWidget(help_lbl)
 
@@ -303,7 +304,7 @@ class TimelineTab(QWidget):
 
         self.glw.ci.layout.setSpacing(2)
         self.lbl_status.setText(f"Plotting {len(self._plots)} signal(s).")
-        self.lbl_status.setStyleSheet(f"color:{COLORS['green']}")
+        set_status(self.lbl_status, "ok")
 
     def _extract_series(self, df, kind, mid, name):
         if kind == "raw":

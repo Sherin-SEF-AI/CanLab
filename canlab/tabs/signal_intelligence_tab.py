@@ -23,6 +23,7 @@ from PyQt6.QtGui import QColor, QBrush
 
 from canlab.theme import COLORS, mono_font
 from canlab.core.state import get_state
+from canlab.ui.widgets import set_status
 import logging
 
 log = logging.getLogger(__name__)
@@ -889,7 +890,7 @@ class SignalIntelligenceTab(QWidget):
         self.lbl_anomaly_baseline.setText(
             f"Baseline fitted ({name}) — {len(ids)} IDs"
         )
-        self.lbl_anomaly_baseline.setStyleSheet(f"color:{COLORS['green']}")
+        set_status(self.lbl_anomaly_baseline, "ok")
         self.btn_fit.setEnabled(True)
         self.btn_score.setEnabled(True)
 

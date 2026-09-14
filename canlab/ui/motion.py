@@ -119,3 +119,44 @@ def interpolate(owner: QObject, start, end, setter, *, dur="base",
         anim.finished.connect(on_done)
     anim.start(QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)
     return anim
+
+
+class SplitterAnimator(QObject):
+    """Animates one pane of a QSplitter, giving it a Qt property to drive.
+
+    A splitter owns its children's geometry, so animating a panel's own
+    ``maximumWidth`` puts two things in charge of the same number and the drag
+    handle and the animation disagree. This changes the splitter's own sizes
+    instead, taking the difference out of the pane that stretches, so the
+    splitter stays the single owner.
+    """
+
+    def __init__(self, splitter, index: int, absorber: int, parent=None):
+        super().__init__(parent or splitter)
+        self._splitter = splitter
+        self._index = index
+        self._absorber = absorber
+
+    def width(self) -> int:
+        sizes = self._splitter.sizes()
+        return sizes[self._index] if self._index < len(sizes) else 0
+
+    def set_width(self, value) -> None:
+        value = max(0, int(value))
+        sizes = self._splitter.sizes()
+        if self._index >= len(sizes):
+            return
+        delta = value - sizes[self._index]
+        sizes[self._index] = value
+        if self._absorber < len(sizes):
+            sizes[self._absorber] = max(1, sizes[self._absorber] - delta)
+        self._splitter.setSizes(sizes)
+
+    def animate_to(self, value: int, *, instant: bool = False, on_done=None):
+        if instant or Motion.off():
+            self.set_width(value)
+            if on_done is not None:
+                on_done()
+            return None
+        return interpolate(self, self.width(), max(0, int(value)),
+                           self.set_width, dur="slow", on_done=on_done)

@@ -103,15 +103,24 @@ def tab(name: str) -> None:
 
 
 def subtab(widget, label: str) -> None:
-    """Switch an inner QTabWidget to the tab whose label starts with `label`."""
+    """Switch an inner QTabWidget to the tab whose label starts with `label`.
+
+    Raises on a miss. This used to return quietly, and a single mistyped name
+    ("SEQUENCE" against a page called "TEST SEQUENCE") meant that scene of the
+    published walkthrough filmed whichever page happened to be open instead.
+    A recorder that silently films the wrong thing is worse than one that
+    stops.
+    """
     inner = widget.findChild(QTabWidget)
     if inner is None:
-        return
+        raise KeyError(f"{type(widget).__name__} has no inner tab widget")
     for i in range(inner.count()):
         if inner.tabText(i).upper().startswith(label.upper()):
             inner.setCurrentIndex(i)
             pump(0.3)
             return
+    have = [inner.tabText(i) for i in range(inner.count())]
+    raise KeyError(f"no sub-tab starting with {label!r} in {have}")
 
 
 WHEEL_SPEED = {
@@ -442,7 +451,7 @@ def record() -> None:
     shot(1)
     subtab(window.injection_tab, "FUZZ")
     shot(1)
-    subtab(window.injection_tab, "SEQUENCE")
+    subtab(window.injection_tab, "TEST SEQUENCE")
     shot(1)
     safety.set_armed(False)
 

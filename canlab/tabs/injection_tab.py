@@ -8,7 +8,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
 
-from canlab.theme import COLORS, mono_font, desc_label
+from canlab.theme import COLORS, desc_label, mono_font
+from canlab.ui.tokens import SPACE
+from canlab.ui.widgets import StatusLabel, Toolstrip, set_status
 from canlab.core.state import get_state
 from canlab.core.canid import normalize_id
 import logging
@@ -48,69 +50,63 @@ class InjectionTab(QWidget):
     # ── Inject sub-tab ────────────────────────────────────────────────────────
 
     def _build_inject_tab(self) -> QWidget:
-        w   = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(8, 8, 8, 8)
-        lay.setSpacing(8)
+        """One frame out, once or on a loop.
 
-        self.lbl_can_status = QLabel("CAN: disconnected — connect bus first")
-        self.lbl_can_status.setFont(mono_font(8))
-        self.lbl_can_status.setStyleSheet(f"color:{COLORS['error']}")
+        This page used 330 px of a 1080 px window and left the rest black,
+        with a combo box stretched to 1300 px for a short signal name and
+        three buttons spread across 1400 px. The controls are now sized to
+        their content and grouped on one line each, and the space goes to the
+        log, which is the part that has something to say.
+        """
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(SPACE["md"], SPACE["md"], SPACE["md"], SPACE["md"])
+        lay.setSpacing(SPACE["sm"])
+
+        self.lbl_can_status = StatusLabel("CAN: disconnected \u2014 connect bus first", "error")
         lay.addWidget(self.lbl_can_status)
 
-        # Signal picker
-        sig_grp = QGroupBox("SIGNAL")
-        sg = QHBoxLayout(sig_grp)
-        sg.addWidget(QLabel("Signal:"))
+        signal_row = Toolstrip()
         self.sig_combo = QComboBox()
         self.sig_combo.setFont(mono_font())
+        self.sig_combo.setMinimumWidth(240)
+        self.sig_combo.setMaximumWidth(420)
         self.sig_combo.currentIndexChanged.connect(self._on_sig_changed)
-        sg.addWidget(self.sig_combo, 1)
-        lay.addWidget(sig_grp)
+        signal_row.add("Signal", self.sig_combo).stretch()
+        lay.addWidget(signal_row)
 
-        # Value slider + spin
-        val_grp = QGroupBox("VALUE")
-        vg = QHBoxLayout(val_grp)
+        value_row = Toolstrip()
         self.val_slider = QSlider(Qt.Orientation.Horizontal)
         self.val_slider.setMinimum(-10000)
         self.val_slider.setMaximum(10000)
         self.val_slider.setValue(0)
+        self.val_slider.setMinimumWidth(180)
+        self.val_slider.setMaximumWidth(360)
         self.val_slider.valueChanged.connect(
             lambda v: self.val_spin.setValue(v / 100.0)
         )
-        vg.addWidget(self.val_slider, 1)
         self.val_spin = QDoubleSpinBox()
         self.val_spin.setRange(-100, 100)
         self.val_spin.setDecimals(2)
-        self.val_spin.setFixedWidth(90)
+        self.val_spin.setFixedWidth(84)
         self.val_spin.valueChanged.connect(
             lambda v: self.val_slider.setValue(int(v * 100))
         )
-        vg.addWidget(self.val_spin)
         self.lbl_unit = QLabel("")
         self.lbl_unit.setFont(mono_font(8))
-        vg.addWidget(self.lbl_unit)
-        lay.addWidget(val_grp)
+        self.lbl_unit.setMinimumWidth(44)
+        value_row.add("Value", self.val_slider, self.val_spin, self.lbl_unit).stretch()
+        lay.addWidget(value_row)
 
-        # Period + options
-        opt_grp = QGroupBox("OPTIONS")
-        og = QHBoxLayout(opt_grp)
-        og.addWidget(QLabel("Period (ms):"))
+        options_row = Toolstrip()
         self.period_spin = QSpinBox()
         self.period_spin.setRange(1, 5000)
         self.period_spin.setValue(10)
-        og.addWidget(self.period_spin)
+        self.period_spin.setFixedWidth(72)
         self.chk_checksum = QCheckBox("Checksum")
         self.chk_checksum.setChecked(True)
-        self.chk_counter  = QCheckBox("Counter")
+        self.chk_counter = QCheckBox("Counter")
         self.chk_counter.setChecked(True)
-        og.addWidget(self.chk_checksum)
-        og.addWidget(self.chk_counter)
-        og.addStretch()
-        lay.addWidget(opt_grp)
-
-        # Send / Loop / Stop
-        btn_row = QHBoxLayout()
         self.btn_send_once = QPushButton("Send Once")
         self.btn_send_once.setObjectName("btn_green")
         self.btn_send_once.clicked.connect(self._send_once)
@@ -120,14 +116,16 @@ class InjectionTab(QWidget):
         self.btn_stop_inj = QPushButton("Stop")
         self.btn_stop_inj.clicked.connect(self._stop_injection)
         self.btn_stop_inj.setEnabled(False)
-        for b in [self.btn_send_once, self.btn_loop, self.btn_stop_inj]:
-            btn_row.addWidget(b)
-        lay.addLayout(btn_row)
+        (options_row
+         .add("Period ms", self.period_spin, self.chk_checksum, self.chk_counter)
+         .separator()
+         .add(self.btn_send_once, self.btn_loop, self.btn_stop_inj)
+         .stretch())
+        lay.addWidget(options_row)
 
-        self.lbl_inj_status = QLabel("")
-        self.lbl_inj_status.setFont(mono_font(8))
+        self.lbl_inj_status = StatusLabel("", "dim")
         lay.addWidget(self.lbl_inj_status)
-        lay.addStretch()
+        lay.addStretch(1)
         return w
 
     # ── Replay sub-tab ────────────────────────────────────────────────────────
@@ -309,10 +307,10 @@ class InjectionTab(QWidget):
     def _on_can_status(self, connected: bool):
         if connected:
             self.lbl_can_status.setText("CAN: connected")
-            self.lbl_can_status.setStyleSheet(f"color:{COLORS['green']}")
+            set_status(self.lbl_can_status, "ok")
         else:
             self.lbl_can_status.setText("CAN: disconnected")
-            self.lbl_can_status.setStyleSheet(f"color:{COLORS['error']}")
+            set_status(self.lbl_can_status, "error")
 
     # ── Injection actions ─────────────────────────────────────────────────────
 
@@ -358,13 +356,13 @@ class InjectionTab(QWidget):
             self.lbl_inj_status.setText(
                 f"Sent 0x{mid:03X}  [{' '.join(f'{b:02X}' for b in data)}]"
             )
-            self.lbl_inj_status.setStyleSheet(f"color:{COLORS['green']}")
+            set_status(self.lbl_inj_status, "ok")
         except (BusNotArmedError, BlockedIdError) as e:
             self.lbl_inj_status.setText(str(e))
-            self.lbl_inj_status.setStyleSheet(f"color:{COLORS['error']}")
+            set_status(self.lbl_inj_status, "error")
         except Exception as e:
             self.lbl_inj_status.setText(f"Error: {e}")
-            self.lbl_inj_status.setStyleSheet(f"color:{COLORS['error']}")
+            set_status(self.lbl_inj_status, "error")
 
     def _toggle_loop(self):
         if self._inj_worker and self._inj_worker.isRunning():
@@ -394,7 +392,7 @@ class InjectionTab(QWidget):
         self._inj_worker.start()
         self.btn_loop.setText("Stop Loop")
         self.btn_stop_inj.setEnabled(True)
-        self.lbl_inj_status.setStyleSheet(f"color:{COLORS['amber']}")
+        set_status(self.lbl_inj_status, "warn")
 
     def cleanup(self):
         """Stop every worker this tab owns (called on app close)."""
@@ -415,7 +413,7 @@ class InjectionTab(QWidget):
         self.btn_loop.setText("Start Loop")
         self.btn_stop_inj.setEnabled(False)
         self.lbl_inj_status.setText("Stopped.")
-        self.lbl_inj_status.setStyleSheet(f"color:{COLORS['dim']}")
+        set_status(self.lbl_inj_status, "dim")
 
     # ── Replay actions ────────────────────────────────────────────────────────
 
@@ -479,7 +477,7 @@ class InjectionTab(QWidget):
         self.replay_scrubber.setValue(0)
         self._replay_worker.start()
         self.lbl_replay_status.setText("Replaying…")
-        self.lbl_replay_status.setStyleSheet(f"color:{COLORS['amber']}")
+        set_status(self.lbl_replay_status, "warn")
 
     def _pause_replay(self):
         if self._replay_worker:
@@ -495,7 +493,7 @@ class InjectionTab(QWidget):
             self._replay_worker.stop()
             self._replay_worker = None
         self.lbl_replay_status.setText("Stopped.")
-        self.lbl_replay_status.setStyleSheet(f"color:{COLORS['dim']}")
+        set_status(self.lbl_replay_status, "dim")
 
     def _on_replay_tick(self, current: int, total: int):
         self.replay_scrubber.blockSignals(True)
@@ -510,7 +508,7 @@ class InjectionTab(QWidget):
 
     def _on_replay_done(self):
         self.lbl_replay_status.setText("Replay complete.")
-        self.lbl_replay_status.setStyleSheet(f"color:{COLORS['green']}")
+        set_status(self.lbl_replay_status, "ok")
 
     # ── Trigger actions ───────────────────────────────────────────────────────
 
@@ -547,7 +545,7 @@ class InjectionTab(QWidget):
         self._triggers_active = not self._triggers_active
         if self._triggers_active:
             self.btn_trig_start.setText("Disable Triggers")
-            self.btn_trig_start.setStyleSheet(f"color:{COLORS['error']}")
+            set_status(self.btn_trig_start, "error")
         else:
             self.btn_trig_start.setText("Enable Triggers")
             self.btn_trig_start.setStyleSheet("")
@@ -714,14 +712,14 @@ class InjectionTab(QWidget):
         self._scan_log_append(
             f"⚠ SAFETY CUTOUT at value={value:.3f}  — {reason}"
         )
-        self.scan_log.setStyleSheet(f"color:{COLORS['error']}")
+        set_status(self.scan_log, "error")
         self._state.safety_cutout.emit(value, reason)
         self.btn_scan_start.setEnabled(True)
         self.btn_scan_abort.setEnabled(False)
 
     def _on_scan_finished(self):
         self._scan_log_append("Scan complete — no cutout detected.")
-        self.scan_log.setStyleSheet(f"color:{COLORS['green']}")
+        set_status(self.scan_log, "ok")
         self.btn_scan_start.setEnabled(True)
         self.btn_scan_abort.setEnabled(False)
 

@@ -2,8 +2,9 @@ import os
 import can
 import pandas as pd
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QTabWidget, QToolBar, QStatusBar, QLabel, QFileDialog,
+    QMainWindow, QWidget, QTabWidget, QToolBar, QStatusBar, QLabel, QFileDialog,
     QMessageBox, QProgressBar, QMenu, QComboBox, QToolButton, QSizePolicy, QVBoxLayout,
+    QSplitter,
 )
 from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence, QColor
@@ -31,11 +32,15 @@ from canlab.tabs.obd_dashboard_tab import OBDDashboardTab
 from canlab.tabs.signal_intelligence_tab import SignalIntelligenceTab
 from canlab.tabs.gateway_tab import GatewayTab
 from canlab.ui.animations import PulsingDot, CountUpLabel
+from canlab.ui.motion import Motion, SplitterAnimator
+from canlab.ui.side_panel import PanelHost
+from canlab.ui.tokens import SPACE
 from canlab.ui.workspace_bar import WorkspaceBar
 from canlab.settings_dialog import (
     SettingsDialog, load_api_key,
     load_groq_key, load_openai_key, load_ai_provider, load_ai_model,
 )
+from canlab.ui.widgets import set_status
 import logging
 
 log = logging.getLogger(__name__)
@@ -96,6 +101,10 @@ class MainWindow(QMainWindow):
             api_key=self._api_key,
             openai_key=load_openai_key(),
         )
+        reduce_motion = _st.value("ui/reduce_motion", False, bool)
+        Motion.reduce = bool(reduce_motion)
+        self._act_reduce_motion.setChecked(bool(reduce_motion))
+
         self._load_plugins()
         if _st.value(SettingsDialog.S_MCP_AUTOSTART, False, bool):
             self._start_mcp(quiet=True)
@@ -381,6 +390,8 @@ class MainWindow(QMainWindow):
     # ── Window geometry ───────────────────────────────────────────────────────
 
     GEOMETRY_KEY = "window/geometry"
+    SPLITTER_KEY = "window/central_splitter"
+    PANELS_KEY = "window/panels"
 
     def _restore_geometry(self) -> None:
         """Reopen at the size and place the user left it, maximised first time."""
@@ -396,6 +407,36 @@ class MainWindow(QMainWindow):
             self.show()
         else:
             self.showMaximized()
+        self._restore_panels()
+
+    def _restore_panels(self) -> None:
+        """Panel widths and collapsed state, after show().
+
+        Restoring before the window is shown computes the pane widths against
+        a zero-width splitter and silently collapses everything. The collapsed
+        flags are applied without animation, because a window sliding its own
+        panels shut on startup looks like a fault.
+        """
+        import json
+
+        from PyQt6.QtCore import QSettings
+        st = QSettings("CanLab", "CanLab")
+        blob = st.value(self.SPLITTER_KEY)
+        if blob is not None:
+            try:
+                self._split.restoreState(blob)
+            except (TypeError, ValueError):
+                log.debug("stored splitter state unreadable", exc_info=True)
+        try:
+            saved = json.loads(st.value(self.PANELS_KEY, "{}", str))
+        except (ValueError, TypeError):
+            saved = {}
+        for side in ("left", "right"):
+            width = saved.get(f"{side}_width")
+            if isinstance(width, int) and width > 2:
+                self._panel_width[side] = width
+            if saved.get(f"{side}_open") is False:
+                self._toggle_panel(side, force=False, instant=True)
 
     def _update_title(self) -> None:
         """Name the open capture in the title bar, so the taskbar says which."""
@@ -405,9 +446,20 @@ class MainWindow(QMainWindow):
             self.setWindowTitle("CanLab")
 
     def _save_geometry(self) -> None:
+        import json
+
         from PyQt6.QtCore import QSettings
-        QSettings("CanLab", "CanLab").setValue(
-            self.GEOMETRY_KEY, self.saveGeometry())
+        st = QSettings("CanLab", "CanLab")
+        st.setValue(self.GEOMETRY_KEY, self.saveGeometry())
+        st.setValue(self.SPLITTER_KEY, self._split.saveState())
+        # saveState alone records a collapsed pane as zero and forgets the
+        # width to come back to, so the widths are stored separately.
+        st.setValue(self.PANELS_KEY, json.dumps({
+            "left_open": self.panel_open("left"),
+            "right_open": self.panel_open("right"),
+            "left_width": int(self._panel_width.get("left", 220)),
+            "right_width": int(self._panel_width.get("right", 280)),
+        }))
 
     def _build_view_menu(self, mb) -> None:
         """Navigation and bus shortcuts, in a menu so they can be discovered.
@@ -431,6 +483,13 @@ class MainWindow(QMainWindow):
             view_menu.addAction(action)
 
         view_menu.addSeparator()
+        # Not a shortcut: it is set once and left alone, and a key for it
+        # would be one more thing competing in the uniqueness check.
+        self._act_reduce_motion = QAction("Reduce Motion", self)
+        self._act_reduce_motion.setCheckable(True)
+        self._act_reduce_motion.toggled.connect(self._set_reduce_motion)
+        view_menu.addAction(self._act_reduce_motion)
+
         for text, sequence, handler in [
             ("Next Tab",         "Ctrl+Tab",       lambda: self._step_tab(1)),
             ("Previous Tab",     "Ctrl+Shift+Tab", lambda: self._step_tab(-1)),
@@ -455,6 +514,11 @@ class MainWindow(QMainWindow):
 
         view_menu.addSeparator()
         for text, sequence, handler in [
+            ("Command Palette…",  "Ctrl+Shift+P", self._open_palette),
+            ("Search Commands…",  "F3",           self._open_palette),
+            ("Toggle ID Panel",   "Ctrl+B",       lambda: self._toggle_panel("left")),
+            ("Toggle Inspector",  "Ctrl+Shift+B", lambda: self._toggle_panel("right")),
+            ("Maximise Editor",   "Ctrl+Space",   self._toggle_both_panels),
             ("Next Workspace",     "Ctrl+PgDown", lambda: self.workspace_bar.step_workspace(1)),
             ("Previous Workspace", "Ctrl+PgUp",   lambda: self.workspace_bar.step_workspace(-1)),
             ("Connect / Disconnect Bus", "Ctrl+D", self._toggle_connection),
@@ -508,13 +572,18 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        body = QWidget()
-        main_lay = QHBoxLayout(body)
-        main_lay.setContentsMargins(0, 0, 0, 0)
-        main_lay.setSpacing(0)
+        # A real splitter, so the panels can finally be dragged. They never
+        # could: they sat in a plain QHBoxLayout between a minimum and a
+        # maximum width, and the resize() calls in both constructors were dead
+        # code, because a widget in a layout is sized by the layout.
+        body = QSplitter(Qt.Orientation.Horizontal)
+        body.setObjectName("central_split")
+        body.setChildrenCollapsible(True)
+        body.setHandleWidth(SPACE["sm"])
 
         self.id_panel = IDPanel()
-        main_lay.addWidget(self.id_panel)
+        self._id_host = PanelHost(self.id_panel)
+        body.addWidget(self._id_host)
 
         self.tabs = QTabWidget()
         # Fifteen tab labels in one row need 1162 px, which forced the whole
@@ -565,10 +634,24 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.ml_intel_tab,     "ML INTEL")
         self.tabs.addTab(self.gateway_tab,      "GATEWAY")
 
-        main_lay.addWidget(self.tabs, stretch=1)
+        body.addWidget(self.tabs)
 
         self.inspector = InspectorPanel()
-        main_lay.addWidget(self.inspector)
+        self._insp_host = PanelHost(self.inspector)
+        body.addWidget(self._insp_host)
+
+        # Only the middle grows; the panels keep the width they are given.
+        body.setStretchFactor(0, 0)
+        body.setStretchFactor(1, 1)
+        body.setStretchFactor(2, 0)
+        body.setCollapsible(1, False)          # the pages can never vanish
+        body.setSizes([220, 1, 280])
+        self._split = body
+        self._panel_anim = {
+            "left": SplitterAnimator(body, 0, 1, self),
+            "right": SplitterAnimator(body, 2, 1, self),
+        }
+        self._panel_width = {"left": 220, "right": 280}
 
         # The workspace bar replaces the tab bar rather than sitting beside
         # it. Hide the bar only now that every page exists, because addTab
@@ -599,7 +682,7 @@ class MainWindow(QMainWindow):
 
         self.lbl_connection = QLabel("BUS: disconnected")
         self.lbl_connection.setFont(mono_font(8))
-        self.lbl_connection.setStyleSheet(f"color:{COLORS['dim']}")
+        set_status(self.lbl_connection, "dim")
         sb.addWidget(self.lbl_connection)
 
         # Bus load bar (right side)
@@ -788,6 +871,46 @@ class MainWindow(QMainWindow):
 
         self._update_connect_action()
         self._state.can_connected.emit(True)
+
+    def _set_reduce_motion(self, reduce: bool) -> None:
+        from PyQt6.QtCore import QSettings
+        Motion.reduce = bool(reduce)
+        QSettings("CanLab", "CanLab").setValue("ui/reduce_motion", bool(reduce))
+
+    def _open_palette(self) -> None:
+        """Blender's F3: type the name of the thing instead of finding it."""
+        from canlab.ui.command_palette import open_palette
+        open_palette(self)
+
+    # ── Side panels ───────────────────────────────────────────────────────────
+
+    def panel_open(self, side: str) -> bool:
+        return self._panel_anim[side].width() > 2
+
+    def _toggle_panel(self, side: str, *, force=None, instant: bool = False) -> None:
+        """Collapse a panel to nothing, or restore the width it had.
+
+        The splitter keeps its handle either way, so a collapsed panel can be
+        dragged back open without knowing the shortcut.
+        """
+        open_now = self.panel_open(side)
+        want_open = (not open_now) if force is None else bool(force)
+        if want_open == open_now:
+            return
+        anim = self._panel_anim[side]
+        if want_open:
+            anim.animate_to(self._panel_width.get(side, 220), instant=instant)
+        else:
+            current = anim.width()
+            if current > 2:
+                self._panel_width[side] = current      # to come back to
+            anim.animate_to(0, instant=instant)
+
+    def _toggle_both_panels(self) -> None:
+        """Blender's Ctrl+Space: give the whole window to the work."""
+        any_open = self.panel_open("left") or self.panel_open("right")
+        for side in ("left", "right"):
+            self._toggle_panel(side, force=not any_open)
 
     # ── Adapters ──────────────────────────────────────────────────────────────
 
@@ -1339,15 +1462,19 @@ class MainWindow(QMainWindow):
         self.lbl_total_frames.animate_to(count)
 
     def _on_can_status(self, connected: bool):
+        # The GUI thread is committed to a 250 ms drain, a 300 ms frames
+        # coalescer and a 200 ms sniffer tick while capturing; decorative
+        # motion stands down for the duration.
+        Motion.set_capturing(connected)
         self._can_dot.set_active(connected)
         if connected:
             ch = self._can_settings["channel"]
             br = self._can_settings["bitrate"]
             self.lbl_connection.setText(f"BUS: {ch} @ {br}bps")
-            self.lbl_connection.setStyleSheet(f"color:{COLORS['green']}")
+            set_status(self.lbl_connection, "ok")
         else:
             self.lbl_connection.setText("BUS: disconnected")
-            self.lbl_connection.setStyleSheet(f"color:{COLORS['dim']}")
+            set_status(self.lbl_connection, "dim")
 
     def _update_frame_rate(self):
         fps   = self._live_frame_count

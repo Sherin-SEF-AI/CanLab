@@ -10,6 +10,7 @@ from PyQt6.QtGui import QColor, QBrush
 
 from canlab.theme import COLORS, mono_font, desc_label
 from canlab.core.state import get_state
+from canlab.ui.widgets import set_status
 
 
 STATUS_COLORS = {
@@ -346,7 +347,7 @@ class IntelligenceTab(QWidget):
                 self._state.add_dbc_signal(sig)
                 added += 1
         self.lbl_auto_dbc.setText(f"Added {added} signals to DBC Builder.")
-        self.lbl_auto_dbc.setStyleSheet(f"color:{COLORS['green']}")
+        set_status(self.lbl_auto_dbc, "ok")
 
     # ── Diff ──────────────────────────────────────────────────────────────────
 
@@ -357,7 +358,7 @@ class IntelligenceTab(QWidget):
         self._state.diff_baseline_df = self._state.frames_df.copy()
         n = len(self._state.diff_baseline_df)
         self.lbl_baseline.setText(f"Baseline: {n} frames")
-        self.lbl_baseline.setStyleSheet(f"color:{COLORS['amber']}")
+        set_status(self.lbl_baseline, "warn")
 
     def _run_diff(self):
         from canlab.core.diff_engine import diff_logs
@@ -433,7 +434,7 @@ class IntelligenceTab(QWidget):
             return
         self._get_recorder().capture_baseline(df)
         self.lbl_coa_status.setText(f"Baseline captured  ({len(df)} frames)")
-        self.lbl_coa_status.setStyleSheet(f"color:{COLORS['amber']}")
+        set_status(self.lbl_coa_status, "warn")
 
     def _coa_capture_action(self):
         df = self._state.frames_df
@@ -441,7 +442,7 @@ class IntelligenceTab(QWidget):
             return
         self._get_recorder().capture_action(df)
         self.lbl_coa_status.setText(f"Action captured  ({len(df)} frames)")
-        self.lbl_coa_status.setStyleSheet(f"color:{COLORS['amber']}")
+        set_status(self.lbl_coa_status, "warn")
 
     def _coa_compute(self):
         deltas = self._get_recorder().compute_delta()
@@ -477,7 +478,7 @@ class IntelligenceTab(QWidget):
                 item.setForeground(QBrush(QColor(color)))
                 self.delta_table.setItem(row, ci, item)
         self.lbl_coa_status.setText(f"{len(deltas)} byte changes detected")
-        self.lbl_coa_status.setStyleSheet(f"color:{COLORS['green']}")
+        set_status(self.lbl_coa_status, "ok")
         self._state.change_detected.emit(deltas)
 
     def _coa_clear(self):
