@@ -1168,27 +1168,41 @@ class MainWindow(QMainWindow):
 
     # ── Toolbar actions ───────────────────────────────────────────────────────
 
+    def _goto(self, tab) -> None:
+        """Show a tab by identity rather than by number.
+
+        These were nine hardcoded indices, and inserting SNIFFER at position 1
+        shifted every tab after it without moving them: Tools > CAN Gateway
+        opened ML INTEL, Export DBC opened AI ENGINE, and the ID panel's
+        Analyze with AI opened PLOT. The stale comments (`# OBD-II tab` beside
+        index 12, which is TIMELINE) are what gave it away. indexOf cannot go
+        stale.
+        """
+        index = self.tabs.indexOf(tab)
+        if index >= 0:
+            self.tabs.setCurrentIndex(index)
+
     def _run_ai_re(self):
-        self.tabs.setCurrentIndex(3)
+        self._goto(self.ai_tab)
         self.ai_tab._add_all_unknown()
         self.ai_tab._run_queue()
 
     def _export_dbc(self):
-        self.tabs.setCurrentIndex(4)
+        self._goto(self.dbc_tab)
         self.dbc_tab._export_dbc()
 
     def _generate_code(self):
-        self.tabs.setCurrentIndex(5)
+        self._goto(self.codegen_tab)
 
     def _obd_discover(self):
-        self.tabs.setCurrentIndex(12)   # OBD-II tab
+        self._goto(self.obd_tab)
         self.obd_tab._discover_pids()
 
     def _open_ml_intel(self):
-        self.tabs.setCurrentIndex(13)   # ML INTEL tab
+        self._goto(self.ml_intel_tab)
 
     def _open_gateway(self):
-        self.tabs.setCurrentIndex(14)   # GATEWAY tab
+        self._goto(self.gateway_tab)
 
     def _open_settings(self, tab: str = ""):
         dlg = SettingsDialog(self)
@@ -1277,17 +1291,17 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 f"CAN Matrix: imported {len(sigs)} signals from {os.path.basename(path)}", 5000
             )
-            self.tabs.setCurrentIndex(4)   # DBC Builder tab
+            self._goto(self.dbc_tab)
         except Exception as e:
             QMessageBox.critical(self, "Import Error", str(e))
 
     def _analyze_id(self, hex_id: str):
-        self.tabs.setCurrentIndex(3)
+        self._goto(self.ai_tab)
         self.ai_tab.queue_id(hex_id)
         self.ai_tab._load_id(hex_id)
 
     def _plot_id(self, hex_id: str):
-        self.tabs.setCurrentIndex(2)
+        self._goto(self.plot_tab)
         self.plot_tab._highlight_id(hex_id)
 
     # ── Event handlers ────────────────────────────────────────────────────────

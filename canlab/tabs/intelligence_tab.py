@@ -469,7 +469,7 @@ class IntelligenceTab(QWidget):
                 "TOGGLE":    COLORS["amber"],
                 "PULSE":     COLORS["amber"],
                 "SUSTAINED": COLORS["green"],
-            }.get(direction, COLORS["fg"])
+            }.get(direction, COLORS["text"])
             for ci, txt in enumerate(cells):
                 item = QTableWidgetItem(txt)
                 item.setFont(mono_font())

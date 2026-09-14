@@ -1,7 +1,7 @@
 """Reusable animation widgets and helpers for CANLAB."""
 from PyQt6.QtWidgets import QWidget, QLabel
 from PyQt6.QtCore import (
-    Qt, QTimer, QRectF,
+    QEasingCurve, Qt, QTimer, QRectF, QVariantAnimation,
 )
 from PyQt6.QtGui import QPainter, QPen, QColor, QBrush
 
@@ -101,33 +101,60 @@ class PulsingDot(QWidget):
 # ── Animated integer counter label ────────────────────────────────────────────
 
 class CountUpLabel(QLabel):
-    """Label that animates from its current numeric value to a target."""
+    """Label that animates from its current numeric value to a target.
+
+    It used to step by ``max(1, diff // 6)`` on a 16 ms timer. Counting up
+    that works; counting down, ``diff`` is negative, ``diff // 6`` floors to a
+    large negative, and ``max(1, ...)`` returns 1 -- so the value moved one
+    step *away* from the target on every tick, the timer never reached its
+    stop condition, and the status bar counted upward forever showing a number
+    that was simply false. Loading a small capture after a large one was
+    enough to trigger it, as was Trim capture.
+
+    A QVariantAnimation eases correctly in both directions, takes the same
+    time regardless of distance, and stops on its own.
+    """
+
+    DURATION_MS = 400
 
     def __init__(self, text: str = "0", suffix: str = "", parent=None):
         super().__init__(text, parent)
-        self._target  = 0
         self._current = 0
-        self._suffix  = suffix
-        self._timer   = QTimer(self)
-        self._timer.setInterval(16)
-        self._timer.timeout.connect(self._tick)
+        self._suffix = suffix
+        self._anim: QVariantAnimation | None = None
 
     def animate_to(self, value: int):
-        self._target  = value
-        self._current = max(0, self._current)
-        self._timer.start()
+        target = max(0, int(value))
+        # DeleteWhenStopped frees the C++ object, so a finished animation
+        # leaves a dangling wrapper here; clearing it on finish is not enough
+        # because stop() can also be reached from a re-target.
+        if self._anim is not None:
+            try:
+                self._anim.stop()
+            except RuntimeError:
+                pass
+            self._anim = None
+        if target == self._current:
+            self._show(target)
+            return
+        anim = QVariantAnimation(self)
+        anim.setStartValue(int(self._current))
+        anim.setEndValue(target)
+        anim.setDuration(self.DURATION_MS)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.valueChanged.connect(lambda v: self._show(int(v)))
+        anim.finished.connect(lambda: self._finished(target))
+        self._anim = anim
+        anim.start(QVariantAnimation.DeletionPolicy.DeleteWhenStopped)
 
-    def _tick(self):
-        diff = self._target - self._current
-        if abs(diff) <= 1:
-            self._current = self._target
-            self._timer.stop()
-        else:
-            self._current += max(1, diff // 6)
-        self.setText(f"{self._current:,} {self._suffix}".strip())
+    def _finished(self, target: int) -> None:
+        self._anim = None
+        self._show(target)
 
+    def _show(self, value: int) -> None:
+        self._current = value
+        self.setText(f"{value:,} {self._suffix}".strip())
 
-# ── Button pulse helper ───────────────────────────────────────────────────────
 
 class ButtonPulse:
     """Cycles a button's stylesheet to create a pulsing glow while active."""
