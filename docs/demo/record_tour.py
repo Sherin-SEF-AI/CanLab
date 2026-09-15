@@ -119,6 +119,21 @@ def shot(key: str, narration: str, *, focus=None, caption: str = "",
     print(f"  {marker}  {key}", flush=True)
 
 
+def decoded_column(table, column: int = 6) -> tuple:
+    """The rectangle of one column of a table, in window coordinates.
+
+    Pointing at a whole table twice in a row says "look at the table" both
+    times. The second beat is about one column of it, so that is what the
+    frame should push in on.
+    """
+    origin = table.mapTo(window, QPoint(0, 0))
+    x = table.columnViewportPosition(column) + table.verticalHeader().width()
+    width = table.columnWidth(column)
+    height = min(table.height(), table.horizontalHeader().height()
+                 + table.rowHeight(0) * max(1, table.rowCount()))
+    return (origin.x() + x, origin.y(), width, height)
+
+
 def tab(name: str):
     for i in range(window.tabs.count()):
         if window.tabs.tabText(i).split()[0] == name.split()[0]:
@@ -193,14 +208,15 @@ def main() -> int:
          seconds=12.0)
 
     shot("position",
-         """Which the decoded fields then confirm from three directions at
-            once. Position puts the vessel at forty-two point six six north,
-            eighty-one point two one west, on Lake Erie. Magnetic variation
-            reads eight point nine degrees west, which is the published value
-            for there. Speed over ground is exactly zero, so she was moored,
-            and the wind was under a metre per second.""",
-         focus=window.intelligence_tab.lbl_j1939,
-         caption="Position, variation and speed agree with each other",
+         """Which the decoded fields then confirm, from two messages that have
+            no reason to agree unless the layouts are right. Position puts the
+            vessel at forty-two point six six north, eighty-one point two one
+            west, which is Lake Erie. Heading reads one point nine eight
+            radians, and the magnetic variation beside it reads nought point
+            one five five radians west, which is eight point nine degrees: the
+            published value for exactly there.""",
+         focus=decoded_column(window.intelligence_tab.j1939_table),
+         caption="Two messages agreeing on an external fact",
          seconds=13.0)
 
     # 3 ── the sniffer ───────────────────────────────────────────────────────
@@ -244,7 +260,7 @@ def main() -> int:
             sequence identifier and specifies that wrap. The detector got there
             from the data.""",
          focus=window.auto_re_tab.ctr_table,
-         caption="Byte 0 counters, wrap 251, found without the spec",
+         caption="24 counter bytes found, without the spec",
          seconds=12.0)
 
     subtab(auto, "ENTROPY")

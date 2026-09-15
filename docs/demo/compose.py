@@ -17,6 +17,7 @@ that they scale with the push instead of sliding over it.
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -176,7 +177,7 @@ def render_shot(still: Path, out_dir: Path, index: int, *, seconds: float,
     base = Image.open(still).convert("RGB")
     if base.size != (W, H):
         base = base.resize((W, H), Image.LANCZOS)
-    total = max(2, int(round(seconds * FPS)))
+    total = frame_count(seconds)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if focus is None:
@@ -193,12 +194,19 @@ def render_shot(still: Path, out_dir: Path, index: int, *, seconds: float,
     push = max(6, int(total * (1 - hold_ratio) / 2))
     hold = total - push * 2
 
+    held: Path | None = None
     for i in range(total):
+        path = out_dir / f"{index + i:06d}.jpg"
         if i < push:                       # push in
             t = i / max(1, push - 1)
             crop = lerp_rect(FULL, target, t)
             strength = ease(t)
         elif i < push + hold:              # hold
+            # Every hold frame is identical, and holds are most of a beat.
+            # Render the first and hard-link the rest to it.
+            if held is not None:
+                os.link(held, path)
+                continue
             crop = target
             strength = 1.0
         else:                              # pull out
@@ -210,8 +218,15 @@ def render_shot(still: Path, out_dir: Path, index: int, *, seconds: float,
         frame = ring(frame, focus, strength)
         frame = frame.crop(crop.as_box()).resize((W, H), Image.LANCZOS)
         frame = caption(frame, text, font, strength)
-        frame.save(out_dir / f"{index + i:06d}.jpg", quality=92)
+        frame.save(path, quality=92)
+        if push <= i < push + hold:
+            held = path
     return total
+
+
+def frame_count(seconds: float) -> int:
+    """How many frames render_shot writes for a beat of this length."""
+    return max(2, int(round(seconds * FPS)))
 
 
 def load_font(size: int = 30):

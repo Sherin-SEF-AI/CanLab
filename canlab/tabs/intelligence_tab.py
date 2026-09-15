@@ -293,7 +293,12 @@ class IntelligenceTab(QWidget):
         self.j1939_table.setFont(mono_font(8))
         self.j1939_table.verticalHeader().setVisible(False)
         self.j1939_table.verticalHeader().setDefaultSectionSize(20)
-        self.j1939_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        # The identifier, PGN and frame count are short and fixed; the decoded
+        # values are the column worth reading, so give the spare width to that
+        # one rather than spreading it over all seven.
+        header = self.j1939_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
         self.j1939_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.j1939_table.setMaximumHeight(MAX_H["xl"])
         rl.addWidget(QLabel("PGN SCAN RESULTS", font=mono_font(8)))
@@ -627,7 +632,7 @@ class IntelligenceTab(QWidget):
                 # An NMEA 2000 fast-packet message is split across frames with
                 # a sequence byte. Decoding one frame of it in isolation gives
                 # a confident wrong answer, so say nothing instead.
-                spn_preview = "fast packet — needs reassembly"
+                spn_preview = "fast packet, needs reassembly"
             elif not frames.empty:
                 spns = decode_pgn(h["pgn"], _frame_bytes(frames.iloc[0]))
                 if spns:

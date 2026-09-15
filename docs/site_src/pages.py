@@ -31,25 +31,40 @@ def build_pages(*, h2, table, video_card, parts, repo):
 </div>
 
 {h2("Watch it work")}
-<p>A narrated walkthrough of every tab, recorded from the running application
-   in four parts. Captions are on by default; the whole thing is about eleven
-   minutes.</p>
-<div class="video-grid">{videos}</div>
-<p>The walkthrough is generated rather than hand-recorded.
-   <code>docs/demo/record.py</code> drives a real main window under Qt's
-   offscreen platform and calls the same slots the buttons call, so a scene
-   that stops working fails the run instead of quietly recording a stale
-   screen.</p>
-<div class="note">
-  <span class="callout-title">One caveat</span>
-  <p>It was recorded from the <code>fix/production-readiness</code> branch, so
-     two things in it are ahead of <code>main</code>: the diagnostics tab there
-     has XCP and DoIP panels, and it has selectable vehicle profiles. On
-     <code>main</code> those protocols are
-     <a href="diagnostics.html#library-only-protocols">library modules with no
-     user interface</a>. Everything else shown is what <code>main</code>
-     does.</p>
+<div class="video-card video-feature">
+  <video controls preload="metadata" playsinline>
+    <source src="canlab-tour.mp4" type="video/mp4">
+    <track kind="captions" srclang="en" label="English" default
+           src="canlab-tour.vtt">
+    Your browser cannot play this video.
+    <a href="canlab-tour.mp4">Download it instead</a>.
+  </video>
+  <div class="meta">
+    <h3>The guided tour</h3>
+    <p class="len">5:34</p>
+    <p>One pass through the whole tool against two real recordings. Start
+       here.</p>
+  </div>
 </div>
+<p>For each beat the frame pushes in on the control being described, dims the
+   rest, rings it and captions it, then pulls back out. The rectangle is the
+   widget's own geometry, read off the live window at record time, so a control
+   that moves in a later build takes its callout with it.</p>
+<p>It is a real analysis. The first capture turns out to be a marine NMEA 2000
+   bus rather than the J1939 that 29-bit identifiers usually suggest. The
+   counter detector finds the sequence byte the specification defines without
+   being told the protocol. A wind speed signal is defined, and the same two
+   bytes are plotted both ways round: little-endian reads 0.72 to 0.87 m/s,
+   big-endian claims 184 to 223.</p>
+
+{h2("The full walkthrough")}
+<p>Every tab, in four parts, recorded from the running application with
+   captions on by default.</p>
+<div class="video-grid">{videos}</div>
+<p>All the videos are generated rather than hand-recorded. The recorders drive
+   a real main window under Qt's offscreen platform and call the same slots the
+   buttons call, so a scene that stops working fails the run instead of quietly
+   recording a stale screen.</p>
 
 {h2("What it is for")}
 <p>You have a capture from a vehicle bus and a few thousand frames of hex. The
@@ -74,7 +89,7 @@ def build_pages(*, h2, table, video_card, parts, repo):
 <p>It is not a signal identifier. The analysis produces candidates ranked by
    heuristics, and a confidence figure is a match fraction over the frames you
    loaded, not a proof. Every result needs verifying against the vehicle before
-   you rely on it. The project is a single-author effort, still alpha, and has
+   you rely on it. The project is a single-author effort, in beta, and has
    not been validated across a wide range of real vehicles. The
    <a href="reference.html#limitations">limitations</a> are listed plainly.</p>
 
@@ -458,8 +473,32 @@ def build_pages_3(*, h2, table, repo):
         "What each of the 16 tabs does and when you would reach for it.",
         f"""
 <h1>The 16 tabs</h1>
-<p class="lede">Roughly in the order you would use them. Tabs marked with a
-   star in the application are the analysis-heavy ones.</p>
+<p class="lede">Roughly in the order you would use them.</p>
+
+{h2("Finding your way around")}
+<p>Sixteen tabs holding 33 sub-tabs is 49 panes, too many for one row. The
+   layout follows Blender: layered greys so nesting reads as depth, blue for
+   selection, and green, amber and red kept only where they mean connected,
+   pending and armed.</p>
+{table(["", ""], [
+    ["<strong>Workspaces</strong>",
+     "The tabs are grouped into CAPTURE, EXPLORE, DETECT, DEFINE and BUS. The "
+     "bar follows the tabs as well as driving them, so Alt+1..9 and Ctrl+Tab "
+     "still work and the bar switches workspace to keep up."],
+    ["<strong>Command palette</strong>",
+     "Ctrl+Shift+P or F3 searches 105 commands: every pane by its path and "
+     "every menu action with its shortcut. Both lists are read from the live "
+     "window, so nothing is registered by hand."],
+    ["<strong>Sidebars</strong>",
+     "The ID list and the inspector sit in a real splitter. Drag them, "
+     "collapse them to nothing with T and N, or both at once with "
+     "Ctrl+Space. Widths and state are remembered."],
+    ["<strong>Reduce motion</strong>",
+     "View &gt; Reduce Motion turns animation off. It also stands down while a "
+     "live capture runs, except the armed and connected indicators."],
+])}
+<p>The minimum window size is 1124 by 851, so it fits a laptop screen with both
+   sidebars open.</p>
 
 {h2("FRAMES")}
 <p>The raw view: every frame in time order with its timestamp, arbitration ID,
@@ -530,8 +569,12 @@ def build_pages_3(*, h2, table, repo):
 {h2("INTELLIGENCE")}
 <p>Looks across messages rather than within one. Its sections are signal
    periodicity, automatic DBC generation, log diff, an opendbc cross-reference,
-   change-on-action capture, a J1939 PGN decoder, and a value reverse
-   lookup.</p>
+   change-on-action capture, a J1939 and NMEA 2000 PGN decoder, and a value
+   reverse lookup.</p>
+<p>The PGN decoder works the protocol out from the identifier: NMEA 2000 uses
+   data page 1 in the 126208 to 130836 range. Multi-frame PGNs are named but
+   not decoded, because one frame of one read alone gives a confident wrong
+   answer.</p>
 <p>Change-on-action is the one worth knowing about: capture a baseline, perform
    a physical action, capture again, and it shows which bytes changed. That is
    often the fastest route from "somewhere in these 60 messages" to a
@@ -545,6 +588,9 @@ def build_pages_3(*, h2, table, repo):
    between limits with a watchdog, <strong>FUZZ</strong> with random, boundary
    or mutation payloads, and <strong>TEST SEQUENCE</strong> for scripted
    inject, wait and assert steps.</p>
+<p>The INJECT page previews the frame it would send before anything is armed,
+   colouring each byte by whether the signal or the vehicle profile wrote it,
+   and keeps a log of every send with its result.</p>
 <div class="warn">
   <span class="callout-title">Gated</span>
   <p>Nothing here transmits until ARM TX is on, and turning it off stops a run
@@ -773,20 +819,22 @@ def build_pages_4(*, h2, table, repo):
    vehicle without knowing anything about it, which makes it a good first test
    that your interface and wiring work at all.</p>
 
-{h2("J1939")}
+{h2("J1939 and NMEA 2000")}
 <p><code>core/j1939.py</code> decodes parameter group numbers for heavy
    vehicles, and decodes DM1 active diagnostic trouble codes into SPN, FMI, CM
    and OC fields.</p>
+<p>Marine NMEA 2000 uses the same 29-bit frame, so the data page decides which
+   table applies. Single-frame NMEA 2000 PGNs such as vessel heading, rate of
+   turn, rapid position, course and speed, wind and temperature are decoded.
+   Every layout is checked in the tests against frames from a real recording.</p>
 
 {h2("Bus load and health")}
 <p>Two monitor sub-tabs. Load shows utilisation over time. Health tracks error
    frames, bus-off events and arbitration IDs that go silent, which is the
    quickest way to notice that something you did upset a module.</p>
 
-{h2("Library-only protocols")}
-<p>Two protocols are implemented and unit-tested but have <strong>no user
-   interface</strong> on <code>main</code>. They are usable from a script or a
-   <a href="integrations.html#plugins">plugin</a>, not from the application.</p>
+{h2("XCP and DoIP")}
+<p>Both have panels in DIAGNOSTICS.</p>
 {table(["Module", "What it does"], [
     ["<code>core/xcp.py</code>",
      "XCP over CAN, read-only: CONNECT, UPLOAD and SHORT_UPLOAD plus a "
@@ -796,9 +844,6 @@ def build_pages_4(*, h2, table, repo):
      "DoIP (ISO 13400) over stdlib sockets: vehicle discovery, routing "
      "activation and UDS over IP."],
 ])}
-<p>The <a href="index.html#watch-it-work">walkthrough video</a> shows both with
-   panels, because it was recorded from a branch where they are wired into the
-   interface. That work is not on <code>main</code> yet.</p>
 """))
 
     pages.append((
@@ -1081,27 +1126,30 @@ def register(app):
 {table(["Corpus", "What it is", "Checks"], [
     ["SavvyCAN examples", "12,974 frames, 180 IDs, 11-bit, one bus", "36"],
     ["CANedge recordings and python-can format files",
-     "2 to 154,896 frames, 29-bit J1939, dual-bus, native MDF4, CAN FD and "
-     "error frames", "54"],
+     "2 to 154,896 frames, native MDF4, 11-bit and 29-bit, dual-bus, CAN FD "
+     "and error frames", "54"],
 ])}
 <p>The second corpus is other people's hardware output, none of it produced
-   here: five CANedge logger recordings in native MDF4 from CSS Electronics,
-   including a 145,000-frame J1939 log that is 29-bit end to end and a
-   23-minute two-channel recording, plus Vector BLF and ASC written by
+   here: five CANedge logger recordings in native MDF4 from CSS Electronics.
+   They are different kinds of bus: a 145,534-frame J1939 log that is 29-bit
+   end to end, a 22.8-minute two-channel car recording of 154,896 11-bit
+   frames, and a 9,600-frame marine bus that is NMEA 2000. Plus Vector BLF and
+   ASC written by
    python-can's own writers covering CAN FD, 64-byte FD, error frames and a
    comma-decimal locale. One real log is then written out in all five formats
    and read back by every parser, which all have to agree about the same
    traffic.</p>
-<p>It found two defects the older corpus could not reach: the openpilot DBC
+<p>It found defects the older corpus could not reach. The openpilot DBC
    exporter wrote a bare 29-bit frame id, so every J1939 capture exported a
-   file cantools refuses, and the sniffer aged a loaded capture against
-   wall-clock time so every row expired the moment a file opened. Both are
-   fixed and pinned by tests. A narrated recording of the run is in the
+   file cantools refuses. The sniffer aged a loaded capture against wall-clock
+   time, so every row expired the moment a file opened. The PGN decoder read
+   the marine bus with J1939 tables and named nothing. All are fixed and
+   pinned by tests. A narrated recording of the run is in the
    repository as <code>docs/canlab-realdata-validation.mp4</code>.</p>
 
 {h2("Testing")}
 <p>The suite runs headless:</p>
-<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 448 passed</code></pre>
+<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 539 passed</code></pre>
 <p>Tests that need an optional dependency skip cleanly when it is absent: the
    MDF4 importer without <code>asammdf</code>, the transport tests without the
    MCP SDK, the Lua dissector without a Lua runtime.</p>
@@ -1118,8 +1166,6 @@ def register(app):
   <li><strong>ARM TX covers the transmit features, not diagnostic reads.</strong>
       See <a href="safety.html#the-arm-tx-gate">the gate</a> for exactly which
       paths it covers.</li>
-  <li><strong>XCP and DoIP have no user interface</strong> on <code>main</code>.
-      They are library modules.</li>
   <li><strong>ARXML export is experimental</strong> and is not validated
       against the AUTOSAR schema.</li>
   <li><strong>openpilot rlog import</strong> needs pycapnp plus the cereal

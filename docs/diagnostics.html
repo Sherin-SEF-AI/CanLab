@@ -21,7 +21,7 @@
 </header>
 <div class="wrap">
   <div class="layout">
-    <aside class="toc"><h2>On this page</h2><nav><a href="#what-the-tab-holds">What the tab holds</a><a href="#iso-tp">ISO-TP</a><a href="#uds">UDS</a><a href="#security-access">Security access</a><a href="#obd-ii">OBD-II</a><a href="#j1939">J1939</a><a href="#bus-load-and-health">Bus load and health</a><a href="#library-only-protocols">Library-only protocols</a></nav></aside>
+    <aside class="toc"><h2>On this page</h2><nav><a href="#what-the-tab-holds">What the tab holds</a><a href="#iso-tp">ISO-TP</a><a href="#uds">UDS</a><a href="#security-access">Security access</a><a href="#obd-ii">OBD-II</a><a href="#j1939-and-nmea-2000">J1939 and NMEA 2000</a><a href="#bus-load-and-health">Bus load and health</a><a href="#xcp-and-doip">XCP and DoIP</a></nav></aside>
     <main id="main">
 
 <h1>Diagnostics</h1>
@@ -77,24 +77,23 @@
    vehicle without knowing anything about it, which makes it a good first test
    that your interface and wiring work at all.</p>
 
-<h2 id="j1939">J1939</h2>
+<h2 id="j1939-and-nmea-2000">J1939 and NMEA 2000</h2>
 <p><code>core/j1939.py</code> decodes parameter group numbers for heavy
    vehicles, and decodes DM1 active diagnostic trouble codes into SPN, FMI, CM
    and OC fields.</p>
+<p>Marine NMEA 2000 uses the same 29-bit frame, so the data page decides which
+   table applies. Single-frame NMEA 2000 PGNs such as vessel heading, rate of
+   turn, rapid position, course and speed, wind and temperature are decoded.
+   Every layout is checked in the tests against frames from a real recording.</p>
 
 <h2 id="bus-load-and-health">Bus load and health</h2>
 <p>Two monitor sub-tabs. Load shows utilisation over time. Health tracks error
    frames, bus-off events and arbitration IDs that go silent, which is the
    quickest way to notice that something you did upset a module.</p>
 
-<h2 id="library-only-protocols">Library-only protocols</h2>
-<p>Two protocols are implemented and unit-tested but have <strong>no user
-   interface</strong> on <code>main</code>. They are usable from a script or a
-   <a href="integrations.html#plugins">plugin</a>, not from the application.</p>
+<h2 id="xcp-and-doip">XCP and DoIP</h2>
+<p>Both have panels in DIAGNOSTICS.</p>
 <div class="table-scroll"><table><thead><tr><th>Module</th><th>What it does</th></tr></thead><tbody><tr><td><code>core/xcp.py</code></td><td>XCP over CAN, read-only: CONNECT, UPLOAD and SHORT_UPLOAD plus a measurement poller. It deliberately implements no memory-write or programming commands, so it cannot put a value into an ECU.</td></tr><tr><td><code>core/doip.py</code></td><td>DoIP (ISO 13400) over stdlib sockets: vehicle discovery, routing activation and UDS over IP.</td></tr></tbody></table></div>
-<p>The <a href="index.html#watch-it-work">walkthrough video</a> shows both with
-   panels, because it was recorded from a branch where they are wired into the
-   interface. That work is not on <code>main</code> yet.</p>
 
     </main>
   </div>

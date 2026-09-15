@@ -8,7 +8,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python)](https://www.python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green?style=flat-square)](https://pypi.org/project/PyQt6/)
-[![Tests](https://img.shields.io/badge/tests-448%20passing-brightgreen?style=flat-square)](#testing)
+[![Tests](https://img.shields.io/badge/tests-539%20passing-brightgreen?style=flat-square)](#testing)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
 Load a capture, work out which bytes carry what, write the signal definitions
@@ -17,14 +17,15 @@ read. It also speaks the diagnostic protocols (UDS, ISO-TP, J1939, OBD-II, XCP,
 DoIP), and, for isolated bench use only, can inject, replay, fuzz and bridge.
 
 > **Status:** beta. Single-author project, actively developed. It runs, and the
-> behaviour described here is covered by an automated suite of 448 tests (see
+> behaviour described here is covered by an automated suite of 539 tests (see
 > [Testing](#testing)). But the analysis methods are heuristics that suggest
 > candidates rather than identify signals, some features need optional
 > dependencies, and it has not been validated across a wide range of real
 > vehicles. Read [Limitations](#limitations) before relying on a result.
 
 **Contents:** [Safety](#safety) · [Install](#install-and-run) · [Demo](#demo) ·
-[Workflow](#a-typical-session) · [Tabs](#what-it-does-16-tabs) ·
+[Interface](#the-interface) · [Workflow](#a-typical-session) ·
+[Tabs](#what-it-does-16-tabs) ·
 [Log formats](#supported-log-formats) ·
 [Analysis](#analysis-offline-no-api-key) ·
 [Vehicle profiles](#vehicle-profiles) · [Diagnostics](#diagnostics) ·
@@ -106,8 +107,35 @@ seconds, from 1 Hz to 100 Hz) so every feature can be tried without hardware.
 
 ![CanLab in use](docs/demo-preview.gif)
 
-Twenty seconds of the real application, above. The full narrated walkthrough of
-every tab is below, in four parts, 1080p with subtitles burned in.
+Twenty seconds of the real application, above.
+
+### The guided tour
+
+**[canlab-tour.mp4](docs/canlab-tour.mp4?raw=1)** (5:34): one pass through the whole
+tool against two real recordings, 1080p. Start here.
+
+Rather than showing a full 1920x1080 window and leaving you to find the control
+being described, it moves the frame: for each beat it pushes in on that control,
+dims everything else, rings it and captions it, then pulls back out. The
+rectangle it pushes in on is the widget's own geometry, read off the live window
+with `mapTo` at record time, so a control that moves in a later build takes its
+callout with it instead of leaving a label pointing at empty panel.
+
+It is a real analysis, not a scripted mock. The capture turns out to be a marine
+NMEA 2000 bus rather than the J1939 that 29-bit identifiers usually imply; the
+counter detector finds the sequence byte the specification defines without being
+told the protocol; a wind-speed signal is defined, and the same two bytes are
+then plotted little-endian and big-endian on one axis, where one reads 0.72 to
+0.87 m/s and the other claims 184 to 223.
+
+```bash
+QT_QPA_PLATFORM=offscreen python docs/demo/record_tour.py   # stills + geometry
+python docs/demo/build_tour.py                              # narrate, render, encode
+```
+
+### The full walkthrough
+
+Every tab, in four parts, 1080p with subtitles burned in.
 
 **GitHub will not play these in the page.** It serves `.mp4` from a repository
 as a download, so the links below save the file rather than opening a player.
@@ -122,7 +150,8 @@ They are also attached to the
 | [4. The transmit gate, injection and live capture](docs/canlab-demo-part4-transmitting.mp4?raw=1) | ARM TX, INJECTION, replay, fuzzing, GATEWAY, OBD-II, the AI engine, live capture | 3.3 min |
 | [Real vehicle capture](docs/canlab-demo-realdata.mp4?raw=1) | The same application driven through a real 180-ID capture: detection, entropy, decoding, and the transmit gate | 2.0 min |
 
-Subtitles: [part 1](docs/canlab-demo-part1-analysis.srt),
+Subtitles: [tour](docs/canlab-tour.srt),
+[part 1](docs/canlab-demo-part1-analysis.srt),
 [part 2](docs/canlab-demo-part2-signals.srt),
 [part 3](docs/canlab-demo-part3-outputs.srt),
 [part 4](docs/canlab-demo-part4-transmitting.srt).
@@ -145,6 +174,29 @@ python docs/demo/build.py
 
 Narration clips are cached by a digest of their own text, so editing one scene
 re-voices that scene alone.
+
+---
+
+## The interface
+
+Sixteen tabs holding 33 sub-tabs is 49 panes, which is too many to put in a row.
+The layout is modelled on Blender: layered greys so nesting reads as depth
+rather than as borders, blue for selection, and the status colours kept as
+themselves only where they carry meaning, because green for connected and red
+for armed are the colours that say whether this program can put frames on a
+wire.
+
+| | |
+|---|---|
+| **Workspaces** | The 16 tabs are grouped into five stages: CAPTURE, EXPLORE, DETECT, DEFINE, BUS. The bar drives the tabs and follows them, so Alt+1..9, Ctrl+Tab and anything that selects a tab directly still work, and the bar switches workspace to keep up. |
+| **Command palette** | Ctrl+Shift+P or F3, over all 105 commands: every pane by the path you would read aloud, and every menu action with its shortcut. Matching is subsequence-based, so `trim` finds Tools > Trim capture. Both lists are discovered by walking the live window, so nothing has to be registered by hand. |
+| **Collapsible sidebars** | The ID list and the inspector are in a real splitter now. They are draggable, they collapse to zero and remember the width to come back to, and the state is saved. `T` and `N` toggle them, Ctrl+Space toggles both. |
+| **One scale** | Every spacing, radius, row height and font size comes from `canlab/ui/tokens.py`. This replaced 78 margin calls across six different tuples, 22 height caps across thirteen values, and 62 one-line colour swaps that are now a dynamic property the stylesheet reads. |
+| **Reduce motion** | View > Reduce Motion, remembered. Animation also stands down on its own while a live capture is running, except the armed and connected indicators, which keep moving because they are safety signals. |
+
+The window's minimum size is 1124 x 851, so it fits a laptop screen with the
+sidebars open. Both demo recorders drive the real window offscreen, which is
+also what keeps the screenshots from catching a transition mid-flight.
 
 ---
 
@@ -200,8 +252,8 @@ that fits it and report the scale and offset.
 | 5 | **AI ENGINE** | Send one ID's statistics to Anthropic, OpenAI, Groq or a local Ollama model. The offline findings go with the question. Memory persists across sessions. |
 | 6 | **DBC BUILDER** | Visual signal editor with a bit grid and a live decode preview. Imports DBC, ARXML and CAN matrix; exports DBC, openpilot DBC, CANdb++, ARXML and Wireshark Lua. |
 | 7 | **CODE GEN** | Generates Python or C that opens the bus and decodes or encodes your signals. |
-| 8 | **INTELLIGENCE** | Annotated capture: mark when you did something and every byte and bit is ranked by how well it followed. Also periodicity, cross-ID correlation with a lag sweep, capture diffing, J1939 PGN decode, value lookup. |
-| 9 | **INJECTION** | Six sub-tabs: inject, replay with a scrubber and a signal override, trigger rules, actuator sweep with a watchdog, fuzzer, scripted test sequences. Gated by ARM TX. |
+| 8 | **INTELLIGENCE** | Annotated capture: mark when you did something and every byte and bit is ranked by how well it followed. Also periodicity, cross-ID correlation with a lag sweep, capture diffing, J1939 and NMEA 2000 PGN decode, value lookup. |
+| 9 | **INJECTION** | Six sub-tabs: inject, replay with a scrubber and a signal override, trigger rules, actuator sweep with a watchdog, fuzzer, scripted test sequences. The inject page previews the frame it would send, each byte coloured by whether the signal or the vehicle profile put it there, and logs every send with its result. Gated by ARM TX. |
 | 10 | **DIAGNOSTICS** | Eight sub-tabs: OBD-II/UDS, UDS deep scan, UDS services, security access, bus load, bus health, XCP, DoIP. |
 | 11 | **DASHBOARD** | Byte-activity heatmap across all messages, message timeline, gauges pointed at signals you have defined. |
 | 12 | **AUTO-RE** | Counter and checksum detection, entropy boundaries, correlation, a per-byte checksum algorithm guesser, and bit-level flag and value-table detection. Runs in worker threads. |
@@ -238,6 +290,7 @@ None of this sends anything anywhere.
 | Feature | Module | Notes |
 |---|---|---|
 | Checksum algorithms | `core/checksums.py` | Parametrised CRC-8 plus OEM variants (Hyundai, Toyota, Honda, Subaru, AUTOSAR), checked against published check values and against commaai/opendbc. |
+| J1939 and NMEA 2000 | `core/j1939.py` | Both protocols share the 29-bit frame and split the identifier the same way, so the data page decides which PGN table applies: J1939 PGNs and SPNs, or NMEA 2000's own range with radians, metres per second and kelvin. Multi-frame PGNs are named and left undecoded, because reading one frame of one in isolation gives a confident wrong answer. |
 | Counter and checksum detection | `core/counter_checksum_detector.py` | Sweeps every message. Counters are whole-byte or per-nibble, with the modulus read from the values seen and reported only when a roll-over was actually observed. |
 | Checksum algorithm guesser | `core/checksum_guesser.py` | Takes one message and one byte and scores all twelve algorithms, fitting on the first 70% of the capture and validating on the rest. Reports both numbers. |
 | Byte role classifier | `core/signal_classifier.py` | COUNTER, CHECKSUM, BOOLEAN, PHYSICAL or PADDING per byte. |
@@ -494,23 +547,28 @@ Two corpora, 90 checks:
 | Corpus | What it is | Checks |
 |---|---|---|
 | SavvyCAN examples | 12,974 frames, 180 IDs, 11-bit, one bus | 36 |
-| CANedge recordings and python-can format files | 2 to 154,896 frames, 29-bit J1939, dual-bus, native MDF4, CAN FD and error frames | 54 |
+| CANedge recordings and python-can format files | 2 to 154,896 frames, native MDF4, 11-bit and 29-bit, dual-bus, CAN FD and error frames | 54 |
 
 The second corpus is other people's hardware output, none of it produced here:
 five CANedge logger recordings in native MDF4 from
-[CSS Electronics](https://github.com/CSS-Electronics/api-examples) (MIT),
-including a 145,000-frame J1939 log that is 29-bit end to end and a 23-minute
-two-channel recording, plus Vector BLF and ASC written by
+[CSS Electronics](https://github.com/CSS-Electronics/api-examples) (MIT). They
+are not all the same kind of bus, which is the point of having them: a
+145,534-frame J1939 log that is 29-bit end to end, a 22.8-minute two-channel
+recording of 154,896 11-bit frames off a car, and a 9,600-frame marine bus whose
+29-bit identifiers are NMEA 2000 rather than J1939. Plus Vector BLF and ASC
+written by
 [python-can](https://github.com/hardbyte/python-can)'s own writers covering
 CAN FD, 64-byte FD, error frames and a comma-decimal locale. One real log is
 then written out in all five formats and read back by every parser, which all
 have to agree about the same traffic.
 
-It found two defects the older corpus could not reach: the openpilot DBC
-exporter wrote a bare 29-bit frame id, so every J1939 capture exported a file
-cantools refuses, and the sniffer aged a loaded capture against wall-clock
-time so every row expired the moment a file opened. Both are fixed and pinned
-by tests.
+It found defects the older corpus could not reach. The openpilot DBC exporter
+wrote a bare 29-bit frame id, so every J1939 capture exported a file cantools
+refuses. The sniffer aged a loaded capture against wall-clock time, so every row
+expired the moment a file opened. The PGN decoder read the marine capture with
+the J1939 tables and reported fifty messages with no names, which says "J1939,
+nothing recognised" rather than "not J1939"; it now works the protocol out from
+the identifier. All are fixed and pinned by tests.
 
 ```bash
 for p in 1 2 3; do python tests/real_data/acceptance_phase$p.py <data-dir>; done
@@ -528,7 +586,7 @@ A recording of the run is
 
 ```bash
 pip install -e ".[dev]"
-QT_QPA_PLATFORM=offscreen python -m pytest -q     # 448 passed
+QT_QPA_PLATFORM=offscreen python -m pytest -q     # 539 passed
 ruff check canlab tests
 ```
 
@@ -544,8 +602,10 @@ Streamable HTTP, through the stdio bridge in a subprocess, and inside the
 window with the official MCP client; adapter detection and a listen-only open
 on the virtual bus; the GVRET codec against byte strings built to its wire
 format, including chunk splitting and resynchronisation after noise; the
-sniffer's change detection and notch masking; the capture splitter; and an offscreen smoke test that builds the real window,
-cycles every tab, runs a live capture and asserts no thread is left running.
+sniffer's change detection and notch masking; the capture splitter; the NMEA 2000 field layouts against frames lifted verbatim
+from a real marine recording; who owns an animation and who is allowed to free
+it; and an offscreen smoke test that builds the real window, cycles every tab,
+runs a live capture and asserts no thread is left running.
 
 The single skip is the MDF4 parser, which needs the optional `asammdf` extra.
 

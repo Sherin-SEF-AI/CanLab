@@ -1,0 +1,287 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:02.514
+CanLab reverse-engineers a CAN bus.
+
+00:00:02.514 --> 00:00:05.890
+This is a real recording from a CANedge logger:
+
+00:00:05.890 --> 00:00:10.918
+nine thousand six hundred frames across fifty arbitration
+identifiers,
+
+00:00:10.918 --> 00:00:14.007
+every one of them twenty-nine bit extended.
+
+00:00:14.007 --> 00:00:18.532
+Nothing here was simulated and nothing was labelled in
+advance.
+
+00:00:18.532 --> 00:00:23.566
+The work is grouped into five workspaces rather than sixteen
+tabs in a row.
+
+00:00:23.566 --> 00:00:28.400
+Capture is what is on the wire, Explore is what it looks like
+over time,
+
+00:00:28.400 --> 00:00:34.105
+Detect is the automatic analysis, Define is where you write
+down what you worked out,
+
+00:00:34.105 --> 00:00:36.656
+and Bus is everything that talks back.
+
+00:00:36.656 --> 00:00:39.326
+First question on an unknown bus:
+
+00:00:39.326 --> 00:00:40.216
+what is it.
+
+00:00:40.216 --> 00:00:45.314
+Twenty-nine bit identifiers usually mean a truck running
+J1939,
+
+00:00:45.314 --> 00:00:53.001
+but these carry data page one in the hundred and twenty-six
+thousand range, which is NMEA 2000.
+
+00:00:53.001 --> 00:00:54.215
+This is a boat.
+
+00:00:54.215 --> 00:00:58.908
+Vessel heading, rate of turn, wind, satellite positioning.
+
+00:00:58.908 --> 00:01:04.934
+Which the decoded fields then confirm, from two messages that
+have no reason to agree unless
+
+00:01:04.934 --> 00:01:06.374
+the layouts are right.
+
+00:01:06.374 --> 00:01:12.204
+Position puts the vessel at forty-two point six six north,
+eighty-one point two one west,
+
+00:01:12.204 --> 00:01:13.448
+which is Lake Erie.
+
+00:01:13.448 --> 00:01:16.264
+Heading reads one point nine eight radians,
+
+00:01:16.264 --> 00:01:21.700
+and the magnetic variation beside it reads nought point one
+five five radians west,
+
+00:01:21.700 --> 00:01:23.927
+which is eight point nine degrees:
+
+00:01:23.927 --> 00:01:26.416
+the published value for exactly there.
+
+00:01:26.416 --> 00:01:32.168
+The frames table is a log, which is the wrong shape for the
+question you ask at the bench.
+
+00:01:32.168 --> 00:01:35.556
+The sniffer collapses the bus to one row per message:
+
+00:01:35.556 --> 00:01:41.372
+a byte turns green when it rises and red when it falls, and
+bytes that never move stay dim.
+
+00:01:41.372 --> 00:01:43.497
+Notch is why this beats scrolling.
+
+00:01:43.497 --> 00:01:48.121
+It records every bit that is moving right now and ignores it
+from then on,
+
+00:01:48.121 --> 00:01:54.120
+so the counters that never stop go quiet and the next thing
+that lights up is the thing you did.
+
+00:01:54.120 --> 00:02:00.124
+One press masked four hundred and sixty four bits of steady
+traffic on this log.
+
+00:02:00.124 --> 00:02:04.272
+The detectors run with no knowledge of the protocol at all.
+
+00:02:04.272 --> 00:02:09.194
+Here they find twenty-four counter bytes across twenty-three
+messages,
+
+00:02:09.194 --> 00:02:15.803
+twenty-one of them in byte zero, and on five of those the
+count wraps at two hundred and fifty
+
+00:02:15.803 --> 00:02:16.084
+one.
+
+00:02:16.084 --> 00:02:21.287
+NMEA 2000 calls byte zero the sequence identifier and
+specifies that wrap.
+
+00:02:21.287 --> 00:02:23.888
+The detector got there from the data.
+
+00:02:23.888 --> 00:02:28.399
+Entropy per bit finds where one field ends and the next
+begins.
+
+00:02:28.399 --> 00:02:35.201
+Each candidate boundary carries a confidence, which is a match
+fraction over the frames loaded,
+
+00:02:35.201 --> 00:02:36.060
+not a proof.
+
+00:02:36.060 --> 00:02:39.802
+A signal is a message, a start bit, a length and a scale.
+
+00:02:39.802 --> 00:02:44.201
+The preview decodes real frames through the definition as you
+type,
+
+00:02:44.201 --> 00:02:48.732
+so it is checked against the bus rather than against your
+arithmetic.
+
+00:02:48.732 --> 00:02:51.555
+Nought point seven seven metres per second:
+
+00:02:51.555 --> 00:02:55.888
+light air, which is what a moored boat on a calm lake should
+read.
+
+00:02:55.888 --> 00:02:58.357
+Drag across the grid to claim bits.
+
+00:02:58.357 --> 00:03:04.989
+Motorola byte order and non-contiguous layouts go through the
+same coordinate map the exporter
+
+00:03:04.989 --> 00:03:08.516
+uses, so what you select is what gets written out.
+
+00:03:08.516 --> 00:03:12.812
+Plotted against time is where a definition is confirmed or
+refuted.
+
+00:03:12.812 --> 00:03:16.339
+Both traces are the same two bytes of the same message.
+
+00:03:16.339 --> 00:03:22.238
+The upper one reads them little-endian and wanders between
+nought point seven two and nought
+
+00:03:22.238 --> 00:03:24.546
+point eight seven metres per second.
+
+00:03:24.546 --> 00:03:30.509
+The lower one reads them the other way round and swings
+between a hundred and eighty four and
+
+00:03:30.509 --> 00:03:32.368
+two hundred and twenty three.
+
+00:03:32.368 --> 00:03:36.408
+You do not need the spec to see which of those is a wind
+speed.
+
+00:03:36.408 --> 00:03:41.040
+Everything that can put a frame on a wire is behind one gate.
+
+00:03:41.040 --> 00:03:46.051
+ARM TX is off by default and it covers injection, replay,
+fuzzing,
+
+00:03:46.051 --> 00:03:49.696
+gateway forwarding and every diagnostic request.
+
+00:03:49.696 --> 00:03:53.644
+Disarming stops a running worker within two seconds.
+
+00:03:53.644 --> 00:03:57.520
+Before any of that, the page shows the frame it would send.
+
+00:03:57.520 --> 00:04:02.709
+Byte one holds four D, which is seventy-seven hundredths of a
+metre per second,
+
+00:04:02.709 --> 00:04:05.928
+and the bytes the signal does not touch stay dim.
+
+00:04:05.928 --> 00:04:11.840
+If the vehicle profile writes a counter or a checksum, the
+bytes it overwrites turn amber.
+
+00:04:11.840 --> 00:04:14.673
+The controls themselves are three rows:
+
+00:04:14.673 --> 00:04:17.580
+which signal, what value, and how often.
+
+00:04:17.580 --> 00:04:21.357
+The slider spans whatever range the signal declares,
+
+00:04:21.357 --> 00:04:25.644
+and every send lands in the log underneath with its result.
+
+00:04:25.644 --> 00:04:27.798
+Three things can run alongside:
+
+00:04:27.798 --> 00:04:33.983
+a REST API, an MCP server that lets an assistant drive the
+analysis, and the plugin list.
+
+00:04:33.983 --> 00:04:37.666
+None of the twenty-five assistant tools can transmit;
+
+00:04:37.666 --> 00:04:42.808
+putting frames on a wire stays behind the gate where a person
+is watching.
+
+00:04:42.808 --> 00:04:44.624
+Hardware is picked here.
+
+00:04:44.624 --> 00:04:48.408
+Every python-can backend is available, plus GVRET,
+
+00:04:48.408 --> 00:04:52.722
+which CanLab adds itself for the boards SavvyCAN runs on.
+
+00:04:52.722 --> 00:04:59.684
+Detect finds what is plugged in, and Test opens the adapter
+and listens for a second without
+
+00:04:59.684 --> 00:05:00.668
+transmitting.
+
+00:05:00.668 --> 00:05:04.379
+A second recording, and a different vehicle entirely:
+
+00:05:04.379 --> 00:05:08.230
+twenty-three minutes off a car, eleven bit identifiers,
+
+00:05:08.230 --> 00:05:11.100
+a hundred and fifty five thousand frames.
+
+00:05:11.100 --> 00:05:15.791
+One identifier carries a hundred and thirty three thousand of
+them.
+
+00:05:15.791 --> 00:05:20.832
+The sniffer folds the whole capture into sixteen rows in under
+a second.
+
+00:05:20.832 --> 00:05:25.233
+Load a capture, work out what the bytes carry, write it down,
+
+00:05:25.233 --> 00:05:27.974
+and export a DBC other tools can read.
+
+00:05:27.974 --> 00:05:34.684
+Everything shown here ran against real recordings from
+hardware this project did not produce.

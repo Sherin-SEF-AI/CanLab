@@ -54,3 +54,4 @@ can-bus-reverse-engineering-skills
 # Demo build intermediates (frames, per-scene audio); the MP4/SRT are committed.
 docs/demo/build/
 docs/demo/build-realdata/
+docs/demo/build-tour/
