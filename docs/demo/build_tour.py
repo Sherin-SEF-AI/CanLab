@@ -28,7 +28,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from build import (  # noqa: E402
-    FPS, build_cues, duration, run, synthesise, write_ass, write_srt,
+    FPS, build_cues, duration, run, synthesise, write_srt,
 )
 from compose import Rect, frame_count, load_font, render_shot  # noqa: E402
 
@@ -90,8 +90,8 @@ def render_frames(shots: list[dict]) -> int:
     return index
 
 
-def encode(total_frames: int, subs: Path) -> None:
-    """Frames to video, narration to one track, then mux with burnt subtitles.
+def encode(total_frames: int) -> None:
+    """Frames to video, narration to one track, then mux with soft subtitles.
 
     Every beat was rendered at exactly FPS, so the frames go in as a constant
     rate sequence rather than through a concat file with per-frame durations.
@@ -109,11 +109,16 @@ def encode(total_frames: int, subs: Path) -> None:
     run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
          "-i", str(listing), "-c", "copy", str(track)])
 
-    print("  burning captions and muxing narration…")
+    # The narration goes in as a subtitle track the player can switch, not
+    # burnt into the picture. Each beat already has a callout caption drawn in
+    # the frame; burning the narration in as well put two blocks of text on
+    # screen at once, and on the site the <track> made it three.
+    print("  muxing narration and a switchable subtitle track…")
     run(["ffmpeg", "-y", "-v", "error", "-i", str(silent), "-i", str(track),
-         "-vf", f"ass={subs}",
-         "-c:v", "libx264", "-preset", "slow", "-crf", CRF,
-         "-c:a", "aac", "-b:a", "160k",
+         "-i", str(SUBS_SRT),
+         "-map", "0:v", "-map", "1:a", "-map", "2:s",
+         "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
+         "-c:s", "mov_text", "-metadata:s:s:0", "language=eng",
          "-movflags", "+faststart", str(VIDEO)])
 
 
@@ -160,14 +165,12 @@ def main() -> int:
     print("rendering frames…")
     total = render_frames(SHOTS)
 
-    subs_ass = BUILD / "tour.ass"
     cues = build_cues(SHOTS)
     write_srt(cues, SUBS_SRT)
     write_vtt(cues, SUBS_VTT)
-    write_ass(cues, subs_ass)
 
     print("encoding…")
-    encode(total, subs_ass)
+    encode(total)
 
     size_mb = VIDEO.stat().st_size / 1e6
     length = duration(VIDEO)

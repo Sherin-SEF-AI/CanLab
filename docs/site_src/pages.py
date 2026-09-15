@@ -34,7 +34,7 @@ def build_pages(*, h2, table, video_card, parts, repo):
 <div class="video-card video-feature">
   <video controls preload="metadata" playsinline>
     <source src="canlab-tour.mp4" type="video/mp4">
-    <track kind="captions" srclang="en" label="English" default
+    <track kind="captions" srclang="en" label="Narration"
            src="canlab-tour.vtt">
     Your browser cannot play this video.
     <a href="canlab-tour.mp4">Download it instead</a>.
