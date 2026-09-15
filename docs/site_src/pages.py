@@ -41,7 +41,7 @@ def build_pages(*, h2, table, video_card, parts, repo):
   </video>
   <div class="meta">
     <h3>The guided tour</h3>
-    <p class="len">5:34</p>
+    <p class="len">6:06</p>
     <p>One pass through the whole tool against two real recordings. Start
        here.</p>
   </div>

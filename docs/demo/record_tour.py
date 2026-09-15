@@ -178,8 +178,8 @@ def main() -> int:
     load("canedge_c.MF4")
     tab("FRAMES")
     shot("open",
-         """CanLab reverse-engineers a CAN bus. This is a real recording from a
-            CANedge logger: nine thousand six hundred frames across fifty
+         """This is a real recording from a CANedge logger, loaded straight
+            from its MDF four file: nine thousand six hundred frames across fifty
             arbitration identifiers, every one of them twenty-nine bit
             extended. Nothing here was simulated and nothing was labelled in
             advance.""",

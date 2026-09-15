@@ -167,12 +167,17 @@ def caption(img: Image.Image, text: str, font, strength: float) -> Image.Image:
 
 def render_shot(still: Path, out_dir: Path, index: int, *, seconds: float,
                 focus: Rect | None, text: str, font,
-                hold_ratio: float = 0.62) -> int:
+                hold_ratio: float = 0.62, overlay=None,
+                overlay_frames: int = 0) -> int:
     """Write the frames for one scene. Returns how many were written.
 
     With a focus: push in, hold with the ring and caption up, pull back out.
     Without one: a slow drift across the whole window, so a static shot still
     has life in it.
+
+    `overlay(frame, i)` is drawn on top of the first `overlay_frames` frames,
+    for things that animate over the beat such as a chapter title. Those
+    frames are always rendered individually, never linked to the hold frame.
     """
     base = Image.open(still).convert("RGB")
     if base.size != (W, H):
@@ -187,6 +192,8 @@ def render_shot(still: Path, out_dir: Path, index: int, *, seconds: float,
         for i in range(total):
             crop = lerp_rect(start, end, i / max(1, total - 1))
             frame = base.crop(crop.as_box()).resize((W, H), Image.LANCZOS)
+            if overlay is not None and i < overlay_frames:
+                frame = overlay(frame, i)
             frame.save(out_dir / f"{index + i:06d}.jpg", quality=92)
         return total
 
@@ -204,7 +211,7 @@ def render_shot(still: Path, out_dir: Path, index: int, *, seconds: float,
         elif i < push + hold:              # hold
             # Every hold frame is identical, and holds are most of a beat.
             # Render the first and hard-link the rest to it.
-            if held is not None:
+            if held is not None and i >= overlay_frames:
                 os.link(held, path)
                 continue
             crop = target
@@ -218,8 +225,10 @@ def render_shot(still: Path, out_dir: Path, index: int, *, seconds: float,
         frame = ring(frame, focus, strength)
         frame = frame.crop(crop.as_box()).resize((W, H), Image.LANCZOS)
         frame = caption(frame, text, font, strength)
+        if overlay is not None and i < overlay_frames:
+            frame = overlay(frame, i)
         frame.save(path, quality=92)
-        if push <= i < push + hold:
+        if push <= i < push + hold and i >= overlay_frames:
             held = path
     return total
 
