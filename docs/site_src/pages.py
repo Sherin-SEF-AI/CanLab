@@ -32,18 +32,20 @@ def build_pages(*, h2, table, video_card, parts, repo):
 
 {h2("Watch it work")}
 <div class="video-card video-feature">
-  <video controls preload="metadata" playsinline>
-    <source src="canlab-tour.mp4" type="video/mp4">
-    <track kind="captions" srclang="en" label="Narration"
-           src="canlab-tour.vtt">
-    Your browser cannot play this video.
-    <a href="canlab-tour.mp4">Download it instead</a>.
-  </video>
+  <div class="yt-frame">
+    <iframe src="https://www.youtube-nocookie.com/embed/nbDBaClN8T8?rel=0"
+            title="CanLab: Reverse-Engineering a CAN Bus from Real Recordings (Guided Tour)"
+            loading="lazy" referrerpolicy="strict-origin-when-cross-origin"
+            allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowfullscreen></iframe>
+  </div>
   <div class="meta">
     <h3>The guided tour</h3>
     <p class="len">6:06</p>
     <p>One pass through the whole tool against two real recordings. Start
-       here.</p>
+       here. <a href="https://www.youtube.com/watch?v=nbDBaClN8T8">Open on
+       YouTube</a>, or <a href="canlab-tour.mp4">download the MP4</a> with
+       <a href="canlab-tour.srt">subtitles</a>.</p>
   </div>
 </div>
 <p>For each beat the frame pushes in on the control being described, dims the
