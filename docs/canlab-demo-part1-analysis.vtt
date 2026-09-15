@@ -1,201 +1,157 @@
 WEBVTT
 
-1
 00:00:00.000 --> 00:00:04.487
 This is CanLab, a workstation for reverse engineering a CAN
 bus.
 
-2
 00:00:04.487 --> 00:00:06.590
 We start by loading a capture.
 
-3
 00:00:06.590 --> 00:00:13.040
 This one is ten seconds of traffic in SavvyCAN format, about
 six and a half thousand frames.
 
-4
 00:00:13.040 --> 00:00:15.213
 The FRAMES tab is the raw view:
 
-5
 00:00:15.213 --> 00:00:22.014
 every frame in time order, with its timestamp, arbitration ID,
 bus, length, the eight data bytes,
 
-6
 00:00:22.014 --> 00:00:25.519
 and the gap since the last frame with the same ID.
 
-7
 00:00:25.519 --> 00:00:31.899
 A byte lights up green when it changed, so you can see at a
 glance which parts of a message
 
-8
 00:00:31.899 --> 00:00:33.792
 carry something that moves.
 
-9
 00:00:33.792 --> 00:00:38.518
 On the left, every arbitration ID the capture contains,
 grouped by bus,
 
-10
 00:00:38.518 --> 00:00:42.246
 with how often it appears and how many frames there are.
 
-11
 00:00:42.246 --> 00:00:45.241
 Ten IDs here, from one hertz up to a hundred.
 
-12
 00:00:45.241 --> 00:00:48.902
 Selecting an ID opens it in the inspector on the right:
 
-13
 00:00:48.902 --> 00:00:54.760
 the last ten frames in hex, a per-byte activity bar showing
 which bytes actually change,
 
-14
 00:00:54.760 --> 00:00:57.689
 and minimum, maximum and mean for each byte.
 
-15
 00:00:57.689 --> 00:01:02.016
 That is usually the first question you ask of an unknown
 message.
 
-16
 00:01:02.016 --> 00:01:05.377
 The SIGNALS tab classifies every message for you.
 
-17
 00:01:05.377 --> 00:01:09.836
 It runs offline, with no API key and nothing leaving the
 machine.
 
-18
 00:01:09.836 --> 00:01:15.118
 For each ID it reports the frame count, the rate, the entropy
 of the payload,
 
-19
 00:01:15.118 --> 00:01:16.558
 and a suspected role:
 
-20
 00:01:16.558 --> 00:01:22.732
 a sensor carrying a physical value, a status message, a
 counter, or a diagnostic response.
 
-21
 00:01:22.732 --> 00:01:27.534
 These are heuristics that point you at the interesting
 messages first,
 
-22
 00:01:27.534 --> 00:01:30.072
 not identifications to trust blindly.
 
-23
 00:01:30.072 --> 00:01:31.895
 AUTO-RE does the tedious part.
 
-24
 00:01:31.895 --> 00:01:35.662
 It sweeps every message at once, looking for rolling counters,
 
-25
 00:01:35.662 --> 00:01:39.611
 bytes that increment each frame and wrap, and for checksum
 bytes,
 
-26
 00:01:39.611 --> 00:01:44.958
 by testing whether a byte is the sum, the exclusive or, or the
 nibble sum of the others.
 
-27
 00:01:44.958 --> 00:01:49.636
 A match only counts if it beats simply guessing the byte's
 most common value,
 
-28
 00:01:49.636 --> 00:01:55.287
 so padding does not read as a checksum, and a relation that
 holds for every byte of a message
 
-29
 00:01:55.287 --> 00:01:59.297
 is thrown away rather than reported, because it localises
 nothing.
 
-30
 00:01:59.297 --> 00:02:04.948
 Counters and checksums are not signals, and knowing which
 bytes they occupy removes them from
 
-31
 00:02:04.948 --> 00:02:05.616
 the search.
 
-32
 00:02:05.616 --> 00:02:07.769
 That sweep tells you which byte.
 
-33
 00:02:07.769 --> 00:02:14.093
 To find out which algorithm, the CHECKSUM GUESSER takes one
 message and one byte and tries all
 
-34
 00:02:14.093 --> 00:02:14.564
 twelve:
 
-35
 00:02:14.564 --> 00:02:21.091
 plain and inverted sums, two's complement, nibble sums, CRC-8
 in its SAE J1850 and AUTOSAR forms,
 
-36
 00:02:21.091 --> 00:02:25.935
 and the manufacturer variants used by Hyundai, Toyota, Honda
 and Subaru.
 
-37
 00:02:25.935 --> 00:02:31.250
 It fits on the first seventy per cent of the capture and
 validates on the rest,
 
-38
 00:02:31.250 --> 00:02:37.575
 and reports both numbers, so an algorithm that merely
 memorised the training frames is visible
 
-39
 00:02:37.575 --> 00:02:41.208
 as a high training score with a poor validation score.
 
-40
 00:02:41.208 --> 00:02:47.139
 The same tab measures per-bit entropy across a message to
 suggest where one signal ends and the
 
-41
 00:02:47.139 --> 00:02:47.889
 next begins.
 
-42
 00:02:47.889 --> 00:02:50.074
 Bits that never change are padding;
 
-43
 00:02:50.074 --> 00:02:53.508
 bits that change constantly belong together in a value.
 
-44
 00:02:53.508 --> 00:02:58.128
 It is a suggestion for the boundaries, which you then confirm
 by decoding.

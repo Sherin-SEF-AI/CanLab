@@ -21,7 +21,7 @@ This run uses other people's real logs instead:
   CSS Electronics mdf4-converters
       A multi-bus ASC from their converter's system tests.
 
-Then the real J1939 log is pushed through every writer the application has
+Then the real marine NMEA 2000 log is pushed through every writer the application has
 and read back by every parser, so the five formats have to agree about the
 same traffic, with 29-bit IDs this time.
 
@@ -223,10 +223,10 @@ def phase_native_binary():
 # ── 3. every format must agree about the same real traffic ───────────────────
 
 def phase_cross_format():
-    section("ONE REAL J1939 LOG THROUGH EVERY WRITER AND BACK")
+    section("ONE REAL 29-BIT LOG THROUGH EVERY WRITER AND BACK")
     import tempfile
 
-    src_name = "canedge_c.MF4"          # 9,600 frames, 50 IDs, all 29-bit
+    src_name = "canedge_c.MF4"          # 9,600 frames, 50 IDs, all 29-bit, NMEA 2000
     if not (DATA / src_name).is_file():
         check("cross-format round trip", lambda: (None, f"{src_name} missing"))
         return

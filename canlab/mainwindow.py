@@ -457,7 +457,7 @@ class MainWindow(QMainWindow):
         st.setValue(self.PANELS_KEY, json.dumps({
             "left_open": self.panel_open("left"),
             "right_open": self.panel_open("right"),
-            "left_width": int(self._panel_width.get("left", 220)),
+            "left_width": int(self._panel_width.get("left", 250)),
             "right_width": int(self._panel_width.get("right", 280)),
         }))
 
@@ -645,13 +645,13 @@ class MainWindow(QMainWindow):
         body.setStretchFactor(1, 1)
         body.setStretchFactor(2, 0)
         body.setCollapsible(1, False)          # the pages can never vanish
-        body.setSizes([220, 1, 280])
+        body.setSizes([250, 1, 280])
         self._split = body
         self._panel_anim = {
             "left": SplitterAnimator(body, 0, 1, self),
             "right": SplitterAnimator(body, 2, 1, self),
         }
-        self._panel_width = {"left": 220, "right": 280}
+        self._panel_width = {"left": 250, "right": 280}
 
         # The workspace bar replaces the tab bar rather than sitting beside
         # it. Hide the bar only now that every page exists, because addTab
@@ -899,7 +899,7 @@ class MainWindow(QMainWindow):
             return
         anim = self._panel_anim[side]
         if want_open:
-            anim.animate_to(self._panel_width.get(side, 220), instant=instant)
+            anim.animate_to(self._panel_width.get(side, 250), instant=instant)
         else:
             current = anim.width()
             if current > 2:

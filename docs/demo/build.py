@@ -188,6 +188,20 @@ def write_srt(cues, path: Path) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def write_vtt(cues, path: Path) -> None:
+    """WebVTT for the documentation site's <track> elements.
+
+    SRT with a header, no cue numbers, and a full stop where SRT puts a comma.
+    These were made by hand before, so a rebuilt video kept stale tracks.
+    """
+    lines = ["WEBVTT", ""]
+    for start, end, text in cues:
+        lines.append(f"{timestamp(start).replace(',', '.')} --> "
+                     f"{timestamp(end).replace(',', '.')}")
+        lines += [text, ""]
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def write_ass(cues, path: Path) -> None:
     body = []
     for start, end, text in cues:
@@ -263,6 +277,7 @@ def main() -> int:
         # Cues are rebased to this part's own zero.
         cues = build_cues(part)
         write_srt(cues, srt)
+        write_vtt(cues, srt.with_suffix(".vtt"))
         write_ass(cues, BUILD / f"subs-{slug}.ass")
         print(f"\n{title}")
         print(f"  {len(part)} scenes, {len(cues)} cues")

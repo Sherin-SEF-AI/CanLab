@@ -36,7 +36,7 @@ PARTS = [
     ("part1-analysis", "1. Loading a capture and finding structure", "2:58",
      "FRAMES, the ID panel and inspector, SIGNALS, counter and checksum "
      "detection, the checksum guesser, entropy boundaries."),
-    ("part2-signals", "2. Defining signals and checking them", "2:37",
+    ("part2-signals", "2. Defining signals and checking them", "2:40",
      "DBC BUILDER and its bit grid, the live decode preview, PLOT, "
      "INTELLIGENCE, ML INTEL, DASHBOARD."),
     ("part3-outputs", "3. Timeline, code generation and exports", "2:25",

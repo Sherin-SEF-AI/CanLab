@@ -8,7 +8,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python)](https://www.python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green?style=flat-square)](https://pypi.org/project/PyQt6/)
-[![Tests](https://img.shields.io/badge/tests-539%20passing-brightgreen?style=flat-square)](#testing)
+[![Tests](https://img.shields.io/badge/tests-540%20passing-brightgreen?style=flat-square)](#testing)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
 Load a capture, work out which bytes carry what, write the signal definitions
@@ -17,7 +17,7 @@ read. It also speaks the diagnostic protocols (UDS, ISO-TP, J1939, OBD-II, XCP,
 DoIP), and, for isolated bench use only, can inject, replay, fuzz and bridge.
 
 > **Status:** beta. Single-author project, actively developed. It runs, and the
-> behaviour described here is covered by an automated suite of 539 tests (see
+> behaviour described here is covered by an automated suite of 540 tests (see
 > [Testing](#testing)). But the analysis methods are heuristics that suggest
 > candidates rather than identify signals, some features need optional
 > dependencies, and it has not been validated across a wide range of real
@@ -107,7 +107,7 @@ seconds, from 1 Hz to 100 Hz) so every feature can be tried without hardware.
 
 ![CanLab in use](docs/demo-preview.gif)
 
-Twenty seconds of the real application, above.
+Eighteen seconds cut from the guided tour, above.
 
 ### The guided tour
 
@@ -146,10 +146,10 @@ They are also attached to the
 | Part | Covers | Length |
 |---|---|---|
 | [1. Loading a capture and finding structure](docs/canlab-demo-part1-analysis.mp4?raw=1) | FRAMES, the ID panel and inspector, SIGNALS, counter and checksum detection, the checksum guesser, entropy boundaries | 3.0 min |
-| [2. Defining signals and checking them](docs/canlab-demo-part2-signals.mp4?raw=1) | DBC BUILDER and its bit grid, the live decode preview, PLOT, INTELLIGENCE, ML INTEL, DASHBOARD | 2.6 min |
+| [2. Defining signals and checking them](docs/canlab-demo-part2-signals.mp4?raw=1) | DBC BUILDER and its bit grid, the live decode preview, PLOT, INTELLIGENCE, ML INTEL, DASHBOARD | 2.7 min |
 | [3. Timeline, code generation and exports](docs/canlab-demo-part3-outputs.mp4?raw=1) | TIMELINE, CODE GEN, the five export formats, DIAGNOSTICS including XCP and DoIP, security access | 2.4 min |
-| [4. The transmit gate, injection and live capture](docs/canlab-demo-part4-transmitting.mp4?raw=1) | ARM TX, INJECTION, replay, fuzzing, GATEWAY, OBD-II, the AI engine, live capture | 3.3 min |
-| [Real vehicle capture](docs/canlab-demo-realdata.mp4?raw=1) | The same application driven through a real 180-ID capture: detection, entropy, decoding, and the transmit gate | 2.0 min |
+| [4. The transmit gate, injection and live capture](docs/canlab-demo-part4-transmitting.mp4?raw=1) | ARM TX, INJECTION, replay, fuzzing, GATEWAY, OBD-II, the AI engine, live capture | 3.4 min |
+| [Real-data validation](docs/canlab-realdata-validation.mp4?raw=1) | The application run over other people's recordings: a marine NMEA 2000 bus, a two-channel car log and a 145,000-frame J1939 log, through every detector, a decoded signal and the transmit gate | 4.9 min |
 
 Subtitles: [tour](docs/canlab-tour.srt),
 [part 1](docs/canlab-demo-part1-analysis.srt),
@@ -579,7 +579,7 @@ python tests/real_data/acceptance_new_sources.py <data-dir>
 Details and provenance: [`tests/real_data/README.md`](tests/real_data/README.md).
 A recording of the run is
 [canlab-realdata-validation.mp4](docs/canlab-realdata-validation.mp4?raw=1)
-(4:42, narrated and subtitled).
+(4:53, narrated and subtitled).
 
 ---
 
@@ -587,7 +587,7 @@ A recording of the run is
 
 ```bash
 pip install -e ".[dev]"
-QT_QPA_PLATFORM=offscreen python -m pytest -q     # 539 passed
+QT_QPA_PLATFORM=offscreen python -m pytest -q     # 540 passed
 ruff check canlab tests
 ```
 

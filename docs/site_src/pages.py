@@ -143,7 +143,7 @@ python3 main.py</code></pre>
 {h2("Prebuilt Linux binary")}
 <p>Each release carries a self-contained x86_64 tarball that needs no Python
    installation:</p>
-<pre><code>tar -xzf CanLab-1.3.0-linux-x86_64.tar.gz
+<pre><code>tar -xzf CanLab-2.0.0-linux-x86_64.tar.gz
 cd CanLab/
 ./CanLab</code></pre>
 <p>Grab it from the <a href="{repo}/releases/latest">latest release</a>. It is
@@ -1149,7 +1149,7 @@ def register(app):
 
 {h2("Testing")}
 <p>The suite runs headless:</p>
-<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 539 passed</code></pre>
+<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 540 passed</code></pre>
 <p>Tests that need an optional dependency skip cleanly when it is absent: the
    MDF4 importer without <code>asammdf</code>, the transport tests without the
    MCP SDK, the Lua dissector without a Lua runtime.</p>

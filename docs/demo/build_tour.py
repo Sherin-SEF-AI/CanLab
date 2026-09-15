@@ -28,7 +28,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from build import (  # noqa: E402
-    FPS, build_cues, duration, run, synthesise, write_srt,
+    FPS, build_cues, duration, run, synthesise, write_srt, write_vtt,
 )
 from compose import Rect, frame_count, load_font, render_shot  # noqa: E402
 
@@ -120,23 +120,6 @@ def encode(total_frames: int) -> None:
          "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
          "-c:s", "mov_text", "-metadata:s:s:0", "language=eng",
          "-movflags", "+faststart", str(VIDEO)])
-
-
-def write_vtt(cues, path: Path) -> None:
-    """WebVTT, for the <track> element on the documentation site.
-
-    The burnt-in captions are for the file on its own; a browser playing the
-    video in the page wants a real text track it can turn off, index and read
-    aloud. WebVTT is SRT with a header, no cue numbers and a full stop where
-    SRT puts a comma.
-    """
-    from build import timestamp
-    lines = ["WEBVTT", ""]
-    for start, end, text in cues:
-        lines.append(f"{timestamp(start).replace(',', '.')} --> "
-                     f"{timestamp(end).replace(',', '.')}")
-        lines += [text, ""]
-    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 SHOTS: list[dict] = []
