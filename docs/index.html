@@ -21,7 +21,7 @@
 </header>
 <div class="wrap">
   <div class="layout">
-    <aside class="toc"><h2>On this page</h2><nav><a href="#watch-it-work">Watch it work</a><a href="#what-it-is-for">What it is for</a><a href="#what-it-is-not">What it is not</a><a href="#try-it-without-hardware">Try it without hardware</a></nav></aside>
+    <aside class="toc"><h2>On this page</h2><nav><a href="#watch-it-work">Watch it work</a><a href="#the-full-walkthrough">The full walkthrough</a><a href="#what-it-is-for">What it is for</a><a href="#what-it-is-not">What it is not</a><a href="#try-it-without-hardware">Try it without hardware</a></nav></aside>
     <main id="main">
 
 <div class="hero">
@@ -38,9 +38,35 @@
 </div>
 
 <h2 id="watch-it-work">Watch it work</h2>
-<p>A narrated walkthrough of every tab, recorded from the running application
-   in four parts. Captions are on by default; the whole thing is about eleven
-   minutes.</p>
+<div class="video-card video-feature">
+  <video controls preload="metadata" playsinline>
+    <source src="canlab-tour.mp4" type="video/mp4">
+    <track kind="captions" srclang="en" label="English" default
+           src="canlab-tour.vtt">
+    Your browser cannot play this video.
+    <a href="canlab-tour.mp4">Download it instead</a>.
+  </video>
+  <div class="meta">
+    <h3>The guided tour</h3>
+    <p class="len">5:34</p>
+    <p>One pass through the whole tool against two real recordings. Start
+       here.</p>
+  </div>
+</div>
+<p>For each beat the frame pushes in on the control being described, dims the
+   rest, rings it and captions it, then pulls back out. The rectangle is the
+   widget's own geometry, read off the live window at record time, so a control
+   that moves in a later build takes its callout with it.</p>
+<p>It is a real analysis. The first capture turns out to be a marine NMEA 2000
+   bus rather than the J1939 that 29-bit identifiers usually suggest. The
+   counter detector finds the sequence byte the specification defines without
+   being told the protocol. A wind speed signal is defined, and the same two
+   bytes are plotted both ways round: little-endian reads 0.72 to 0.87 m/s,
+   big-endian claims 184 to 223.</p>
+
+<h2 id="the-full-walkthrough">The full walkthrough</h2>
+<p>Every tab, in four parts, recorded from the running application with
+   captions on by default.</p>
 <div class="video-grid"><div class="video-card">
   <video controls preload="metadata" poster="" playsinline>
     <source src="canlab-demo-part1-analysis.mp4" type="video/mp4">
@@ -94,21 +120,10 @@
     <p>ARM TX, INJECTION, replay, fuzzing, GATEWAY, OBD-II, the AI engine, live capture.</p>
   </div>
 </div></div>
-<p>The walkthrough is generated rather than hand-recorded.
-   <code>docs/demo/record.py</code> drives a real main window under Qt's
-   offscreen platform and calls the same slots the buttons call, so a scene
-   that stops working fails the run instead of quietly recording a stale
-   screen.</p>
-<div class="note">
-  <span class="callout-title">One caveat</span>
-  <p>It was recorded from the <code>fix/production-readiness</code> branch, so
-     two things in it are ahead of <code>main</code>: the diagnostics tab there
-     has XCP and DoIP panels, and it has selectable vehicle profiles. On
-     <code>main</code> those protocols are
-     <a href="diagnostics.html#library-only-protocols">library modules with no
-     user interface</a>. Everything else shown is what <code>main</code>
-     does.</p>
-</div>
+<p>All the videos are generated rather than hand-recorded. The recorders drive
+   a real main window under Qt's offscreen platform and call the same slots the
+   buttons call, so a scene that stops working fails the run instead of quietly
+   recording a stale screen.</p>
 
 <h2 id="what-it-is-for">What it is for</h2>
 <p>You have a capture from a vehicle bus and a few thousand frames of hex. The
@@ -133,7 +148,7 @@
 <p>It is not a signal identifier. The analysis produces candidates ranked by
    heuristics, and a confidence figure is a match fraction over the frames you
    loaded, not a proof. Every result needs verifying against the vehicle before
-   you rely on it. The project is a single-author effort, still alpha, and has
+   you rely on it. The project is a single-author effort, in beta, and has
    not been validated across a wide range of real vehicles. The
    <a href="reference.html#limitations">limitations</a> are listed plainly.</p>
 

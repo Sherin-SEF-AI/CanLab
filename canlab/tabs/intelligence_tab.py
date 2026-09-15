@@ -9,7 +9,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
 
 from canlab.theme import COLORS, mono_font, desc_label
+from canlab.ui.tokens import MAX_H
 from canlab.core.state import get_state
+from canlab.ui.widgets import set_status
 
 
 STATUS_COLORS = {
@@ -18,6 +20,23 @@ STATUS_COLORS = {
     "changed": COLORS["amber"],
     "same":    COLORS["dim"],
 }
+
+
+def _frame_bytes(row) -> bytes:
+    """The payload of one frames row, as bytes.
+
+    A frame shorter than eight bytes leaves NaN in the columns it does not
+    reach. `row.get("B7", 0) or 0` looks like it handles that and does not:
+    NaN is truthy, so the NaN survives the `or` and int() raises on it, which
+    took down the whole PGN scan on the first short frame in a capture.
+    """
+    out = bytearray()
+    for i in range(8):
+        value = row.get(f"B{i}", None)
+        if value is None or value != value:        # NaN is not equal to itself
+            break
+        out.append(int(value) & 0xFF)
+    return bytes(out)
 
 
 class IntelligenceTab(QWidget):
@@ -163,9 +182,9 @@ class IntelligenceTab(QWidget):
         ll.addWidget(ann_grp)
 
         # J1939 Decoder
-        j1939_grp = QGroupBox("J1939 PGN DECODER")
+        j1939_grp = QGroupBox("J1939 / NMEA 2000 PGN DECODER")
         j1939_lay = QVBoxLayout(j1939_grp)
-        self.btn_j1939 = QPushButton("Scan for J1939 IDs")
+        self.btn_j1939 = QPushButton("Scan for PGNs")
         self.btn_j1939.clicked.connect(self._run_j1939)
         j1939_lay.addWidget(self.btn_j1939)
         self.lbl_j1939 = QLabel("—")
@@ -267,17 +286,22 @@ class IntelligenceTab(QWidget):
         rl.addWidget(self.delta_table)
 
         # J1939 table
-        self.j1939_table = QTableWidget(0, 6)
+        self.j1939_table = QTableWidget(0, 7)
         self.j1939_table.setHorizontalHeaderLabels(
-            ["ID", "PGN", "PGN Name", "Source", "Frames", "SPN Preview"]
+            ["ID", "PGN", "PGN Name", "Protocol", "Source", "Frames", "Decoded"]
         )
         self.j1939_table.setFont(mono_font(8))
         self.j1939_table.verticalHeader().setVisible(False)
         self.j1939_table.verticalHeader().setDefaultSectionSize(20)
-        self.j1939_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        # The identifier, PGN and frame count are short and fixed; the decoded
+        # values are the column worth reading, so give the spare width to that
+        # one rather than spreading it over all seven.
+        header = self.j1939_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
         self.j1939_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.j1939_table.setMaximumHeight(160)
-        rl.addWidget(QLabel("J1939 PGN SCAN RESULTS", font=mono_font(8)))
+        self.j1939_table.setMaximumHeight(MAX_H["xl"])
+        rl.addWidget(QLabel("PGN SCAN RESULTS", font=mono_font(8)))
         rl.addWidget(self.j1939_table)
 
         # Value Reverse table
@@ -346,7 +370,7 @@ class IntelligenceTab(QWidget):
                 self._state.add_dbc_signal(sig)
                 added += 1
         self.lbl_auto_dbc.setText(f"Added {added} signals to DBC Builder.")
-        self.lbl_auto_dbc.setStyleSheet(f"color:{COLORS['green']}")
+        set_status(self.lbl_auto_dbc, "ok")
 
     # ── Diff ──────────────────────────────────────────────────────────────────
 
@@ -357,7 +381,7 @@ class IntelligenceTab(QWidget):
         self._state.diff_baseline_df = self._state.frames_df.copy()
         n = len(self._state.diff_baseline_df)
         self.lbl_baseline.setText(f"Baseline: {n} frames")
-        self.lbl_baseline.setStyleSheet(f"color:{COLORS['amber']}")
+        set_status(self.lbl_baseline, "warn")
 
     def _run_diff(self):
         from canlab.core.diff_engine import diff_logs
@@ -433,7 +457,7 @@ class IntelligenceTab(QWidget):
             return
         self._get_recorder().capture_baseline(df)
         self.lbl_coa_status.setText(f"Baseline captured  ({len(df)} frames)")
-        self.lbl_coa_status.setStyleSheet(f"color:{COLORS['amber']}")
+        set_status(self.lbl_coa_status, "warn")
 
     def _coa_capture_action(self):
         df = self._state.frames_df
@@ -441,7 +465,7 @@ class IntelligenceTab(QWidget):
             return
         self._get_recorder().capture_action(df)
         self.lbl_coa_status.setText(f"Action captured  ({len(df)} frames)")
-        self.lbl_coa_status.setStyleSheet(f"color:{COLORS['amber']}")
+        set_status(self.lbl_coa_status, "warn")
 
     def _coa_compute(self):
         deltas = self._get_recorder().compute_delta()
@@ -469,7 +493,7 @@ class IntelligenceTab(QWidget):
                 "TOGGLE":    COLORS["amber"],
                 "PULSE":     COLORS["amber"],
                 "SUSTAINED": COLORS["green"],
-            }.get(direction, COLORS["fg"])
+            }.get(direction, COLORS["text"])
             for ci, txt in enumerate(cells):
                 item = QTableWidgetItem(txt)
                 item.setFont(mono_font())
@@ -477,7 +501,7 @@ class IntelligenceTab(QWidget):
                 item.setForeground(QBrush(QColor(color)))
                 self.delta_table.setItem(row, ci, item)
         self.lbl_coa_status.setText(f"{len(deltas)} byte changes detected")
-        self.lbl_coa_status.setStyleSheet(f"color:{COLORS['green']}")
+        set_status(self.lbl_coa_status, "ok")
         self._state.change_detected.emit(deltas)
 
     def _coa_clear(self):
@@ -574,7 +598,7 @@ class IntelligenceTab(QWidget):
             self._state.add_dbc_signal(candidate_to_signal(cands[row]))
             self.lbl_ann_status.setText(f"Added {cands[row].location} to the DBC.")
 
-    # ── J1939 ─────────────────────────────────────────────────────────────────
+    # ── J1939 / NMEA 2000 ─────────────────────────────────────────────────────
 
     def _run_j1939(self):
         df = self._state.frames_df
@@ -584,9 +608,19 @@ class IntelligenceTab(QWidget):
         from canlab.core.j1939 import scan_for_j1939, decode_pgn
         hits = scan_for_j1939(df)
         if not hits:
-            self.lbl_j1939.setText("No J1939 IDs detected (all IDs are ≤ 0x7FF).")
+            self.lbl_j1939.setText(
+                "No 29-bit IDs, so neither J1939 nor NMEA 2000 (all IDs are ≤ 0x7FF).")
             return
-        self.lbl_j1939.setText(f"{len(hits)} J1939 PGN(s) found.")
+        # Say which protocol the bus actually is. Both use the same 29-bit
+        # frame, and reporting a marine bus as J1939 was misleading enough that
+        # the PGN names came out blank.
+        counts: dict[str, int] = {}
+        for h in hits:
+            counts[h["protocol"]] = counts.get(h["protocol"], 0) + 1
+        named = sum(1 for h in hits if not h["pgn_name"].startswith("PGN "))
+        summary = ", ".join(f"{n} {proto}" for proto, n in
+                            sorted(counts.items(), key=lambda kv: -kv[1]))
+        self.lbl_j1939.setText(f"{len(hits)} PGNs: {summary}. {named} named.")
 
         # Populate right-panel J1939 table
         self.j1939_table.setRowCount(0)
@@ -594,20 +628,25 @@ class IntelligenceTab(QWidget):
             frames = df[df["ID"] == h["id_hex"]]
             # Decode first frame for SPN preview
             spn_preview = ""
-            if not frames.empty:
-                row = frames.iloc[0]
-                data = bytes(int(row.get(f"B{i}", 0) or 0) for i in range(8))
-                spns = decode_pgn(h["pgn"], data)
+            if not h["single_frame"]:
+                # An NMEA 2000 fast-packet message is split across frames with
+                # a sequence byte. Decoding one frame of it in isolation gives
+                # a confident wrong answer, so say nothing instead.
+                spn_preview = "fast packet, needs reassembly"
+            elif not frames.empty:
+                spns = decode_pgn(h["pgn"], _frame_bytes(frames.iloc[0]))
                 if spns:
                     spn_preview = "  |  ".join(
-                        f"{name}={v:.2f} {unit}" for name, (v, unit) in list(spns.items())[:3]
+                        f"{name}={v:g} {unit}".rstrip()
+                        for name, (v, unit) in list(spns.items())[:3]
                     )
             r = self.j1939_table.rowCount()
             self.j1939_table.insertRow(r)
             cells = [
                 h["id_hex"],
-                f"0x{h['pgn']:04X}",
+                f"0x{h['pgn']:04X}" if h["protocol"] == "J1939" else str(h["pgn"]),
                 h["pgn_name"],
+                h["protocol"],
                 h["sa_name"],
                 str(h["frame_count"]),
                 spn_preview,
@@ -615,8 +654,10 @@ class IntelligenceTab(QWidget):
             for ci, txt in enumerate(cells):
                 item = QTableWidgetItem(txt)
                 item.setFont(mono_font(8))
-                if ci == 2:
+                if ci == 2 and not txt.startswith("PGN "):
                     item.setForeground(QBrush(QColor(COLORS["green"])))
+                elif ci == 6 and txt.startswith("fast packet"):
+                    item.setForeground(QBrush(QColor(COLORS["dim"])))
                 self.j1939_table.setItem(r, ci, item)
 
     # ── Value Reverse Lookup ──────────────────────────────────────────────────

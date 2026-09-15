@@ -21,12 +21,20 @@
 </header>
 <div class="wrap">
   <div class="layout">
-    <aside class="toc"><h2>On this page</h2><nav><a href="#frames">FRAMES</a><a href="#sniffer">SNIFFER</a><a href="#signals">SIGNALS</a><a href="#plot">PLOT</a><a href="#ai-engine">AI ENGINE</a><a href="#dbc-builder">DBC BUILDER</a><a href="#code-gen">CODE GEN</a><a href="#intelligence">INTELLIGENCE</a><a href="#injection">INJECTION</a><a href="#diagnostics">DIAGNOSTICS</a><a href="#dashboard">DASHBOARD</a><a href="#auto-re">AUTO-RE</a><a href="#timeline">TIMELINE</a><a href="#obd-ii">OBD-II</a><a href="#ml-intel">ML INTEL</a><a href="#gateway">GATEWAY</a></nav></aside>
+    <aside class="toc"><h2>On this page</h2><nav><a href="#finding-your-way-around">Finding your way around</a><a href="#frames">FRAMES</a><a href="#sniffer">SNIFFER</a><a href="#signals">SIGNALS</a><a href="#plot">PLOT</a><a href="#ai-engine">AI ENGINE</a><a href="#dbc-builder">DBC BUILDER</a><a href="#code-gen">CODE GEN</a><a href="#intelligence">INTELLIGENCE</a><a href="#injection">INJECTION</a><a href="#diagnostics">DIAGNOSTICS</a><a href="#dashboard">DASHBOARD</a><a href="#auto-re">AUTO-RE</a><a href="#timeline">TIMELINE</a><a href="#obd-ii">OBD-II</a><a href="#ml-intel">ML INTEL</a><a href="#gateway">GATEWAY</a></nav></aside>
     <main id="main">
 
 <h1>The 16 tabs</h1>
-<p class="lede">Roughly in the order you would use them. Tabs marked with a
-   star in the application are the analysis-heavy ones.</p>
+<p class="lede">Roughly in the order you would use them.</p>
+
+<h2 id="finding-your-way-around">Finding your way around</h2>
+<p>Sixteen tabs holding 33 sub-tabs is 49 panes, too many for one row. The
+   layout follows Blender: layered greys so nesting reads as depth, blue for
+   selection, and green, amber and red kept only where they mean connected,
+   pending and armed.</p>
+<div class="table-scroll"><table><thead><tr><th></th><th></th></tr></thead><tbody><tr><td><strong>Workspaces</strong></td><td>The tabs are grouped into CAPTURE, EXPLORE, DETECT, DEFINE and BUS. The bar follows the tabs as well as driving them, so Alt+1..9 and Ctrl+Tab still work and the bar switches workspace to keep up.</td></tr><tr><td><strong>Command palette</strong></td><td>Ctrl+Shift+P or F3 searches 105 commands: every pane by its path and every menu action with its shortcut. Both lists are read from the live window, so nothing is registered by hand.</td></tr><tr><td><strong>Sidebars</strong></td><td>The ID list and the inspector sit in a real splitter. Drag them, collapse them to nothing with T and N, or both at once with Ctrl+Space. Widths and state are remembered.</td></tr><tr><td><strong>Reduce motion</strong></td><td>View &gt; Reduce Motion turns animation off. It also stands down while a live capture runs, except the armed and connected indicators.</td></tr></tbody></table></div>
+<p>The minimum window size is 1124 by 851, so it fits a laptop screen with both
+   sidebars open.</p>
 
 <h2 id="frames">FRAMES</h2>
 <p>The raw view: every frame in time order with its timestamp, arbitration ID,
@@ -97,8 +105,12 @@
 <h2 id="intelligence">INTELLIGENCE</h2>
 <p>Looks across messages rather than within one. Its sections are signal
    periodicity, automatic DBC generation, log diff, an opendbc cross-reference,
-   change-on-action capture, a J1939 PGN decoder, and a value reverse
-   lookup.</p>
+   change-on-action capture, a J1939 and NMEA 2000 PGN decoder, and a value
+   reverse lookup.</p>
+<p>The PGN decoder works the protocol out from the identifier: NMEA 2000 uses
+   data page 1 in the 126208 to 130836 range. Multi-frame PGNs are named but
+   not decoded, because one frame of one read alone gives a confident wrong
+   answer.</p>
 <p>Change-on-action is the one worth knowing about: capture a baseline, perform
    a physical action, capture again, and it shows which bytes changed. That is
    often the fastest route from "somewhere in these 60 messages" to a
@@ -112,6 +124,9 @@
    between limits with a watchdog, <strong>FUZZ</strong> with random, boundary
    or mutation payloads, and <strong>TEST SEQUENCE</strong> for scripted
    inject, wait and assert steps.</p>
+<p>The INJECT page previews the frame it would send before anything is armed,
+   colouring each byte by whether the signal or the vehicle profile wrote it,
+   and keeps a log of every send with its result.</p>
 <div class="warn">
   <span class="callout-title">Gated</span>
   <p>Nothing here transmits until ARM TX is on, and turning it off stops a run

@@ -56,6 +56,49 @@ def qcore():
     yield _QT_APP
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _join_stray_threads():
+    """Wait for any worker thread still running when the session ends.
+
+    Several tabs start a QThread that walks a DataFrame. Tests close the
+    windows that own them, but closing does not stop a thread that is mid-loop,
+    and the suite would then segfault at interpreter teardown with a worker
+    still inside numpy. It was intermittent, which is the worst kind: roughly
+    one run in four, in whatever test happened to be last.
+    """
+    yield
+    try:
+        from PyQt6.QtCore import QThread
+        from PyQt6.QtWidgets import QApplication
+    except ImportError:
+        return
+    app = QApplication.instance()
+    for _ in range(50):
+        alive = [t for t in _live_threads() if t.isRunning()]
+        if not alive:
+            return
+        for t in alive:
+            t.requestInterruption()
+        if app is not None:
+            app.processEvents()
+        QThread.msleep(100)
+
+
+def _live_threads() -> list:
+    """Every QThread still referenced anywhere, via Qt's object tree."""
+    import gc
+
+    from PyQt6.QtCore import QThread
+    out = []
+    for obj in gc.get_objects():
+        try:
+            if isinstance(obj, QThread):
+                out.append(obj)
+        except ReferenceError:
+            continue
+    return out
+
+
 @pytest.fixture
 def armed():
     """Arm transmit for the duration of a test (tests must opt in explicitly)."""

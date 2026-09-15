@@ -66,11 +66,16 @@ def extract_features(frames_df: pd.DataFrame) -> np.ndarray:
     return np.array(feats, dtype=float)
 
 
-def build_index(frames_df: pd.DataFrame,
-                min_frames: int = 5) -> dict[str, np.ndarray]:
-    """Build {id → feature_vector} for all IDs with ≥ min_frames frames."""
+def build_index(frames_df: pd.DataFrame, min_frames: int = 5,
+                should_stop=None) -> dict[str, np.ndarray]:
+    """Build {id → feature_vector} for all IDs with >= min_frames frames.
+
+    `should_stop` is checked once per ID so the caller can abandon the walk.
+    """
     index: dict[str, np.ndarray] = {}
     for can_id, grp in frames_df.groupby("ID"):
+        if should_stop is not None and should_stop():
+            break
         if len(grp) < min_frames:
             continue
         index[can_id] = extract_features(grp)

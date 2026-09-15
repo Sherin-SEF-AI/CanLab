@@ -10,6 +10,7 @@ from PyQt6.QtGui import QColor, QBrush
 
 from canlab.theme import COLORS, mono_font, desc_label
 from canlab.core.state import get_state
+from canlab.ui.widgets import set_status
 import logging
 
 log = logging.getLogger(__name__)
@@ -63,7 +64,7 @@ class DiagnosticsTab(QWidget):
 
         self.lbl_diag_status = QLabel("CAN: disconnected")
         self.lbl_diag_status.setFont(mono_font(8))
-        self.lbl_diag_status.setStyleSheet(f"color:{COLORS['error']}")
+        set_status(self.lbl_diag_status, "error")
         lay.addWidget(self.lbl_diag_status)
 
         # Controls
@@ -400,11 +401,11 @@ class DiagnosticsTab(QWidget):
     def _on_can_status(self, connected: bool):
         if connected:
             self.lbl_diag_status.setText("CAN: connected")
-            self.lbl_diag_status.setStyleSheet(f"color:{COLORS['green']}")
+            set_status(self.lbl_diag_status, "ok")
             self._rx_log_timer.start()
         else:
             self.lbl_diag_status.setText("CAN: disconnected")
-            self.lbl_diag_status.setStyleSheet(f"color:{COLORS['error']}")
+            set_status(self.lbl_diag_status, "error")
             self._rx_log_timer.stop()
             self._health_timer.stop()
 
@@ -726,9 +727,9 @@ class DiagnosticsTab(QWidget):
 
         def stat_row(label, row):
             lbl = QLabel(label, font=mono_font(8))
-            lbl.setStyleSheet(f"color:{COLORS['dim']}")
+            set_status(lbl, "dim")
             val = QLabel("—", font=mono_font(9))
-            val.setStyleSheet(f"color:{COLORS['text']}")
+            set_status(val, "info")
             grid.addWidget(lbl, row, 0)
             grid.addWidget(val, row, 1)
             return val
@@ -799,6 +800,6 @@ class DiagnosticsTab(QWidget):
             self._health_history.pop(0)
         self._health_curve.setData(self._health_history)
         if snap["error_frames"] > 0:
-            self.lbl_h_errors.setStyleSheet(f"color:{COLORS['error']}")
+            set_status(self.lbl_h_errors, "error")
         if snap["bus_off"] > 0:
-            self.lbl_h_busoff.setStyleSheet(f"color:{COLORS['error']}")
+            set_status(self.lbl_h_busoff, "error")

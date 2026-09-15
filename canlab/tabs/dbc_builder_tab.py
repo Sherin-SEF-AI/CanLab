@@ -15,6 +15,7 @@ from canlab.core.dbc_manager import (
     signals_to_dbc_string, load_dbc, decode_frame, validate_signals, get_db,
     frame_bytes_from_row,
 )
+from canlab.ui.widgets import set_status
 
 BYTE_COLS = ["B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7"]
 
@@ -148,11 +149,26 @@ class DBCBuilderTab(QWidget):
         grid = QGridLayout()
         grid.setSpacing(4)
 
+        # Fields are capped rather than stretched. A grid with no column
+        # stretch gives every field the whole width of the window, so
+        # "0x000" arrived in a 1000 px box and the eye had to travel the
+        # width of the screen to read a five-character value.
+        FIELD_W = 260
+        grid.setColumnStretch(1, 0)
+        grid.setColumnStretch(3, 0)
+        grid.setColumnStretch(4, 1)      # slack collects here, not in a field
+
         def add_row(row, label1, widget1, label2=None, widget2=None):
-            grid.addWidget(QLabel(label1), row, 0)
+            label = QLabel(label1)
+            label.setObjectName("label_dim")
+            grid.addWidget(label, row, 0)
+            widget1.setMaximumWidth(FIELD_W)
             grid.addWidget(widget1, row, 1)
             if label2:
-                grid.addWidget(QLabel(label2), row, 2)
+                label2_w = QLabel(label2)
+                label2_w.setObjectName("label_dim")
+                grid.addWidget(label2_w, row, 2)
+                widget2.setMaximumWidth(FIELD_W)
                 grid.addWidget(widget2, row, 3)
 
         self.f_msg_id   = QLineEdit(); self.f_msg_id.setPlaceholderText("0x000")
@@ -323,7 +339,7 @@ class DBCBuilderTab(QWidget):
         errors = validate_signals([sig])
         if errors:
             self.status_label.setText("  ".join(errors))
-            self.status_label.setStyleSheet(f"color:{COLORS['error']}")
+            set_status(self.status_label, "error")
             return
         # Save notes
         note_text = self.f_notes.toPlainText().strip()
@@ -340,7 +356,7 @@ class DBCBuilderTab(QWidget):
         else:
             self._state.add_dbc_signal(sig)
         self.status_label.setText("Saved.")
-        self.status_label.setStyleSheet(f"color:{COLORS['green']}")
+        set_status(self.status_label, "ok")
 
     def _test_decode(self):
         sig = self._collect_form()
@@ -390,7 +406,7 @@ class DBCBuilderTab(QWidget):
                 with open(path, "w") as f:
                     f.write(dbc_str)
                 self.status_label.setText(f"Exported to {path}")
-                self.status_label.setStyleSheet(f"color:{COLORS['green']}")
+                set_status(self.status_label, "ok")
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", str(e))
 
@@ -401,7 +417,7 @@ class DBCBuilderTab(QWidget):
                 sigs = load_dbc(path)
                 self._state.add_dbc_signals(sigs)          # one undo step
                 self.status_label.setText(f"Imported {len(sigs)} signals")
-                self.status_label.setStyleSheet(f"color:{COLORS['green']}")
+                set_status(self.status_label, "ok")
             except Exception as e:
                 QMessageBox.critical(self, "Import Error", str(e))
 
@@ -442,7 +458,7 @@ class DBCBuilderTab(QWidget):
         fresh = [s for s in signals if s["message_id"] not in existing_ids]
         added = self._state.add_dbc_signals(fresh)          # one undo step
         self.status_label.setText(f"Auto-built: added {added} signals")
-        self.status_label.setStyleSheet(f"color:{COLORS['green']}")
+        set_status(self.status_label, "ok")
 
     def _note_key(self, sig: dict) -> str:
         return f"{sig.get('message_id','?')}/{sig.get('signal_name','?')}"
@@ -482,7 +498,7 @@ class DBCBuilderTab(QWidget):
             with open(path, "w") as f:
                 f.write(dbc_str)
             self.status_label.setText(f"openpilot DBC exported: {path}")
-            self.status_label.setStyleSheet(f"color:{COLORS['green']}")
+            set_status(self.status_label, "ok")
         except Exception as e:
             QMessageBox.critical(self, "Export Error", str(e))
 
@@ -501,7 +517,7 @@ class DBCBuilderTab(QWidget):
             with open(path, "w") as f:
                 f.write(lua_str)
             self.status_label.setText(f"Lua dissector exported: {path}")
-            self.status_label.setStyleSheet(f"color:{COLORS['green']}")
+            set_status(self.status_label, "ok")
         except Exception as e:
             QMessageBox.critical(self, "Export Error", str(e))
 
@@ -536,7 +552,7 @@ class DBCBuilderTab(QWidget):
             self.status_label.setText(
                 f"Imported {len(signals)} signal(s) from CAN matrix."
             )
-            self.status_label.setStyleSheet(f"color:{COLORS['green']}")
+            set_status(self.status_label, "ok")
         except Exception as e:
             QMessageBox.critical(self, "Import Error", str(e))
 
@@ -556,7 +572,7 @@ class DBCBuilderTab(QWidget):
             self._state.add_dbc_signals(signals)           # one undo step
             get_db(self._state)
             self.status_label.setText(f"Imported {len(signals)} signal(s) from ARXML.")
-            self.status_label.setStyleSheet(f"color:{COLORS['green']}")
+            set_status(self.status_label, "ok")
         except Exception as e:
             QMessageBox.critical(self, "Import Error", str(e))
 
@@ -576,7 +592,7 @@ class DBCBuilderTab(QWidget):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(arxml)
             self.status_label.setText(f"ARXML exported: {path}")
-            self.status_label.setStyleSheet(f"color:{COLORS['green']}")
+            set_status(self.status_label, "ok")
         except Exception as e:
             QMessageBox.critical(self, "Export Error", str(e))
 
@@ -601,6 +617,6 @@ class DBCBuilderTab(QWidget):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(dbc_str)
             self.status_label.setText(f"CANdb++ exported: {path}")
-            self.status_label.setStyleSheet(f"color:{COLORS['green']}")
+            set_status(self.status_label, "ok")
         except Exception as e:
             QMessageBox.critical(self, "Export Error", str(e))

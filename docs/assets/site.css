@@ -185,6 +185,8 @@ figcaption { font-size: .85rem; color: var(--dim); margin-top: .5rem; max-width:
 .video-card { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel); }
 .video-card video { border: none; border-radius: 0; }
 .video-card .meta { padding: .8rem 1rem 1rem; }
+.video-feature { margin: 1.5rem 0; }
+.video-feature video { width: 100%; display: block; }
 .video-card h3 { margin: 0 0 .3rem; font-size: 1rem; }
 .video-card p { font-size: .87rem; color: var(--dim); margin: 0; max-width: none; }
 .video-card .len { font-family: var(--mono); font-size: .76rem; color: var(--green); }

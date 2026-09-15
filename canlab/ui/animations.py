@@ -1,7 +1,7 @@
 """Reusable animation widgets and helpers for CANLAB."""
 from PyQt6.QtWidgets import QWidget, QLabel
 from PyQt6.QtCore import (
-    Qt, QTimer, QRectF,
+    QEasingCurve, Qt, QTimer, QRectF, QVariantAnimation,
 )
 from PyQt6.QtGui import QPainter, QPen, QColor, QBrush
 
@@ -101,75 +101,136 @@ class PulsingDot(QWidget):
 # ── Animated integer counter label ────────────────────────────────────────────
 
 class CountUpLabel(QLabel):
-    """Label that animates from its current numeric value to a target."""
+    """Label that animates from its current numeric value to a target.
+
+    It used to step by ``max(1, diff // 6)`` on a 16 ms timer. Counting up
+    that works; counting down, ``diff`` is negative, ``diff // 6`` floors to a
+    large negative, and ``max(1, ...)`` returns 1 -- so the value moved one
+    step *away* from the target on every tick, the timer never reached its
+    stop condition, and the status bar counted upward forever showing a number
+    that was simply false. Loading a small capture after a large one was
+    enough to trigger it, as was Trim capture.
+
+    A QVariantAnimation eases correctly in both directions, takes the same
+    time regardless of distance, and stops on its own.
+    """
+
+    DURATION_MS = 400
 
     def __init__(self, text: str = "0", suffix: str = "", parent=None):
         super().__init__(text, parent)
-        self._target  = 0
         self._current = 0
-        self._suffix  = suffix
-        self._timer   = QTimer(self)
-        self._timer.setInterval(16)
-        self._timer.timeout.connect(self._tick)
+        self._target = 0
+        self._suffix = suffix
+        self._anim: QVariantAnimation | None = None
 
     def animate_to(self, value: int):
-        self._target  = value
-        self._current = max(0, self._current)
-        self._timer.start()
+        """Ease to `value`, reusing this label's one animation.
 
-    def _tick(self):
-        diff = self._target - self._current
-        if abs(diff) <= 1:
-            self._current = self._target
-            self._timer.stop()
-        else:
-            self._current += max(1, diff // 6)
-        self.setText(f"{self._current:,} {self._suffix}".strip())
+        The animation is parented to the label and never self-deletes. It used
+        to be created per call with DeleteWhenStopped *and* a parent, which
+        gives the object two owners: destroying the label frees the animation,
+        and the stop that destruction triggers frees it again. That is a
+        segfault with no Python traceback, surfacing at whatever unrelated
+        point the event loop next runs.
+        """
+        from canlab.ui.motion import Motion
 
+        target = max(0, int(value))
+        if self._anim is not None:
+            self._anim.stop()
+        # This counter is the frame total in the status bar. It sat outside the
+        # reduce-motion and live-capture gates that every other animation
+        # obeys, so a capture running at full rate was still easing a number
+        # four hundred milliseconds at a time.
+        if target == self._current or Motion.off():
+            self._show(target)
+            return
+        anim = self._animation()
+        self._target = target
+        anim.setStartValue(int(self._current))
+        anim.setEndValue(target)
+        anim.start()
 
-# ── Button pulse helper ───────────────────────────────────────────────────────
+    def _animation(self) -> QVariantAnimation:
+        if self._anim is None:
+            anim = QVariantAnimation(self)
+            anim.setDuration(self.DURATION_MS)
+            anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+            # Bound methods, not closures over a loop variable: Qt drops these
+            # connections when the label is destroyed.
+            anim.valueChanged.connect(self._on_step)
+            anim.finished.connect(self._on_finished)
+            self._anim = anim
+        return self._anim
+
+    def _on_step(self, value) -> None:
+        self._show(int(value))
+
+    def _on_finished(self) -> None:
+        self._show(self._target)
+
+    def _show(self, value: int) -> None:
+        self._current = value
+        self.setText(f"{value:,} {self._suffix}".strip())
+
 
 class ButtonPulse:
-    """Cycles a button's stylesheet to create a pulsing glow while active."""
+    """Draw attention to a button while a long job runs.
 
-    _STEPS = [
-        f"QPushButton {{ color:{COLORS['amber']}; border:1px solid {COLORS['amber']}; background:{COLORS['panel_bg']}; }}",
-        f"QPushButton {{ color:{COLORS['amber']}; border:2px solid {COLORS['amber']}; background:#2a1800; }}",
-        "QPushButton { color:#ffffff;            border:2px solid #ffdd88;          background:#3a2200; }",
-        f"QPushButton {{ color:{COLORS['amber']}; border:2px solid {COLORS['amber']}; background:#2a1800; }}",
-    ]
+    It used to swap four complete stylesheet strings on a 180 ms timer. Each
+    assignment re-parses the sheet and invalidates the widget's whole styled
+    subtree, which is an expensive way to change one colour. This animates the
+    button's own opacity instead, through the shared motion module, so it
+    obeys the reduce-motion and live-capture gates like everything else.
+    """
 
     def __init__(self, button):
-        self._btn   = button
-        self._step  = 0
-        self._orig  = button.styleSheet()
-        self._timer = QTimer()
-        self._timer.setInterval(180)
-        self._timer.timeout.connect(self._tick)
+        self._button = button
+        self._effect = None
+        self._anim = None
 
     def start(self):
-        self._step = 0
-        self._timer.start()
+        from PyQt6.QtWidgets import QGraphicsOpacityEffect
+
+        from canlab.ui.motion import DURATION, Motion, animate
+        if self._anim is not None or Motion.off():
+            return
+        if self._effect is None:
+            self._effect = QGraphicsOpacityEffect(self._button)
+            self._button.setGraphicsEffect(self._effect)
+        self._effect.setOpacity(1.0)
+        self._anim = animate(self._effect, b"opacity", 0.45,
+                             dur=DURATION["pulse"] // 2, frm=1.0, loop=-1)
 
     def stop(self):
-        self._timer.stop()
-        self._btn.setStyleSheet(self._orig)
-
-    def _tick(self):
-        self._btn.setStyleSheet(self._STEPS[self._step % len(self._STEPS)])
-        self._step += 1
-
-
-# ── Scan-line flash (for text areas receiving new data) ───────────────────────
-
-def flash_widget(widget: QWidget, color: str = COLORS["green"], duration_ms: int = 300):
-    """Briefly set a widget's background to `color` then fade back."""
-    orig = widget.styleSheet()
-    widget.setStyleSheet(orig + f"; background: {color}22;")
-    QTimer.singleShot(duration_ms, lambda: widget.setStyleSheet(orig))
+        if self._anim is not None:
+            self._anim.stop()
+            self._anim = None
+        if self._effect is not None:
+            self._effect.setOpacity(1.0)
 
 
-# ── Typewriter cursor blink ───────────────────────────────────────────────────
+def flash_widget(widget, color: str = None, duration_ms: int = 300):
+    """Briefly tint a widget to say something happened.
+
+    The old version appended to the widget's stylesheet and restored it from a
+    bare QTimer.singleShot, so a widget destroyed inside the delay was written
+    to after deletion. This drives a colour property through the motion
+    module, which parents the animation to the widget.
+    """
+    from PyQt6.QtWidgets import QGraphicsOpacityEffect
+
+    from canlab.ui.motion import Motion, animate
+    if Motion.off():
+        return
+    effect = widget.graphicsEffect()
+    if not isinstance(effect, QGraphicsOpacityEffect):
+        effect = QGraphicsOpacityEffect(widget)
+        widget.setGraphicsEffect(effect)
+    effect.setOpacity(0.35)
+    animate(effect, b"opacity", 1.0, dur=duration_ms, frm=0.35)
+
 
 class TypewriterCursor:
     """Appends a blinking block cursor to a QTextEdit while streaming."""

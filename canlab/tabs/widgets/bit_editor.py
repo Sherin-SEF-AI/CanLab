@@ -15,6 +15,7 @@ from PyQt6.QtGui     import QPainter, QPen, QBrush, QColor, QFont
 
 from canlab.theme import COLORS, mono_font
 from canlab.core.bit_coords import grid_to_dbc, dbc_to_grid
+from canlab.ui.widgets import set_status
 
 
 CELL  = 28    # px per bit cell
@@ -206,7 +207,7 @@ class BitGridWidget(QWidget):
             lbl.setFixedWidth(CELL)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setFont(QFont("Courier New", 7))
-            lbl.setStyleSheet(f"color:{COLORS['dim']}")
+            set_status(lbl, "dim")
             hdr.addWidget(lbl)
         hdr.addStretch()
         lay.insertLayout(1, hdr)   # insert before grid

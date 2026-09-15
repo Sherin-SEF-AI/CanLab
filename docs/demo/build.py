@@ -78,17 +78,21 @@ def duration(path: Path) -> float:
     return float(out)
 
 
-async def synthesise(scenes: list[dict]) -> None:
+async def synthesise(scenes: list[dict], audio_dir: Path | None = None) -> None:
     """One narration file per scene, reused when the words have not changed.
 
     Re-recording the frames is cheap; re-reading 11 minutes of narration to a
     remote service is not. Each clip is keyed by a digest of its own text and
     voice settings, so editing one scene re-voices that scene alone.
+
+    `audio_dir` lets the other builders share this cache logic while keeping
+    their own clips; it defaults to this walkthrough's directory.
     """
     import edge_tts
-    AUDIO.mkdir(parents=True, exist_ok=True)
+    AUDIO_DIR = audio_dir or AUDIO
+    AUDIO_DIR.mkdir(parents=True, exist_ok=True)
     for i, scene in enumerate(scenes):
-        path = AUDIO / f"{i:02d}_{scene['key']}.mp3"
+        path = AUDIO_DIR / f"{i:02d}_{scene['key']}.mp3"
         stamp = path.with_suffix(".sha")
         digest = hashlib.sha256(
             f"{VOICE}|{RATE}|{scene['narration']}".encode()).hexdigest()
