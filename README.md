@@ -111,9 +111,12 @@ Eighteen seconds cut from the guided tour, above.
 
 ### The guided tour
 
-**[canlab-tour.mp4](docs/canlab-tour.mp4?raw=1)** (5:34): one pass through the whole
+**[canlab-tour.mp4](docs/canlab-tour.mp4?raw=1)** (6:06): one pass through the whole
 tool against two real recordings, 1080p, with a callout caption in the picture
-and the narration as a subtitle track you can switch on. Start here.
+and the narration as a subtitle track you can switch on. It opens with an
+animated title, marks each section with a chapter card, dissolves between
+beats, and closes on where to get it, over a quiet music bed generated for
+the video so it carries no third-party audio. Start here.
 
 Rather than showing a full 1920x1080 window and leaving you to find the control
 being described, it moves the frame: for each beat it pushes in on that control,
