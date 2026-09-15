@@ -4,7 +4,8 @@
 The feature walkthrough in ``record.py`` uses the bundled sample, which this
 project generated. This one uses real device recordings the application has
 never seen, in native MDF4 from CANedge hardware, including a 145,000-frame
-J1939 log that is 29-bit throughout and a 23-minute two-channel recording.
+J1939 log that is 29-bit throughout, a 23-minute two-channel car recording,
+and a marine NMEA 2000 bus.
 
 Runs headless at 1080p and writes one PNG per beat plus scenes.json, which
 ``build_realdata.py`` turns into the narrated, subtitled video.
@@ -140,8 +141,8 @@ def main() -> int:
           """This is not the bundled sample. It is a recording from a CANedge
              logger, in native MDF four, published by CSS Electronics. Nine
              thousand six hundred frames across fifty arbitration identifiers,
-             and every single one is a twenty-nine bit extended identifier,
-             because this is a J1939 vehicle rather than a passenger car. Until
+             every one of them twenty-nine bit. That usually means a truck on
+             J1939, but these are NMEA 2000: this logger was on a boat. Until
              now the MDF four reader had only ever been given files this
              project wrote itself.""")
     df = load("canedge_c.MF4")
@@ -185,7 +186,7 @@ def main() -> int:
     scene("flags", "Bit-level flags and enumerated bytes",
           """The same sweep goes below byte level: single bit switches and small
              packed fields, and bytes that behave as enumerations rather than
-             measurements. On a real J1939 log that is six flags and fourteen
+             measurements. On this marine log that is six flags and fourteen
              enumerated bytes, each with the states actually observed.""")
     subtab(window.auto_re_tab, "FLAGS")
     if hasattr(window.auto_re_tab, "_run_flags"):
@@ -206,8 +207,8 @@ def main() -> int:
     # 4 ──────────────────────────────────────────────────────────────────────
     scene("signals", "Per-message structure",
           """The signals view gives one row per message with its rate, payload
-             entropy and a suspected type. On a J1939 bus the identifiers carry
-             a parameter group number and a source address, so the shape of the
+             entropy and a suspected type. NMEA 2000 identifiers carry a
+             parameter group number and a source address, so the shape of the
              traffic is already meaningful before a single signal is
              defined.""")
     tab("SIGNALS")
@@ -215,20 +216,25 @@ def main() -> int:
 
     # 5 ──────────────────────────────────────────────────────────────────────
     scene("dbc", "A signal on a real twenty-nine bit message",
-          """A signal defined on the busiest real message decodes real frames
+          """Wind speed, defined on the wind message, decodes real frames
              through cantools, with the bit grid showing exactly which bits it
              claims. Because the identifier is twenty-nine bit, the exported
              file has to set the extended flag in its frame identifier.
              Exporting this capture is what found a genuine bug: the openpilot
              writer was emitting the bare number, which cantools refuses. Every
              writer is now checked against an extended identifier.""")
-    busiest = df["ID"].value_counts().index[0]
+    # PGN 130306, wind data: bytes one and two, hundredths of a metre per
+    # second. It decodes to 0.72 to 0.87 m/s on this log, which a moored boat
+    # on a calm lake should read.
+    wind_id = "9FD0223"
+    if wind_id not in set(df["ID"]):
+        raise SystemExit(f"{wind_id} is not in canedge_c.MF4")
     sig_def = {
-        "message_id": busiest, "message_name": f"PGN_{busiest}",
-        "signal_name": "ENGINE_SPEED", "start_bit": 24, "length": 16,
+        "message_id": wind_id, "message_name": "WIND_DATA",
+        "signal_name": "WIND_SPEED", "start_bit": 8, "length": 16,
         "byte_order": "little", "value_type": "unsigned",
-        "scale": 0.125, "offset": 0.0, "min_val": 0, "max_val": 8031.875,
-        "unit": "rpm", "description": "drafted against a real J1939 message"}
+        "scale": 0.01, "offset": 0.0, "min_val": 0.0, "max_val": 100.0,
+        "unit": "m/s", "description": "NMEA 2000 PGN 130306 wind speed"}
     state.add_dbc_signal(sig_def)
     pump(0.4)
     tab("DBC")
@@ -236,12 +242,14 @@ def main() -> int:
 
     scene("plot", "Confirming it against the frames",
           """Plotted against time, the decoded signal is what confirms or
-             refutes the definition. A physical quantity moves smoothly; a
-             sawtooth means the byte order is wrong. This is the step that
-             turns a candidate into a signal.""")
+             refutes the definition. This one stays between nought point seven
+             two and nought point eight seven metres per second, light air, and
+             moves like a physical quantity. A sawtooth would mean the byte
+             order is wrong. This is the step that turns a candidate into a
+             signal.""")
     tab("PLOT")
-    window.plot_tab._add_signal(f"{busiest}:dbc:ENGINE_SPEED", "dbc", busiest, sig_def)
-    window.plot_tab._add_signal(f"{busiest}:B3", "byte", busiest, "B3")
+    window.plot_tab._add_signal(f"{wind_id}:dbc:WIND_SPEED", "dbc", wind_id, sig_def)
+    window.plot_tab._add_signal(f"{wind_id}:B1", "byte", wind_id, "B1")
     pump(1.0)
     shot(4, 0.4)
 
@@ -271,8 +279,8 @@ def main() -> int:
     # 8 ──────────────────────────────────────────────────────────────────────
     scene("j1939", "A hundred and forty five thousand frames",
           """The largest of the real logs: one hundred and forty five thousand
-             frames, one hundred and forty two identifiers, extended from end to
-             end. It loads, it parses, and every arbitration identifier above
+             frames, one hundred and forty two identifiers, and this one really
+             is J1939, extended from end to end. It loads, it parses, and every arbitration identifier above
              seven hundred and ninety one is correctly reported as extended
              rather than quietly truncated.""")
     load("canedge_big.MF4")
@@ -284,10 +292,10 @@ def main() -> int:
           """Through all of this the transmit gate stayed shut. No bus was
              opened, nothing was sent, and none of the twenty five tools the
              assistant interface exposes is able to transmit at all. Ninety
-             checks over real data, fifty four of them new, and four hundred and
-             forty eight unit tests. Two real bugs found and fixed: the
-             openpilot writer on extended identifiers, and the sniffer ageing a
-             loaded log against wall clock time.""")
+             checks over real data and five hundred and forty unit tests.
+             Three real bugs found and fixed: the openpilot writer on extended
+             identifiers, the sniffer ageing a loaded log against wall clock
+             time, and the decoder reading this marine bus as J1939.""")
     tab("INJECTION")
     shot(3, 0.4)
 

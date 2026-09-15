@@ -49,6 +49,7 @@ def main() -> int:
     srt = OUT_DIR / f"{SLUG}.srt"
     cues = demo.build_cues(scenes)
     demo.write_srt(cues, srt)
+    demo.write_vtt(cues, srt.with_suffix(".vtt"))
     demo.write_ass(cues, BUILD / f"subs-{SLUG}.ass")
     demo.build_video(scenes, video, BUILD / f"subs-{SLUG}.ass")
 

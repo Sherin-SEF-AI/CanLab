@@ -252,3 +252,24 @@ def test_reduce_motion_is_remembered(window, qcore):
     window._act_reduce_motion.setChecked(False)
     qcore.processEvents()
     assert Motion.reduce is False
+
+
+def test_the_id_list_shows_whole_identifiers(window, qcore):
+    """The ID column was a fixed 70 px, so under the stylesheet a 29-bit ID
+    rendered as "15FD0..." in the one panel whose job is listing IDs."""
+    import pandas as pd
+
+    from canlab.core.state import get_state
+    rows = [{"Timestamp": k * 0.1, "ID": cid, "Bus": 0, "DLC": 8,
+             "Extended": True, **{f"B{b}": k % 256 for b in range(8)}}
+            for cid in ("15FD0723", "9F11223") for k in range(40)]
+    get_state().load_frames(pd.DataFrame(rows), "wide ids")
+    for _ in range(10):
+        qcore.processEvents()
+    panel = window.id_panel
+    panel._refresh_ids()
+    qcore.processEvents()
+    tree = panel.id_tree
+    for column in range(tree.columnCount()):
+        assert tree.columnWidth(column) >= tree.sizeHintForColumn(column), \
+            f"column {column} is narrower than what it holds"

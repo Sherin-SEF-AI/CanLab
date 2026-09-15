@@ -19,7 +19,7 @@ class IDPanel(QWidget):
         # readable.
         self.setMinimumWidth(150)
         self.setMaximumWidth(420)
-        self.resize(220, self.height())
+        self.resize(250, self.height())
         self._state = get_state()
         self._build_ui()
         self._connect_signals()
@@ -55,12 +55,12 @@ class IDPanel(QWidget):
         lbl_id.setObjectName("label_dim")
         lbl_id.setFont(mono_font(8))
         id_lay.addWidget(lbl_id)
+        self._id_items: dict = {}
+        self._widest: tuple = ()
         self.id_tree = QTreeWidget()
         self.id_tree.setHeaderLabels(["ID", "Hz", "Cnt"])
-        self.id_tree.setColumnWidth(0, 70)
-        self.id_tree.setColumnWidth(1, 50)
-        self.id_tree.setColumnWidth(2, 50)
         self.id_tree.setFont(mono_font())
+        self._size_columns()
         self.id_tree.setRootIsDecorated(True)
         self.id_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.id_tree.customContextMenuRequested.connect(self._show_context_menu)
@@ -105,6 +105,15 @@ class IDPanel(QWidget):
             item.setForeground(0, QBrush(QColor(
                 COLORS["green"] if freq > 50 else
                 COLORS["text"] if freq >= 1 else COLORS["dim"])))
+        # Re-measure only when something could have got wider: a new set of
+        # IDs, or a count or rate gaining a digit. Measuring every refresh
+        # would walk every row twice a second during live capture.
+        widest = (signature,
+                  max((len(f"{st.frequency:.1f}") for st in stats.values()), default=0),
+                  max((len(str(st.count)) for st in stats.values()), default=0))
+        if widest != self._widest:
+            self._widest = widest
+            self._size_columns()
 
     def _rebuild_tree(self, stats: dict):
         self.id_tree.clear()
@@ -128,6 +137,24 @@ class IDPanel(QWidget):
                 bus_item.addChild(child)
                 self._id_items[can_id] = child
             bus_item.setExpanded(True)
+
+    def _size_columns(self) -> None:
+        """Give each column the width its contents actually need.
+
+        The ID column was a fixed 70 px. IDs sit one indentation level under
+        their bus row, so under the application's stylesheet a 29-bit ID came
+        out as "15FD0…": the panel whose whole job is listing identifiers could
+        not show one. Computing a width from font metrics missed the style's
+        cell padding, so Qt measures the rendered rows instead.
+        """
+        header = self.id_tree.header()
+        for column in range(self.id_tree.columnCount()):
+            self.id_tree.resizeColumnToContents(column)
+            header_text = self.id_tree.headerItem().text(column)
+            floor = self.id_tree.fontMetrics().horizontalAdvance(header_text) + 24
+            if self.id_tree.columnWidth(column) < floor:
+                self.id_tree.setColumnWidth(column, floor)
+        header.setStretchLastSection(False)
 
     def _on_item_clicked(self, item: QTreeWidgetItem, col: int):
         can_id = item.data(0, Qt.ItemDataRole.UserRole)

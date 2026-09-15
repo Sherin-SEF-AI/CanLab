@@ -1,139 +1,109 @@
 WEBVTT
 
-1
 00:00:00.000 --> 00:00:02.257
 TIMELINE is for questions about when.
 
-2
 00:00:02.257 --> 00:00:06.771
 Several signals are stacked on one scrubbable axis with a
 shared playhead,
 
-3
 00:00:06.771 --> 00:00:11.895
 so you can line up the moment a flag flips against the moment
 a value starts moving.
 
-4
 00:00:11.895 --> 00:00:16.836
 It also syncs to a video of the dashboard or the road, with an
 adjustable offset,
 
-5
 00:00:16.836 --> 00:00:20.496
 so you can match what the bus did to what the car was doing.
 
-6
 00:00:20.496 --> 00:00:25.150
 Once the definitions are right, CODE GEN turns them into a
 working program.
 
-7
 00:00:25.150 --> 00:00:28.253
 Pick the signals, the interface and the direction,
 
-8
 00:00:28.253 --> 00:00:34.024
 and it writes Python that opens the bus and decodes those
 signals, or encodes and sends them.
 
-9
 00:00:34.024 --> 00:00:39.857
 The generated encoder goes through cantools and applies the
 counter and checksum convention of
 
-10
 00:00:39.857 --> 00:00:45.504
 whichever vehicle profile you have selected, so the frames it
 produces are properly formed.
 
-11
 00:00:45.504 --> 00:00:49.704
 Your work leaves in whatever format the next tool needs.
 
-12
 00:00:49.704 --> 00:00:53.530
 A standard DBC that cantools and Vector tools read.
 
-13
 00:00:53.530 --> 00:00:58.930
 An openpilot DBC with the comma dot ai checksum and counter
 annotations.
 
-14
 00:00:58.930 --> 00:01:03.956
 Vector CANdb++ with the cycle times measured from your own
 capture.
 
-15
 00:01:03.956 --> 00:01:06.281
 AUTOSAR ARXML four point three.
 
-16
 00:01:06.281 --> 00:01:12.431
 And a Wireshark Lua dissector, so your signals appear by name
 in a packet capture.
 
-17
 00:01:12.431 --> 00:01:19.407
 Each of these is verified in the test suite by loading it back
 with the tool that has to read
 
-18
 00:01:19.407 --> 00:01:19.632
 it.
 
-19
 00:01:19.632 --> 00:01:22.366
 DIAGNOSTICS is the request side.
 
-20
 00:01:22.366 --> 00:01:23.647
 UDS, ISO 14229:
 
-21
 00:01:23.647 --> 00:01:31.848
 read diagnostic trouble codes, read ECU identification, and
 scan which services an ECU supports.
 
-22
 00:01:31.848 --> 00:01:39.024
 That scan is read-only by default, because probing a service
 like ECU Reset or Clear
 
-23
 00:01:39.024 --> 00:01:43.979
 Diagnostics on a live bus does exactly what the name says.
 
-24
 00:01:43.979 --> 00:01:51.069
 There is OBD-II mode one with automatic PID discovery, J1939,
 a bus health monitor,
 
-25
 00:01:51.069 --> 00:01:56.280
 XCP for reading ECU memory, and DoIP for diagnostics over IP.
 
-26
 00:01:56.280 --> 00:02:02.425
 Security access, service 0x27, is the seed and key exchange
 that unlocks a protected session.
 
-27
 00:02:02.425 --> 00:02:08.702
 CanLab requests a seed and tries the common algorithms, or
 your own key function from a script.
 
-28
 00:02:08.702 --> 00:02:12.270
 Brute force is available for short keys, rate limited,
 
-29
 00:02:12.270 --> 00:02:17.159
 and it stops the moment the ECU reports that the attempt limit
 is reached,
 
-30
 00:02:17.159 --> 00:02:23.040
 because tripping that counter can lock a module until it is
 power cycled, or permanently.

@@ -96,7 +96,7 @@ produced here:
 |---|---|---|---|---|
 | `canedge_a.MF4` | 2,010 | 2 | 299 s | slow OBD/GPS log |
 | `canedge_b.MF4` | 5,588 | 12 | 64 s | two channels |
-| `canedge_c.MF4` | 9,600 | 50 | 60 s | J1939, every frame 29-bit |
+| `canedge_c.MF4` | 9,600 | 50 | 60 s | NMEA 2000 (marine), every frame 29-bit |
 | `canedge_big.MF4` | 145,534 | 142 | 196 s | J1939, every frame 29-bit |
 | `canedge_nissan.MF4` | 154,896 | 16 | 1,369 s | 23 minutes, two channels |
 
@@ -114,7 +114,7 @@ remote frames and a comma-decimal locale, and a multi-bus ASC comes from
 python tests/real_data/acceptance_new_sources.py <data-dir>
 ```
 
-Then the real J1939 log goes through every writer the application has and is
+Then the real marine NMEA 2000 log goes through every writer the application has and is
 read back by every parser, so all five formats have to agree about the same
 traffic with 29-bit IDs. Nothing transmits: no bus is opened at all.
 

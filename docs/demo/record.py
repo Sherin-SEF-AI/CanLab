@@ -33,7 +33,25 @@ WIDTH, HEIGHT = 1920, 1080
 for _name in ("information", "warning", "critical", "question", "about"):
     setattr(QMessageBox, _name, staticmethod(lambda *a, **k: None))
 
+# Isolated settings: a recording must not read the user's saved panel widths
+# or window state, and must not write its own back over them.
+import tempfile                                          # noqa: E402
+
+from PyQt6.QtCore import QSettings                       # noqa: E402
+
+_cfg = tempfile.mkdtemp(prefix="canlab-demo-")
+for _fmt in (QSettings.Format.NativeFormat, QSettings.Format.IniFormat):
+    QSettings.setPath(_fmt, QSettings.Scope.UserScope, _cfg)
+
 app = QApplication(sys.argv)
+
+# The theme the application itself applies at startup (canlab/main.py). This
+# recorder used to skip it, so the published walkthrough showed Qt's default
+# fonts and unstyled controls rather than what a user actually sees.
+from canlab.theme import QSS, mono_font                  # noqa: E402
+
+app.setStyleSheet(QSS)
+app.setFont(mono_font())
 
 from canlab.core import safety                          # noqa: E402
 from canlab.core.log_parser import parse_log_file       # noqa: E402
@@ -294,8 +312,8 @@ def record() -> None:
         message from a one-hertz status report. It correlates bytes between
         different IDs with a lag sweep, which is how you find the same physical
         quantity reported by two ECUs. It diffs two captures to show what
-        changed when you pressed a button. And it decodes J1939 parameter group
-        numbers for heavy vehicles.
+        changed when you pressed a button. And it decodes parameter group
+        numbers, both J1939 for heavy vehicles and NMEA 2000 for boats.
     """)
     tab("INTELLIGENCE")
     window.intelligence_tab._compute_periodicity()
