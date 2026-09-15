@@ -23,6 +23,8 @@ DoIP), and, for isolated bench use only, can inject, replay, fuzz and bridge.
 > dependencies, and it has not been validated across a wide range of real
 > vehicles. Read [Limitations](#limitations) before relying on a result.
 
+**Watch:** [the guided tour on YouTube](https://www.youtube.com/watch?v=nbDBaClN8T8) (6 min)
+
 **Contents:** [Safety](#safety) · [Install](#install-and-run) · [Demo](#demo) ·
 [Interface](#the-interface) · [Workflow](#a-typical-session) ·
 [Tabs](#what-it-does-16-tabs) ·
@@ -105,13 +107,20 @@ seconds, from 1 Hz to 100 Hz) so every feature can be tried without hardware.
 
 ## Demo
 
+[![Watch the CanLab guided tour on YouTube](docs/assets/tour-youtube.jpg)](https://www.youtube.com/watch?v=nbDBaClN8T8)
+
+**[Watch the guided tour on YouTube](https://www.youtube.com/watch?v=nbDBaClN8T8)** (6:06).
+GitHub does not allow an embedded player in a README,
+so the image above opens the video on YouTube. The
+[documentation site](https://sherin-sef-ai.github.io/CanLab/) plays it in the page.
+
 ![CanLab in use](docs/demo-preview.gif)
 
 Eighteen seconds cut from the guided tour, above.
 
 ### The guided tour
 
-**[canlab-tour.mp4](docs/canlab-tour.mp4?raw=1)** (6:06): one pass through the whole
+The same video as a file: **[canlab-tour.mp4](docs/canlab-tour.mp4?raw=1)** (6:06): one pass through the whole
 tool against two real recordings, 1080p, with a callout caption in the picture
 and the narration as a subtitle track you can switch on. It opens with an
 animated title, marks each section with a chapter card, dissolves between
