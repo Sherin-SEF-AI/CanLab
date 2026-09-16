@@ -453,3 +453,43 @@ def test_trim_dialog_previews_and_returns_the_subset(qcore, capture):
         assert not dlg.buttons.button(QDialogButtonBox.StandardButton.Ok).isEnabled()
     finally:
         dlg.deleteLater()
+
+
+def test_clearing_a_loaded_capture_shows_it_again(qcore):
+    """Clear moved the cursor to the end of the store. On a live bus that is
+    right; on a file it meant the table never came back, because a file
+    produces no new frames. The only escape was to reopen the log."""
+    import pandas as pd
+
+    from canlab.core.state import get_state
+    from canlab.mainwindow import MainWindow
+
+    window = MainWindow()
+    window.show()
+    for i in range(window.tabs.count()):
+        if window.tabs.tabText(i).startswith("SNIFFER"):
+            window.tabs.setCurrentIndex(i)
+            break
+    qcore.processEvents()
+
+    rows = [{"Timestamp": k * 0.01, "ID": f"{0x100 + (k % 4):03X}", "Bus": 0,
+             "DLC": 8, "Extended": False,
+             **{f"B{b}": (k * (b + 1)) % 256 for b in range(8)}}
+            for k in range(400)]
+    get_state().load_frames(pd.DataFrame(rows), "sample")
+    for _ in range(10):
+        qcore.processEvents()
+
+    sniffer = window.sniffer_tab
+    sniffer._tick()
+    qcore.processEvents()
+    assert sniffer.table.rowCount() == 4
+
+    sniffer._clear()
+    sniffer._tick()
+    qcore.processEvents()
+    assert sniffer.table.rowCount() == 4, "a cleared file view never came back"
+
+    window.close()
+    window.deleteLater()
+    qcore.processEvents()
