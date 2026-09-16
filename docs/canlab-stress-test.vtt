@@ -1,0 +1,136 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:03.058
+This is a stress run, not a demonstration.
+
+00:00:03.058 --> 00:00:05.897
+Two real recordings are loaded at once:
+
+00:00:05.897 --> 00:00:10.264
+a hundred and forty five thousand frames from a J1939 truck,
+
+00:00:10.264 --> 00:00:14.996
+and a hundred and fifty five thousand from a two-channel car
+log.
+
+00:00:14.996 --> 00:00:20.165
+Three hundred thousand frames, one hundred and fifty eight
+identifiers,
+
+00:00:20.165 --> 00:00:24.387
+eleven bit and twenty nine bit together on three bus tags.
+
+00:00:24.387 --> 00:00:26.280
+It took 8 seconds to load.
+
+00:00:26.280 --> 00:00:30.257
+The sniffer has to fold all of that into one row per message.
+
+00:00:30.257 --> 00:00:32.083
+It did it in 0 milliseconds.
+
+00:00:32.083 --> 00:00:38.016
+The frames table shows a capped window of a thousand rows
+rather than drawing three hundred
+
+00:00:38.016 --> 00:00:42.384
+thousand, which is what keeps it usable while a capture is
+running.
+
+00:00:42.384 --> 00:00:47.834
+Every identifier in the truck half decodes as a J1939
+parameter group.
+
+00:00:47.834 --> 00:00:55.229
+The same scan on a marine recording reports NMEA 2000 instead,
+from the same identifier layout.
+
+00:00:55.229 --> 00:00:57.020
+Fault codes decode too:
+
+00:00:57.020 --> 00:01:01.224
+this truck reports its lamps and an empty active list.
+
+00:01:01.224 --> 00:01:07.409
+Engine speed is the one value on this bus that can be judged
+without knowing the vehicle.
+
+00:01:07.409 --> 00:01:12.344
+J1939 puts it in bytes three and four of the engine controller
+message,
+
+00:01:12.344 --> 00:01:14.290
+a quarter of an rpm per bit.
+
+00:01:14.290 --> 00:01:19.224
+The preview decodes real frames through that definition as it
+is typed.
+
+00:01:19.224 --> 00:01:25.034
+Plotted over the whole log, it runs between nine hundred and
+thirteen and one thousand seven
+
+00:01:25.034 --> 00:01:26.675
+hundred and sixty two rpm.
+
+00:01:26.675 --> 00:01:30.275
+That is an engine idling and working, which is the point:
+
+00:01:30.275 --> 00:01:34.632
+the number is checkable against the world, not just against
+the code.
+
+00:01:34.632 --> 00:01:40.913
+Across all one hundred and fifty eight messages the detector
+reports just four counter bytes,
+
+00:01:40.913 --> 00:01:42.871
+and that is the right answer.
+
+00:01:42.871 --> 00:01:48.882
+J1939 has no standard rolling counter, unlike the car buses
+these heuristics were written
+
+00:01:48.882 --> 00:01:49.422
+against.
+
+00:01:49.422 --> 00:01:52.934
+Two of the four are on the car's diagnostic replies.
+
+00:01:52.934 --> 00:01:59.282
+One is the truck's transport protocol, whose first byte is a
+sequence number by specification.
+
+00:01:59.282 --> 00:02:03.672
+The detector found that without being told what the protocol
+was.
+
+00:02:03.672 --> 00:02:09.353
+Entropy boundaries over a hundred and forty five thousand
+frames take a second and a bit,
+
+00:02:09.353 --> 00:02:12.162
+and suggest a hundred and three field edges.
+
+00:02:12.162 --> 00:02:15.864
+They are candidates ranked by a match fraction, not proof.
+
+00:02:15.864 --> 00:02:18.680
+Through all of this nothing was transmitted.
+
+00:02:18.680 --> 00:02:22.648
+No bus was opened at any point, the transmit gate stayed shut,
+
+00:02:22.648 --> 00:02:26.616
+and the run asserts both at the end rather than assuming them.
+
+00:02:26.616 --> 00:02:28.707
+Twenty nine checks, all passing.
+
+00:02:28.707 --> 00:02:32.953
+Every figure on this card came out of the run that just
+finished,
+
+00:02:32.953 --> 00:02:37.200
+including the ones that are only fast because the work is
+capped.

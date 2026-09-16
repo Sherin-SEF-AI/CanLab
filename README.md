@@ -8,7 +8,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python)](https://www.python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green?style=flat-square)](https://pypi.org/project/PyQt6/)
-[![Tests](https://img.shields.io/badge/tests-540%20passing-brightgreen?style=flat-square)](#testing)
+[![Tests](https://img.shields.io/badge/tests-542%20passing-brightgreen?style=flat-square)](#testing)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
 Load a capture, work out which bytes carry what, write the signal definitions
@@ -17,7 +17,7 @@ read. It also speaks the diagnostic protocols (UDS, ISO-TP, J1939, OBD-II, XCP,
 DoIP), and, for isolated bench use only, can inject, replay, fuzz and bridge.
 
 > **Status:** beta. Single-author project, actively developed. It runs, and the
-> behaviour described here is covered by an automated suite of 540 tests (see
+> behaviour described here is covered by an automated suite of 542 tests (see
 > [Testing](#testing)). But the analysis methods are heuristics that suggest
 > candidates rather than identify signals, some features need optional
 > dependencies, and it has not been validated across a wide range of real
@@ -161,6 +161,7 @@ They are also attached to the
 | [2. Defining signals and checking them](docs/canlab-demo-part2-signals.mp4?raw=1) | DBC BUILDER and its bit grid, the live decode preview, PLOT, INTELLIGENCE, ML INTEL, DASHBOARD | 2.7 min |
 | [3. Timeline, code generation and exports](docs/canlab-demo-part3-outputs.mp4?raw=1) | TIMELINE, CODE GEN, the five export formats, DIAGNOSTICS including XCP and DoIP, security access | 2.4 min |
 | [4. The transmit gate, injection and live capture](docs/canlab-demo-part4-transmitting.mp4?raw=1) | ARM TX, INJECTION, replay, fuzzing, GATEWAY, OBD-II, the AI engine, live capture | 3.4 min |
+| [Stress run](docs/canlab-stress-test.mp4?raw=1) | 300,430 merged frames from a truck and a car in one capture, every detector, a signal decoded against J1939, and the measured results | 2.6 min |
 | [Real-data validation](docs/canlab-realdata-validation.mp4?raw=1) | The application run over other people's recordings: a marine NMEA 2000 bus, a two-channel car log and a 145,000-frame J1939 log, through every detector, a decoded signal and the transmit gate | 4.9 min |
 
 Subtitles: [tour](docs/canlab-tour.srt),
@@ -583,9 +584,30 @@ the J1939 tables and reported fifty messages with no names, which says "J1939,
 nothing recognised" rather than "not J1939"; it now works the protocol out from
 the identifier. All are fixed and pinned by tests.
 
+A third run pushes the size instead of the variety. It merges the 145,534-frame
+J1939 truck log and the 154,896-frame two-channel car log into one 300,430-frame
+capture carrying 11-bit and 29-bit identifiers on three bus tags, then times
+every stage against a budget: 29 checks, all passing.
+
+| | |
+|---|---|
+| Parsing | 200,912 frames/s |
+| Merged capture into the running window | 8.1 s, 691 MB resident |
+| Frame table refresh, sniffer fold | 65 ms, 128 ms |
+| Replay through the store, as if live | 22,476 frames/s, worst redraw 142 ms |
+| 145,534 frames out and back through five formats | every payload byte equal |
+| Engine speed, decoded two ways | 913 to 1762 rpm over 19,584 frames |
+
+The engine speed matters more than the timings: J1939 puts it in a standard
+message, so a plausible diesel is external evidence rather than the code
+agreeing with itself. The run found a real defect too. The PGN scan crashed on
+any log containing an active fault code, because those decode to lamps and a
+list rather than to a value and a unit, and this truck sends 196 of them.
+
 ```bash
 for p in 1 2 3; do python tests/real_data/acceptance_phase$p.py <data-dir>; done
 python tests/real_data/acceptance_new_sources.py <data-dir>
+python tests/real_data/acceptance_stress.py <data-dir>
 ```
 
 Details and provenance: [`tests/real_data/README.md`](tests/real_data/README.md).
@@ -599,7 +621,7 @@ A recording of the run is
 
 ```bash
 pip install -e ".[dev]"
-QT_QPA_PLATFORM=offscreen python -m pytest -q     # 540 passed
+QT_QPA_PLATFORM=offscreen python -m pytest -q     # 542 passed
 ruff check canlab tests
 ```
 

@@ -145,3 +145,33 @@ def test_a_scan_reports_the_protocol_per_message():
     assert hits["9F11223"]["protocol"] == "NMEA 2000"
     assert hits["9FD0223"]["pgn_name"] == "Wind Data"
     assert hits["0CF00400"]["protocol"] == "J1939"
+
+
+# ── the scan's one-line preview ──────────────────────────────────────────────
+
+def test_fault_codes_do_not_break_the_scan():
+    """DM1 decodes to lamps and a list of codes, not to value-and-unit pairs.
+
+    Unpacking it as a pair raised, so scanning any J1939 log containing a
+    fault-code message took the whole PGN table down with it. A real 145,534
+    frame truck recording has 196 of them.
+    """
+    pytest.importorskip("PyQt6")
+    from canlab.tabs.intelligence_tab import _decoded_preview
+
+    quiet = _decoded_preview({"lamps": {"malfunction": 0, "protect": 3}, "dtcs": []})
+    assert "no active codes" in quiet
+
+    active = _decoded_preview({"lamps": {"red_stop": 1},
+                               "dtcs": [{"spn": 100, "fmi": 1},
+                                        {"spn": 110, "fmi": 3}]})
+    assert "2 active codes" in active and "SPN 100" in active
+
+
+def test_the_preview_still_reads_ordinary_pgns():
+    pytest.importorskip("PyQt6")
+    from canlab.tabs.intelligence_tab import _decoded_preview
+
+    assert _decoded_preview({}) == ""
+    line = _decoded_preview({"Engine Speed": (1704.125, "rpm")})
+    assert line.startswith("Engine Speed=1704.12") and line.endswith("rpm")
