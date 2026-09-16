@@ -8,7 +8,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python)](https://www.python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green?style=flat-square)](https://pypi.org/project/PyQt6/)
-[![Tests](https://img.shields.io/badge/tests-568%20passing-brightgreen?style=flat-square)](#testing)
+[![Tests](https://img.shields.io/badge/tests-577%20passing-brightgreen?style=flat-square)](#testing)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
 Load a capture, work out which bytes carry what, write the signal definitions
@@ -17,7 +17,7 @@ read. It also speaks the diagnostic protocols (UDS, ISO-TP, J1939, OBD-II, XCP,
 DoIP), and, for isolated bench use only, can inject, replay, fuzz and bridge.
 
 > **Status:** beta. Single-author project, actively developed. It runs, and the
-> behaviour described here is covered by an automated suite of 568 tests (see
+> behaviour described here is covered by an automated suite of 577 tests (see
 > [Testing](#testing)). But the analysis methods are heuristics that suggest
 > candidates rather than identify signals, some features need optional
 > dependencies, and it has not been validated across a wide range of real
@@ -488,6 +488,16 @@ The tools, the HTTP transport, the bridge and the in-window server are tested
 with the official MCP client (`tests/test_mcp_server.py`,
 `tests/test_mcp_in_app.py`).
 
+### Knowing what is connected
+
+One button at the right of the toolbar summarises every connection: the bus,
+the MCP server and the REST API. It is dim when nothing is up and green with
+the names of what is. Clicking it opens a panel with a line for each, saying
+whether it is connected and giving the detail that matters, the adapter and
+bitrate or the URL to paste into an assistant, which can be copied from there.
+The panel also says when the MCP server is reachable from the network rather
+than only from this machine.
+
 ### Live capture permissions
 
 On Linux a SocketCAN device's bitrate belongs to the kernel, so until someone
@@ -646,7 +656,7 @@ A recording of the run is
 
 ```bash
 pip install -e ".[dev]"
-QT_QPA_PLATFORM=offscreen python -m pytest -q     # 568 passed
+QT_QPA_PLATFORM=offscreen python -m pytest -q     # 577 passed
 ruff check canlab tests
 ```
 

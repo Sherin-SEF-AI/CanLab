@@ -217,6 +217,10 @@ class MainWindow(QMainWindow):
         tb.addAction(self._act_arm)
         self._act_rest = act("REST", self._toggle_rest_api, "")
         self._act_mcp = act("MCP", self._toggle_mcp, "")
+        from canlab.ui.status_button import ConnectionStatus
+        self.status_button = ConnectionStatus(self)
+        tb.addWidget(self.status_button)
+
         _, self._plugins_menu = menu_button("Plugins", "Plugins found in ~/.canlab/plugins", [])
         self._plugins_menu.aboutToShow.connect(self._fill_plugins_menu)
 
@@ -245,6 +249,36 @@ class MainWindow(QMainWindow):
             f"QToolButton {{ color:{color}; background:rgba({rgb},30);"
             f" border:1px solid rgba({rgb},120); border-radius:3px; padding:2px 6px; }}"
             f"QToolButton:hover {{ background:rgba({rgb},55); color:{color}; }}")
+
+    def _update_status_button(self) -> None:
+        """Keep the one-glance summary honest about every connection."""
+        button = getattr(self, "status_button", None)
+        if button is None:
+            return
+        connected = bool(self._state.is_connected)
+        channel = self._can_settings.get("channel", "")
+        bitrate = self._can_settings.get("bitrate", 0)
+        name = self._can_settings.get("name") or channel
+        button.set_service(
+            "bus", connected,
+            f"{name} at {int(bitrate):,} bit/s" if connected else "")
+
+        service = self._mcp_service
+        if service is not None:
+            url = getattr(service, "url", "")
+            remote = getattr(service, "allow_remote", False)
+            detail = url + ("  (reachable from the network)" if remote else "")
+            button.set_service("mcp", True, detail, copyable=url)
+        else:
+            button.set_service("mcp", False, "")
+
+        rest = self._rest_api_server
+        if rest is not None:
+            port = getattr(rest, "port", None) or self._state.rest_api_port
+            url = f"http://127.0.0.1:{port}" if port else ""
+            button.set_service("rest", True, url, copyable=url)
+        else:
+            button.set_service("rest", False, "")
 
     def _update_connect_action(self) -> None:
         on = bool(self._state.is_connected)
@@ -1237,6 +1271,7 @@ class MainWindow(QMainWindow):
             )
             self._rest_api_server.start()
             self._state.rest_api_running = True
+            self._update_status_button()
             self._set_pill(self._act_rest, True, f"REST :{self._state.rest_api_port}",
                            COLORS["green"],
                            f"REST API running on 127.0.0.1:{self._state.rest_api_port}. "
@@ -1323,6 +1358,7 @@ class MainWindow(QMainWindow):
                                      f"{cfg['port']}:\n{e}")
             return
         self._mcp_service = svc
+        self._update_status_button()
         self._set_pill(self._act_mcp, True, f"MCP :{cfg['port']}", COLORS["green"],
                        f"MCP server running at {svc.url}. Settings > MCP shows what to "
                        "paste into Claude Code, Claude Desktop, Codex or ChatGPT.")
@@ -1334,6 +1370,7 @@ class MainWindow(QMainWindow):
         if self._mcp_service is not None:
             self._mcp_service.stop()
             self._mcp_service = None
+        self._update_status_button()
         self._set_pill(self._act_mcp, False, "MCP", COLORS["green"],
                        "MCP server is stopped. Click to let an assistant "
                        "(Claude, ChatGPT, Codex) work on this capture.")
@@ -1345,6 +1382,7 @@ class MainWindow(QMainWindow):
         if self._rest_api_server:
             self._rest_api_server.stop()
             self._rest_api_server = None
+        self._update_status_button()
         self._state.rest_api_running = False
         self._set_pill(self._act_rest, False, "REST", COLORS["green"],
                        "REST API server is stopped. Click to start it.")
@@ -1517,6 +1555,7 @@ class MainWindow(QMainWindow):
         # motion stands down for the duration.
         Motion.set_capturing(connected)
         self._can_dot.set_active(connected)
+        self._update_status_button()
         if connected:
             ch = self._can_settings["channel"]
             br = self._can_settings["bitrate"]
@@ -1541,6 +1580,11 @@ class MainWindow(QMainWindow):
         rate = frames_per_second(self._live_frame_count, elapsed)
         self._live_frame_count = 0
         self.lbl_frame_rate.setText(f"{rate:,.0f} fps")
+        # Anything that is not the status bar reads it from here. AppState
+        # declared frame_rate and nothing ever assigned it, so the REST and MCP
+        # answer to "is this bus alive?" was structurally always zero, however
+        # busy the bus was.
+        self._state.frame_rate = rate
 
         # Frames the receive thread had to throw away because the GUI never
         # came back for them. Silence here would look like a quiet bus.

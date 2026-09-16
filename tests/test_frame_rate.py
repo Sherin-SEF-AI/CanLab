@@ -103,3 +103,37 @@ def test_the_rate_survives_a_tick_with_no_time_between():
     from canlab.mainwindow import frames_per_second
 
     assert frames_per_second(10, 0.0) > 0        # no division by zero
+
+
+def test_the_rate_reaches_everything_that_reports_it(qcore):
+    """AppState declared frame_rate and nothing ever assigned it, so the REST
+    and MCP answer to "is this bus alive?" was structurally always zero,
+    however busy the bus was. Found by measuring a real car through MCP: the
+    status bar said 288 fps while every assistant was told 0."""
+    import time as _time
+
+    from canlab.core.state import get_state
+    from canlab.mainwindow import MainWindow
+
+    window = MainWindow()
+    state = get_state()
+    state.frame_rate = 0.0
+    window._live_frame_count = 600
+    window._rate_marked_at = _time.monotonic() - 2.0
+    window._update_frame_rate()
+
+    assert state.frame_rate == pytest.approx(300, rel=0.05)
+    assert "300" in window.lbl_frame_rate.text()
+    window.close()
+    window.deleteLater()
+    qcore.processEvents()
+
+
+def test_a_busy_adapter_is_explained_rather_than_left_as_an_errno():
+    """Two tools, one adapter: libusb answers with a bare errno and no hint of
+    who is holding the device."""
+    from canlab.core.adapters import _HINTS
+
+    for message in ("Resource busy", "LIBUSB_ERROR_BUSY", "Device or resource busy"):
+        hint = next((h for needle, h in _HINTS if needle.lower() in message.lower()), "")
+        assert hint and "already open" in hint
