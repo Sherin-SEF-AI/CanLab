@@ -1,3 +1,4 @@
+import time
 import os
 import can
 import pandas as pd
@@ -46,6 +47,17 @@ import logging
 log = logging.getLogger(__name__)
 
 
+def frames_per_second(count: int, elapsed: float) -> float:
+    """Frames a second from a count and the time it actually took.
+
+    Separate from the window so it can be checked without building one: the
+    rate used to be the count since the last timer tick presented as if a
+    second had passed, and the timer runs on the GUI thread, so a slow redraw
+    made the number drift with the interface rather than the traffic.
+    """
+    return count / max(1e-3, elapsed)
+
+
 class MainWindow(QMainWindow):
     # Emitted from a bus receive thread; queued to the GUI thread by Qt.
     live_error = pyqtSignal(str)
@@ -58,10 +70,14 @@ class MainWindow(QMainWindow):
         self._state        = get_state()
         self._hubs: list   = []        # one BusHub per connected bus
         self._can_settings = _saved_can_settings()
+        #: Backends the user has told us not to warn about again this session.
+        self._silence_warned: dict = {}
         self._api_key      = load_api_key()
         self._frame_rate_timer = QTimer()
         self._drain_timer      = QTimer()
         self._live_frame_count = 0
+        self._rate_marked_at   = time.monotonic()
+        self._dropped_seen     = 0
         self._rest_api_server  = None
         self._mcp_service      = None
         self._plugins          = []
@@ -849,6 +865,13 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.warning(self, "Panda Error", str(e))
 
+        if injected_bus is None:
+            from canlab.core.adapters import Adapter
+            from canlab.ui.can_setup import confirm_not_silent
+            if not confirm_not_silent(self, Adapter.from_dict(self._can_settings),
+                                      remember=self._silence_warned):
+                return
+
         if injected_bus is None and iface == "socketcan":
             from canlab.ui.can_setup import ensure_socketcan_up
             ready, message = ensure_socketcan_up(
@@ -1504,10 +1527,30 @@ class MainWindow(QMainWindow):
             set_status(self.lbl_connection, "dim")
 
     def _update_frame_rate(self):
-        fps   = self._live_frame_count
+        """Frames a second, measured, not assumed.
+
+        This used to show the count since the last tick as if a second had
+        passed. The timer is on the GUI thread, so a slow redraw delays it: at
+        a 1.4 s tick the same count is 40% high, and a fast one reads low. On a
+        busy bus that is the difference between a number you can trust and one
+        that moves with the interface rather than with the traffic.
+        """
+        now = time.monotonic()
+        elapsed = max(1e-3, now - self._rate_marked_at)
+        self._rate_marked_at = now
+        rate = frames_per_second(self._live_frame_count, elapsed)
         self._live_frame_count = 0
+        self.lbl_frame_rate.setText(f"{rate:,.0f} fps")
+
+        # Frames the receive thread had to throw away because the GUI never
+        # came back for them. Silence here would look like a quiet bus.
+        dropped = sum(getattr(hub, "dropped", 0) for hub in self._hubs)
+        if dropped != self._dropped_seen:
+            self._dropped_seen = dropped
+            self.statusBar().showMessage(
+                f"{dropped:,} frames dropped: the interface could not keep up", 5000)
+
         total = len(self._state.frames_df)
-        self.lbl_frame_rate.setText(f"{fps} fps")
         if total:
             self.lbl_total_frames.animate_to(total)
 

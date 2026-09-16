@@ -18,9 +18,24 @@ The application itself never runs as root and never sees a password.
 """
 from __future__ import annotations
 
+import os
+
 from PyQt6.QtWidgets import QCheckBox, QMessageBox
 
 from canlab.core import privileged as pv
+
+
+def interactive() -> bool:
+    """Whether there is a person here to answer a dialog.
+
+    Under Qt's offscreen platform there is not: that is the test suite, the
+    demo recorders and any scripted run. A modal dialog there has nobody to
+    dismiss it, and its nested event loop repaints widgets that the caller is
+    in the middle of tearing down, which crashes rather than hangs. These
+    prompts are a desktop safeguard, so they are skipped where there is no
+    desktop.
+    """
+    return os.environ.get("QT_QPA_PLATFORM", "") != "offscreen"
 
 
 def _explain(method: str) -> str:
@@ -61,6 +76,11 @@ def ensure_socketcan_up(parent, device: str, bitrate: int, *,
     either the user declined, or the command failed and the message says how.
     """
     state = pv.interface_state(device)
+    if not interactive():
+        # Nobody to ask: report what is true and let the caller try to open it,
+        # which is what happened before any of this existed.
+        return True, (f"{device} is {'up' if state['up'] else 'down'} "
+                      f"(no prompt: running without a desktop)")
 
     if not state["exists"]:
         others = [d for d in pv.can_devices() if d != device]
@@ -116,6 +136,45 @@ def ensure_socketcan_up(parent, device: str, bitrate: int, *,
                        f"\n\n{state['detail']}")
     note = " in listen-only mode" if state["listen_only"] else ""
     return True, f"{device} is up at {state['bitrate'] or bitrate:,} bit/s{note}"
+
+
+def confirm_not_silent(parent, adapter, *, remember: dict | None = None) -> bool:
+    """Say what opening this adapter does to the bus, before it is opened.
+
+    Test reported this and Connect did not, which is the wrong way round: Test
+    is a deliberate experiment, while Connect is what someone presses with the
+    adapter already wired to a vehicle.
+    """
+    from canlab.core.adapters import _silence
+
+    silent, warning = _silence(adapter)
+    if silent or not warning or not interactive():
+        return True
+    if remember is not None and remember.get(adapter.interface):
+        return True
+
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle("This adapter cannot listen silently")
+    box.setText(warning)
+    box.setInformativeText(
+        "CanLab will not send any frames. What the controller does in hardware "
+        "is not under its control:\n\n"
+        "\u2022 at the right bitrate it acknowledges frames, which is what any "
+        "scan tool or diagnostic dongle also does;\n"
+        "\u2022 at the wrong bitrate it emits error flags until it goes "
+        "bus-off, which can disturb traffic while that lasts.\n\n"
+        "Only connect to a vehicle that is parked and that nobody is about to "
+        "drive.")
+    ask_again = QCheckBox("Do not warn me again for this backend")
+    box.setCheckBox(ask_again)
+    box.setStandardButtons(QMessageBox.StandardButton.Ok
+                           | QMessageBox.StandardButton.Cancel)
+    box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+    accepted = box.exec() == QMessageBox.StandardButton.Ok
+    if accepted and remember is not None and ask_again.isChecked():
+        remember[adapter.interface] = True
+    return accepted
 
 
 def create_virtual_bus(parent, device: str = "vcan0") -> tuple[bool, str]:
