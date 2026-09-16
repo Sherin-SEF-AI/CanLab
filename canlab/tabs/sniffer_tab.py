@@ -135,10 +135,19 @@ class SnifferTab(QWidget):
         self.btn_pause.setText("Resume" if paused else "Pause")
 
     def _clear(self):
+        """Start the view again.
+
+        On a live bus that means "from now on", so the cursor jumps to the end
+        and the next frames off the wire fill it. On a loaded capture there is
+        no "from now on": the file has already been read, so jumping to the end
+        left the table empty for good and the only way back was to reopen the
+        log. Clearing a static capture therefore rewinds to the beginning
+        instead, which is what the button appears to promise.
+        """
         self._sniffer.clear()
         self._rows.clear()
         self.table.setRowCount(0)
-        self._cursor = len(self._state.store)
+        self._cursor = len(self._state.store) if self._state.is_connected else 0
 
     def _on_bits_toggled(self, on: bool):
         self._bits_view = on

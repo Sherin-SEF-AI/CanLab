@@ -1163,7 +1163,7 @@ def register(app):
 
 {h2("Testing")}
 <p>The suite runs headless:</p>
-<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 577 passed</code></pre>
+<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 578 passed</code></pre>
 <p>Tests that need an optional dependency skip cleanly when it is absent: the
    MDF4 importer without <code>asammdf</code>, the transport tests without the
    MCP SDK, the Lua dissector without a Lua runtime.</p>
