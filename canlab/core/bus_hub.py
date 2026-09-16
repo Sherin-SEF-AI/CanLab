@@ -124,6 +124,7 @@ class BusHub:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.rx_count = 0
+        self.dropped = 0          # frames the GUI never came back for
         self.error_frames = 0
 
     # -- lifecycle -------------------------------------------------------
@@ -235,6 +236,11 @@ class BusHub:
         # building a 14-key dict per frame costs more than storing it.
         payload = data[:64]
         with self._lock:
+            # A bounded deque throws the oldest frame away when it is full.
+            # Counting that is the difference between a visibly overloaded
+            # interface and one that looks like a quiet bus.
+            if len(self._pending) == self._pending.maxlen:
+                self.dropped += 1
             self._pending.append((ts, arb,
                                   bool(getattr(msg, "is_extended_id", False)),
                                   self.bus_index, len(payload), payload))

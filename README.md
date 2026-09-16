@@ -8,7 +8,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python)](https://www.python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green?style=flat-square)](https://pypi.org/project/PyQt6/)
-[![Tests](https://img.shields.io/badge/tests-561%20passing-brightgreen?style=flat-square)](#testing)
+[![Tests](https://img.shields.io/badge/tests-568%20passing-brightgreen?style=flat-square)](#testing)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
 Load a capture, work out which bytes carry what, write the signal definitions
@@ -17,7 +17,7 @@ read. It also speaks the diagnostic protocols (UDS, ISO-TP, J1939, OBD-II, XCP,
 DoIP), and, for isolated bench use only, can inject, replay, fuzz and bridge.
 
 > **Status:** beta. Single-author project, actively developed. It runs, and the
-> behaviour described here is covered by an automated suite of 561 tests (see
+> behaviour described here is covered by an automated suite of 568 tests (see
 > [Testing](#testing)). But the analysis methods are heuristics that suggest
 > candidates rather than identify signals, some features need optional
 > dependencies, and it has not been validated across a wide range of real
@@ -646,7 +646,7 @@ A recording of the run is
 
 ```bash
 pip install -e ".[dev]"
-QT_QPA_PLATFORM=offscreen python -m pytest -q     # 561 passed
+QT_QPA_PLATFORM=offscreen python -m pytest -q     # 568 passed
 ruff check canlab tests
 ```
 

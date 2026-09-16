@@ -155,3 +155,31 @@ def test_installing_the_rule_reloads_udev():
     assert any(pv.UDEV_PATH in c for c in joined)
     assert any("udevadm control --reload-rules" in c for c in joined)
     assert any("udevadm trigger" in c for c in joined)
+
+
+# ── the prompts belong on a desktop, and nowhere else ────────────────────────
+
+def test_prompts_are_skipped_without_a_desktop(monkeypatch):
+    """Under the offscreen platform there is nobody to dismiss a modal dialog,
+    and its nested event loop repaints widgets the caller is tearing down.
+    That crashed the suite rather than hanging it."""
+    pytest.importorskip("PyQt6")
+    from canlab.ui import can_setup
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    assert can_setup.interactive() is False
+    monkeypatch.setenv("QT_QPA_PLATFORM", "xcb")
+    assert can_setup.interactive() is True
+
+
+def test_a_headless_connect_is_not_blocked_by_a_dialog(monkeypatch):
+    pytest.importorskip("PyQt6")
+    from canlab.core.adapters import Adapter
+    from canlab.ui import can_setup
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    noisy = Adapter(name="a", interface="canalystii", channel="0")
+    assert can_setup.confirm_not_silent(None, noisy) is True
+
+    ready, message = can_setup.ensure_socketcan_up(None, "can0", 500_000)
+    assert ready is True and "no prompt" in message

@@ -92,7 +92,12 @@ INTERFACES: dict[str, InterfaceInfo] = {i.key: i for i in [
     InterfaceInfo("serial", "Simple serial protocol (python-can serial backend)", "/dev/ttyUSB0",
                   "serial", requires="pyserial", extra=(("baudrate", "Serial baud", 115200),),
                   notes="Not slcan: this is python-can's own framing over a UART."),
-    InterfaceInfo("canalystii", "CANalyst-II (USB)", "0", "index", requires="canalystii"),
+    InterfaceInfo("canalystii", "CANalyst-II (USB)", "0", "index", requires="canalystii",
+                  notes="No listen-only mode through the open-source driver. Its "
+                        "init packet has a mode field, but the driver's own source "
+                        "records the meaning as unknown and that setting it appears "
+                        "to crash the device, so CanLab does not set it. Opening "
+                        "this adapter means its controller acknowledges frames."),
     InterfaceInfo("neovi", "Intrepid neoVI / ValueCAN", "1", "index", requires="python-ics"),
     InterfaceInfo("socketcand", "socketcand (a remote SocketCAN over TCP)", "can0", "host",
                   extra=(("host", "Host", "192.168.1.10"), ("port", "Port", 29536))),
