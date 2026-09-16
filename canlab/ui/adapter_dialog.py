@@ -195,8 +195,16 @@ class AdapterDialog(QDialog):
 def format_test_result(result: dict) -> str:
     if result.get("ok"):
         ids = ", ".join(result.get("ids") or []) or "none"
-        return (f"Opened in {result.get('open_ms', 0)} ms ({result.get('info') or 'no info'}). "
+        text = (f"Opened in {result.get('open_ms', 0)} ms "
+                f"({result.get('info') or 'no info'}). "
                 f"{result.get('frames', 0)} frame(s) heard from IDs: {ids}.")
+        # Whether the bus was truly untouched is the part a user attaching to
+        # a vehicle needs, and it is not the same as "we sent nothing".
+        if result.get("silent"):
+            text += "\nListen-only: the controller acknowledged nothing."
+        elif result.get("warning"):
+            text += f"\nNote: {result['warning']}"
+        return text
     text = f"Failed: {result.get('error', '?')}"
     if result.get("hint"):
         text += f"\nHint: {result['hint']}"

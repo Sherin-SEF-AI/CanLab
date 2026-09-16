@@ -237,7 +237,9 @@ class SettingsDialog(QDialog):
         can_lay.addWidget(QLabel(
             "Hardware adapters the application can connect to. The default one is "
             "what Connect CAN opens; the toolbar switches between them. Test opens "
-            "the adapter and listens for a second, it never transmits.",
+            "the adapter and listens for a second. It sends no frames, but a "
+            "CAN controller acknowledges what it receives in hardware unless the "
+            "interface is in listen-only mode, and Test says which it is.",
             font=mono_font(8), wordWrap=True))
         self.adapter_table = QTableWidget(0, 5)
         self.adapter_table.setHorizontalHeaderLabels(["Name", "Backend", "Channel", "Bitrate", "Default"])

@@ -8,7 +8,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python)](https://www.python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green?style=flat-square)](https://pypi.org/project/PyQt6/)
-[![Tests](https://img.shields.io/badge/tests-542%20passing-brightgreen?style=flat-square)](#testing)
+[![Tests](https://img.shields.io/badge/tests-561%20passing-brightgreen?style=flat-square)](#testing)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
 Load a capture, work out which bytes carry what, write the signal definitions
@@ -17,7 +17,7 @@ read. It also speaks the diagnostic protocols (UDS, ISO-TP, J1939, OBD-II, XCP,
 DoIP), and, for isolated bench use only, can inject, replay, fuzz and bridge.
 
 > **Status:** beta. Single-author project, actively developed. It runs, and the
-> behaviour described here is covered by an automated suite of 542 tests (see
+> behaviour described here is covered by an automated suite of 561 tests (see
 > [Testing](#testing)). But the analysis methods are heuristics that suggest
 > candidates rather than identify signals, some features need optional
 > dependencies, and it has not been validated across a wide range of real
@@ -488,6 +488,31 @@ The tools, the HTTP transport, the bridge and the in-window server are tested
 with the official MCP client (`tests/test_mcp_server.py`,
 `tests/test_mcp_in_app.py`).
 
+### Live capture permissions
+
+On Linux a SocketCAN device's bitrate belongs to the kernel, so until someone
+runs `ip link set can0 up type can bitrate 500000` the application cannot open
+it, whatever it does. That command needs root.
+
+Connect now handles this. If the device is down, CanLab shows the exact command
+it wants to run and asks the desktop for the password, through PolicyKit where
+it exists, a graphical askpass helper, or a terminal window. The application
+itself never runs as root and never sees a password. Root is needed once per
+device, for the interface, not for the capture: reading frames from a device
+that is already up needs no privileges.
+
+Two related items sit in the Tools menu. **Create virtual CAN bus (vcan0)**
+makes a kernel-side bus so the application can be tried with no hardware.
+**Allow USB CAN adapters without root** installs a udev rule granting the
+plugdev group access to adapters such as the CANalyst-II, which otherwise open
+only as root.
+
+There is a checkbox for **listen only** when bringing an interface up. It puts
+the controller in the mode where it does not acknowledge frames, which is the
+only way to be certain that attaching to a vehicle changes nothing on its bus.
+Not every controller supports it, and CanLab says which case you are in rather
+than claiming silence it cannot deliver.
+
 ### Hardware CAN adapters
 
 Settings > CAN ADAPTERS keeps a list of named adapters and the toolbar switches
@@ -621,7 +646,7 @@ A recording of the run is
 
 ```bash
 pip install -e ".[dev]"
-QT_QPA_PLATFORM=offscreen python -m pytest -q     # 542 passed
+QT_QPA_PLATFORM=offscreen python -m pytest -q     # 561 passed
 ruff check canlab tests
 ```
 
