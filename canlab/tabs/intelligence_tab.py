@@ -39,6 +39,35 @@ def _frame_bytes(row) -> bytes:
     return bytes(out)
 
 
+def _decoded_preview(decoded: dict) -> str:
+    """One line describing a decoded message, whatever shape it came back in.
+
+    Most PGNs decode to {name: (value, unit)}, but DM1 is active fault codes
+    and comes back as lamps plus a list. Unpacking that as a value and a unit
+    raised, so a J1939 log containing any fault-code message took the whole
+    scan down with it.
+    """
+    if not decoded:
+        return ""
+    if "dtcs" in decoded:
+        codes = decoded.get("dtcs") or []
+        lamps = [name for name, on in (decoded.get("lamps") or {}).items() if on]
+        if not codes:
+            return "no active codes" + (f"; lamps: {', '.join(lamps)}" if lamps else "")
+        first = codes[0]
+        summary = ", ".join(f"SPN {c.get('spn')} FMI {c.get('fmi')}" for c in codes[:2])
+        return (f"{len(codes)} active code{'s' if len(codes) != 1 else ''}: {summary}"
+                if first else f"{len(codes)} active codes")
+    parts = []
+    for name, value in list(decoded.items())[:3]:
+        if isinstance(value, tuple) and len(value) == 2:
+            number, unit = value
+            parts.append(f"{name}={number:g} {unit}".rstrip())
+        else:
+            parts.append(f"{name}={value}")
+    return "  |  ".join(parts)
+
+
 class IntelligenceTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -634,12 +663,8 @@ class IntelligenceTab(QWidget):
                 # a confident wrong answer, so say nothing instead.
                 spn_preview = "fast packet, needs reassembly"
             elif not frames.empty:
-                spns = decode_pgn(h["pgn"], _frame_bytes(frames.iloc[0]))
-                if spns:
-                    spn_preview = "  |  ".join(
-                        f"{name}={v:g} {unit}".rstrip()
-                        for name, (v, unit) in list(spns.items())[:3]
-                    )
+                spn_preview = _decoded_preview(
+                    decode_pgn(h["pgn"], _frame_bytes(frames.iloc[0])))
             r = self.j1939_table.rowCount()
             self.j1939_table.insertRow(r)
             cells = [

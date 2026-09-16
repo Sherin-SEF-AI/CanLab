@@ -1141,6 +1141,18 @@ def register(app):
    comma-decimal locale. One real log is then written out in all five formats
    and read back by every parser, which all have to agree about the same
    traffic.</p>
+<p>A third run pushes the size rather than the variety: the 145,534-frame
+   J1939 truck log and the 154,896-frame two-channel car log are merged into
+   one 300,430-frame capture with 11-bit and 29-bit identifiers on three bus
+   tags, and every stage is timed against a budget. 29 checks, all passing:
+   parsing at 200,912 frames/s, the merged capture into the running window in
+   8.1 s at 691 MB resident, the frame table refreshing in 65 ms, the sniffer
+   folding the capture in 128 ms, and 145,534 frames written out and read back
+   through five formats with every payload byte equal. Engine speed decodes to
+   913 to 1762 rpm over 19,584 frames, which is external evidence rather than
+   the code agreeing with itself. That run also found a real defect: the PGN
+   scan crashed on any log carrying an active fault code, and this truck sends
+   196 of them.</p>
 <p>It found defects the older corpus could not reach. The openpilot DBC
    exporter wrote a bare 29-bit frame id, so every J1939 capture exported a
    file cantools refuses. The sniffer aged a loaded capture against wall-clock
@@ -1151,7 +1163,7 @@ def register(app):
 
 {h2("Testing")}
 <p>The suite runs headless:</p>
-<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 540 passed</code></pre>
+<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 542 passed</code></pre>
 <p>Tests that need an optional dependency skip cleanly when it is absent: the
    MDF4 importer without <code>asammdf</code>, the transport tests without the
    MCP SDK, the Lua dissector without a Lua runtime.</p>
