@@ -238,3 +238,64 @@ def test_main_window_adapter_picker(qcore, monkeypatch):
 class _Dummy:
     def shutdown(self):
         pass
+
+
+# ── what a real machine with a real adapter found ────────────────────────────
+
+def test_the_canalyst_analyser_is_recognised():
+    """Reported from a machine with one plugged in: detection returned nothing.
+
+    04D8:0053 was absent from the table, and python-can's canalystii backend
+    has no detection of its own, so nothing else could have found it.
+    """
+    from canlab.core.adapters import KNOWN_USB
+    label, iface = KNOWN_USB[(0x04D8, 0x0053)]
+    assert iface == "canalystii"
+    assert "CANalyst" in label
+
+
+def test_every_known_usb_backend_can_actually_be_offered(monkeypatch):
+    """The USB loop named four backends explicitly and dropped the rest.
+
+    A table entry for a backend outside that list was unreachable by
+    construction: adding the analyser to KNOWN_USB still detected nothing.
+    """
+    from canlab.core import adapters
+
+    import can
+    monkeypatch.setattr(can, "detect_available_configs", lambda *a, **k: [])
+    monkeypatch.setattr(adapters, "_linux_can_netdevs", lambda: [])
+    monkeypatch.setattr(adapters, "_serial_ports", lambda: [])
+    for (vid, pid), (label, iface) in adapters.KNOWN_USB.items():
+        if iface == "gs_usb":
+            continue          # offered as socketcan when a netdev already exists
+        monkeypatch.setattr(adapters, "_usb_devices",
+                            lambda vid=vid, pid=pid: [(vid, pid, "device")])
+        found = adapters.detect_adapters()
+        assert any(a.interface == iface for a in found), \
+            f"{label} ({iface}) is in the table but never offered"
+
+
+def test_probe_says_whether_the_bus_was_really_untouched():
+    """"Sends no frames" is not "changes nothing": a controller in normal mode
+    acknowledges in hardware, which matters when the other end is a vehicle."""
+    from canlab.core.adapters import Adapter, _silence
+
+    silent, warning = _silence(Adapter(name="v", interface="virtual", channel="vbus0"))
+    assert silent and not warning
+
+    silent, warning = _silence(Adapter(name="a", interface="canalystii", channel="0"))
+    assert not silent and "acknowledges" in warning
+
+
+def test_the_probe_result_carries_the_warning(qcore):
+    from canlab.core.adapters import Adapter, probe_adapter
+    from canlab.ui.adapter_dialog import format_test_result
+
+    result = probe_adapter(Adapter(name="v", interface="virtual", channel="vbus0"),
+                           listen_s=0.05)
+    assert result["ok"] and result["silent"] is True
+    assert "Listen-only" in format_test_result(result)
+
+    noisy = dict(result, silent=False, warning="it acknowledges frames")
+    assert "acknowledges" in format_test_result(noisy)

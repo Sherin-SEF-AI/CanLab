@@ -321,6 +321,8 @@ class MainWindow(QMainWindow):
             ("Detect multiplexed signals…", self._detect_mux),
             ("Calibrate signal from reference CSV…", self._calibrate_ref),
             ("Trim capture…",            self._trim_capture),
+            ("Create virtual CAN bus (vcan0)…", self._create_vcan),
+            ("Allow USB CAN adapters without root…", self._install_udev_rule),
             ("MCP server: start / stop",  self._toggle_mcp),
             ("Connect an assistant over MCP…", self._open_mcp_settings),
         ]:
@@ -803,6 +805,22 @@ class MainWindow(QMainWindow):
 
     # ── CAN live ──────────────────────────────────────────────────────────────
 
+    def _create_vcan(self):
+        """A virtual CAN bus, so the application can be tried with no hardware."""
+        from canlab.ui.can_setup import create_virtual_bus
+        ok, message = create_virtual_bus(self)
+        QMessageBox.information(self, "Virtual CAN bus", message) if ok else \
+            QMessageBox.warning(self, "Virtual CAN bus", message)
+        if ok:
+            self._refresh_adapter_combo()
+
+    def _install_udev_rule(self):
+        """Let USB adapters be opened without root."""
+        from canlab.ui.can_setup import install_udev_rule
+        ok, message = install_udev_rule(self)
+        QMessageBox.information(self, "USB CAN adapters", message) if ok else \
+            QMessageBox.warning(self, "USB CAN adapters", message)
+
     def _connect_can(self):
         iface   = self._can_settings["interface"]
         channel = self._can_settings["channel"]
@@ -830,6 +848,15 @@ class MainWindow(QMainWindow):
                     )
             except Exception as e:
                 QMessageBox.warning(self, "Panda Error", str(e))
+
+        if injected_bus is None and iface == "socketcan":
+            from canlab.ui.can_setup import ensure_socketcan_up
+            ready, message = ensure_socketcan_up(
+                self, channel, bitrate, fd=fd, data_bitrate=data_bitrate)
+            if not ready:
+                QMessageBox.warning(self, "CAN interface", message)
+                return
+            self.statusBar().showMessage(message, 6000)
 
         try:
             bus = injected_bus or self._open_bus(iface, channel, bitrate,

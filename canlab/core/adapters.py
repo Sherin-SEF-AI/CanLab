@@ -109,6 +109,11 @@ KNOWN_USB: dict[tuple[int, int], tuple[str, str]] = {
     (0xAD50, 0x60C4): ("CANable (slcan firmware)", "slcan"),
     (0x16D0, 0x117E): ("CANable 2.0 (slcan firmware)", "slcan"),
     (0x04D8, 0x000A): ("USBtin", "slcan"),
+    # The CANalyst-II and its clones. python-can's canalystii backend has no
+    # detection of its own, so without this entry a plugged-in analyser is
+    # invisible however the backends are asked.
+    (0x04D8, 0x0053): ("CANalyst-II", "canalystii"),
+    (0x04D8, 0x0054): ("CANalyst-II (clone)", "canalystii"),
     (0x2341, 0x804D): ("Macchina M2 (GVRET)", "gvret"),
     (0x2A03, 0x804D): ("Macchina M2 (GVRET)", "gvret"),
     (0x0C72, 0x000C): ("PEAK PCAN-USB", "pcan"),
@@ -280,10 +285,16 @@ def detect_adapters(interfaces: list[str] | None = None, timeout: float = 3.0) -
             if not any(a.interface == "socketcan" for a in found):
                 add(Adapter(name=label, interface="gs_usb", channel="0", extra={"index": 0},
                             detected=f"USB {vid:04X}:{pid:04X} {product}".strip()))
-        elif iface in ("pcan", "kvaser", "vector", "usb2can"):
-            hint = INTERFACES[iface].channel_hint
-            add(Adapter(name=label, interface=iface, channel=hint,
-                        detected=f"USB {vid:04X}:{pid:04X}; needs {INTERFACES[iface].requires}"))
+        else:
+            # Every other known backend, rather than a hand-written list that
+            # silently dropped anything missing from it: a CANalyst-II entry
+            # was unreachable by construction because it was not named here.
+            info = INTERFACES.get(iface)
+            if info is None:
+                continue
+            needs = f"; needs {info.requires}" if info.requires else ""
+            add(Adapter(name=label, interface=iface, channel=info.channel_hint,
+                        detected=f"USB {vid:04X}:{pid:04X} {product}".strip() + needs))
     return found
 
 
@@ -303,8 +314,44 @@ _HINTS = (
 )
 
 
+def _silence(adapter: Adapter) -> tuple[bool, str]:
+    """Whether opening this adapter is guaranteed to leave the bus alone.
+
+    True only when the interface itself was configured listen-only, which is
+    a property of the device, not of how the application opens it.
+    """
+    if adapter.interface == "virtual":
+        return True, ""
+    if adapter.interface == "socketcan":
+        try:
+            from canlab.core.privileged import interface_state
+            state = interface_state(adapter.channel)
+        except Exception:                                 # pragma: no cover
+            return False, ""
+        if state.get("listen_only"):
+            return True, ""
+        return False, (f"{adapter.channel} is not in listen-only mode, so its "
+                       f"controller will acknowledge frames it receives. Bring "
+                       f"it up with listen-only on to be certain the bus is "
+                       f"untouched.")
+    return False, ("This backend has no listen-only setting, so the controller "
+                   "acknowledges frames in hardware while the adapter is open. "
+                   "It sends no frames of its own.")
+
+
 def probe_adapter(adapter: Adapter, listen_s: float = 1.0) -> dict:
-    """Open the adapter, listen briefly, close it. Never transmits.
+    """Open the adapter, listen briefly, close it. Sends no frames.
+
+    It sends nothing, but "sends nothing" is not the same as "changes
+    nothing on the bus". A CAN controller in normal mode acknowledges every
+    valid frame it receives in hardware, before any software sees it, and at
+    the wrong bitrate it will emit error frames. The only way to be sure a
+    bus is untouched is to put the controller in listen-only mode, which is
+    set when the interface is configured, not by opening it.
+
+    So the result carries a `silent` flag and a `warning` saying which of
+    those two this is. It used to claim it never transmits, full stop, which
+    was wrong at the level that matters when the other end is a vehicle.
 
     Returns ok, the backend's channel_info, how many frames arrived and from
     which IDs, or the error with a hint on what to install or run.
@@ -318,6 +365,7 @@ def probe_adapter(adapter: Adapter, listen_s: float = 1.0) -> dict:
         text = f"{type(e).__name__}: {e}"
         hint = next((h for needle, h in _HINTS if needle.lower() in text.lower()), "")
         return {"ok": False, "error": text, "hint": hint, "kwargs": kw}
+    silent, warning = _silence(adapter)
     ids: set[str] = set()
     n = 0
     try:
@@ -337,7 +385,8 @@ def probe_adapter(adapter: Adapter, listen_s: float = 1.0) -> dict:
         except Exception:
             log.debug("shutdown failed", exc_info=True)
     return {"ok": True, "info": str(info), "frames": n, "ids": sorted(ids)[:20],
-            "open_ms": round((time.perf_counter() - t0) * 1000), "kwargs": kw}
+            "open_ms": round((time.perf_counter() - t0) * 1000), "kwargs": kw,
+            "silent": silent, "warning": warning}
 
 
 # ── persistence helpers (the dialog stores JSON in QSettings) ─────────────────
