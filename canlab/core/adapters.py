@@ -311,6 +311,16 @@ _HINTS = (
     ("No module named 'canalystii'", "pip install canalystii"),
     ("No module named 'ics'", "pip install python-ics"),
     ("Permission denied", "on Linux add your user to the dialout group, then log in again"),
+    # Reported from a bench: two tools, one adapter. libusb answers with a bare
+    # errno and no explanation of who is holding the device.
+    ("Resource busy", "the adapter is already open. A CanLab window capturing "
+                      "from it holds it exclusively, and so does any other tool "
+                      "(SavvyCAN, candump on a USB backend, another script). "
+                      "Close the other one, or disconnect here first."),
+    ("LIBUSB_ERROR_BUSY", "the adapter is already open in another program or "
+                          "another CanLab window. Close that one first."),
+    ("Device or resource busy", "the adapter is already open elsewhere. Close "
+                                "the other program, or disconnect here first."),
     ("No such device", "bring the device up: sudo ip link set <dev> up type can bitrate <bps>"),
     ("Network is down", "bring the device up: sudo ip link set <dev> up type can bitrate <bps>"),
     ("PCAN-Basic", "install the PCAN-Basic library from PEAK"),
