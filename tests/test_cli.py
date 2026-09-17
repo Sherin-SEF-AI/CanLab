@@ -19,7 +19,7 @@ def cli(*args, cwd=None):
     env.pop("DISPLAY", None)
     return subprocess.run([sys.executable, "-m", "canlab.cli", *args],
                           capture_output=True, text=True, timeout=300,
-                          cwd=cwd, env=env)
+                          cwd=cwd, env=env, stdin=subprocess.DEVNULL)
 
 
 def test_ids_lists_every_id_with_rate():
@@ -95,3 +95,30 @@ def test_missing_file_is_a_clean_error():
     r = cli("ids", "/nonexistent/capture.csv")
     assert r.returncode != 0
     assert "no such file" in (r.stdout + r.stderr)
+
+
+def test_capture_help_needs_no_qt():
+    r = cli("capture", "--help")
+    assert r.returncode == 0, r.stderr
+    assert "--gpio" in r.stdout and "--http" in r.stdout and "never asks" in r.stdout
+
+
+def test_capture_on_the_virtual_backend_exits_clean_with_marks(tmp_path):
+    out = tmp_path / "kit"
+    r = cli("capture", "--interface", "virtual", "--channel", "vbus-cli-test",
+            "--duration", "1", "--out", str(out), "--no-project")
+    assert r.returncode == 0, r.stderr
+    assert "0 frames" in r.stdout and (out / "marks.json").is_file()
+    assert not list(out.glob("*.csv"))            # nothing arrived, nothing written
+
+
+def test_capture_refuses_a_bad_pin_map(tmp_path):
+    r = cli("capture", "--interface", "virtual", "--channel", "vbus-x", "--duration", "1",
+            "--out", str(tmp_path / "k"), "--gpio", "17=brake,17=horn")
+    assert r.returncode != 0 and "given twice" in r.stderr
+
+
+def test_capture_names_a_missing_saved_adapter(tmp_path):
+    r = cli("capture", "--adapter", "nothere", "--adapters-json", str(tmp_path / "none.json"),
+            "--duration", "1", "--out", str(tmp_path / "k"))
+    assert r.returncode != 0 and "no adapter named" in r.stderr

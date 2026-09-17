@@ -21,6 +21,8 @@ def isolated_qsettings(tmp_path_factory):
     d = str(tmp_path_factory.mktemp("qsettings"))
     for fmt in (QSettings.Format.NativeFormat, QSettings.Format.IniFormat):
         QSettings.setPath(fmt, QSettings.Scope.UserScope, d)
+    # The settings dialog mirrors adapters to a plain file for the capture kit.
+    os.environ["CANLAB_ADAPTERS_FILE"] = os.path.join(d, "adapters.json")
     yield d
 
 

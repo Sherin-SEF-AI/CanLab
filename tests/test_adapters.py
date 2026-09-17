@@ -299,3 +299,18 @@ def test_the_probe_result_carries_the_warning(qcore):
 
     noisy = dict(result, silent=False, warning="it acknowledges frames")
     assert "acknowledges" in format_test_result(noisy)
+
+
+def test_adapters_file_round_trips_and_honours_the_environment(tmp_path, monkeypatch):
+    from canlab.core.adapters import Adapter, adapters_file, load_adapters_file, save_adapters_file
+    saved = [Adapter("car", "socketcan", "can0", 500_000),
+             Adapter("bench", "virtual", "vbus0", 250_000, fd=True, data_bitrate=2_000_000)]
+    path = save_adapters_file(saved, tmp_path / "a.json")
+    back = load_adapters_file(path)
+    assert [(a.name, a.interface, a.channel, a.bitrate, a.fd) for a in back] == [
+        ("car", "socketcan", "can0", 500_000, False), ("bench", "virtual", "vbus0", 250_000, True)]
+    monkeypatch.setenv("CANLAB_ADAPTERS_FILE", str(tmp_path / "env.json"))
+    assert adapters_file() == tmp_path / "env.json"
+    assert load_adapters_file() == []
+    save_adapters_file(saved[:1])
+    assert [a.name for a in load_adapters_file()] == ["car"]

@@ -574,6 +574,13 @@ class SettingsDialog(QDialog):
         from canlab.core.adapters import adapters_to_json
         st.setValue(self.S_ADAPTERS, adapters_to_json(self._adapters))
         st.setValue(self.S_ADAPTER_DEFAULT, self._adapter_default)
+        # The capture kit runs without Qt and reads the same adapters from a
+        # plain file, so a name chosen here works on the command line too.
+        try:
+            from canlab.core.adapters import save_adapters_file
+            save_adapters_file(self._adapters)
+        except OSError:
+            pass
         # The default adapter is mirrored into the single-interface keys, which
         # is what the window reads at start-up.
         d = self.default_adapter()
