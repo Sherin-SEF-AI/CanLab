@@ -428,6 +428,23 @@ class CanLabTools:
                          "values": decode_frame(sigs, cid, data)})
         return clean({"id": cid, "frames": rows})
 
+    def detect_blocks(self, min_members: int = 3, max_gap: int = 2, limit: int = 20) -> list[dict]:
+        """Runs of consecutive IDs that share one DLC, one rate and a layout,
+        the way a battery pack reports its cells. Each block lists its
+        members, how far their byte roles agree, how many members never
+        change, and proposed shared fields (start byte, width, byte order,
+        how many members carry it, how closely their values agree). Scale and
+        meaning are not claimed."""
+        from canlab.core.block_detector import detect_blocks
+        blocks = detect_blocks(self.backend.frames(), min_members=int(min_members),
+                               max_gap=int(max_gap))
+        out = []
+        for b in blocks[:_limit(limit)]:
+            d = b.as_dict()
+            d["fields"] = d["fields"][:5]
+            out.append(d)
+        return clean(out)
+
     # -- the live watch ------------------------------------------------------
     def list_watch_events(self, limit: int = DEFAULT_LIMIT,
                           since_s: float | None = None) -> dict:
@@ -575,7 +592,7 @@ class CanLabTools:
         "list_annotations", "add_annotation", "rank_annotations",
         "search", "fetch",
         "list_pgns", "list_transport_messages",
-        "list_watch_events",
+        "list_watch_events", "detect_blocks",
     )
 
     def register(self, mcp) -> None:

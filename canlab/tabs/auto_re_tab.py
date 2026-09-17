@@ -4,6 +4,8 @@ AUTO-RE tab — automated reverse engineering tools:
   2. Entropy Signal Boundary Detector
   3. Correlated Signal Finder
   4. Checksum Algorithm Guesser
+  5. Flags and enums
+  6. Repeated blocks (consecutive IDs sharing one layout)
 """
 import numpy as np
 import pyqtgraph as pg
@@ -11,7 +13,7 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox,
     QComboBox, QSpinBox, QTextEdit, QTabWidget, QSplitter,
-    QMessageBox,
+    QMessageBox, QLineEdit,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
@@ -38,6 +40,7 @@ class AutoRETab(QWidget):
         tabs.addTab(self._build_correlation_tab(), "CORRELATION")
         tabs.addTab(self._build_guesser_tab(),     "CHECKSUM GUESSER")
         tabs.addTab(self._build_flags_tab(),       "FLAGS & ENUMS")
+        tabs.addTab(self._build_blocks_tab(),      "BLOCKS")
         outer.addWidget(tabs)
 
     # ── 1. Counter / Checksum Detector ────────────────────────────────────────
@@ -603,6 +606,185 @@ class AutoRETab(QWidget):
             set_status(self.lbl_guesser_status, "dim")
 
     # ── State handlers ────────────────────────────────────────────────────────
+
+    # ── 6. Repeated blocks ────────────────────────────────────────────────────
+
+    def _build_blocks_tab(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(6, 6, 6, 6)
+        hdr = QHBoxLayout()
+        hdr.addWidget(desc_label(
+            "A battery pack reports its cells as a run of consecutive IDs that "
+            "share one layout, one rate and one length. Per-ID analysis sees "
+            "unrelated messages; this finds the run, checks how far the members "
+            "agree on their bytes, and proposes the field they share so it can be "
+            "added to every member at once. Names end in CANDIDATE and the scale "
+            "is left unknown."))
+        hdr.addStretch()
+        hdr.addWidget(QLabel("Min members:", font=mono_font(8)))
+        self.blocks_min_members = QSpinBox()
+        self.blocks_min_members.setRange(2, 64)
+        self.blocks_min_members.setValue(3)
+        hdr.addWidget(self.blocks_min_members)
+        hdr.addWidget(QLabel("Max ID gap:", font=mono_font(8)))
+        self.blocks_max_gap = QSpinBox()
+        self.blocks_max_gap.setRange(1, 16)
+        self.blocks_max_gap.setValue(2)
+        hdr.addWidget(self.blocks_max_gap)
+        self.btn_run_blocks = QPushButton("Find Blocks")
+        self.btn_run_blocks.setObjectName("btn_green")
+        self.btn_run_blocks.clicked.connect(self._run_blocks)
+        hdr.addWidget(self.btn_run_blocks)
+        lay.addLayout(hdr)
+
+        split = QSplitter(Qt.Orientation.Vertical)
+        self.blocks_table = QTableWidget(0, 9)
+        self.blocks_table.setHorizontalHeaderLabels(
+            ["First", "Last", "Members", "Rate Hz", "DLC", "Agreement", "Constant",
+             "Best field", "Consistency"])
+        self.blocks_table.setFont(mono_font())
+        self.blocks_table.verticalHeader().setVisible(False)
+        self.blocks_table.verticalHeader().setDefaultSectionSize(20)
+        self.blocks_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch)
+        self.blocks_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.blocks_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.blocks_table.itemSelectionChanged.connect(self._on_block_selected)
+        split.addWidget(self.blocks_table)
+
+        self.block_fields_table = QTableWidget(0, 6)
+        self.block_fields_table.setHorizontalHeaderLabels(
+            ["Field", "Order", "Active members", "Consistency", "Band", "Note"])
+        self.block_fields_table.setFont(mono_font())
+        self.block_fields_table.verticalHeader().setVisible(False)
+        self.block_fields_table.verticalHeader().setDefaultSectionSize(20)
+        self.block_fields_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch)
+        self.block_fields_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.block_fields_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.block_fields_table.setToolTip("Double-click a field to add it to every member.")
+        self.block_fields_table.doubleClicked.connect(lambda _i: self._add_block_candidates())
+        split.addWidget(self.block_fields_table)
+        lay.addWidget(split, 1)
+
+        add_row = QHBoxLayout()
+        add_row.addWidget(QLabel("Prefix:", font=mono_font(8)))
+        self.block_prefix = QLineEdit()
+        self.block_prefix.setPlaceholderText("BLOCK_380_39A")
+        self.block_prefix.setFont(mono_font())
+        add_row.addWidget(self.block_prefix, 1)
+        self.btn_add_block = QPushButton("Add Candidates to DBC")
+        self.btn_add_block.setObjectName("btn_amber")
+        self.btn_add_block.setEnabled(False)
+        self.btn_add_block.clicked.connect(self._add_block_candidates)
+        add_row.addWidget(self.btn_add_block)
+        lay.addLayout(add_row)
+
+        self.lbl_blocks_status = QLabel("Load frames, then click Find Blocks.")
+        self.lbl_blocks_status.setFont(mono_font(8))
+        self.lbl_blocks_status.setObjectName("label_dim")
+        lay.addWidget(self.lbl_blocks_status)
+        self._blocks = []
+        self._blocks_worker = None
+        return w
+
+    def _run_blocks(self):
+        df = self._state.frames_snapshot()
+        if df is None or df.empty:
+            QMessageBox.information(self, "No Data", "Load a CAN log first.")
+            return
+        if self._blocks_worker is not None and self._blocks_worker.isRunning():
+            return
+        self.btn_run_blocks.setEnabled(False)
+        self.lbl_blocks_status.setText(f"Scanning {df['ID'].nunique()} IDs…")
+        from canlab.ui.compute_worker import ComputeWorker
+        from canlab.core.block_detector import detect_blocks
+        self._blocks_worker = ComputeWorker(
+            detect_blocks, df, min_members=int(self.blocks_min_members.value()),
+            max_gap=int(self.blocks_max_gap.value()))
+        self._blocks_worker.done.connect(self._on_blocks_done)
+        self._blocks_worker.failed.connect(
+            lambda e: (self.lbl_blocks_status.setText(f"Error: {e}"),
+                       self.btn_run_blocks.setEnabled(True)))
+        self._blocks_worker.start()
+
+    def _on_blocks_done(self, blocks):
+        self._blocks = list(blocks)
+        self.blocks_table.setRowCount(len(self._blocks))
+        for r, b in enumerate(self._blocks):
+            best = b.best_field
+            cells = [b.first, b.last, str(len(b.members)), f"{b.rate_hz:.2f}", str(b.dlc),
+                     f"{b.layout_agreement:.0%}", str(b.constant_members),
+                     best.label if best else "none",
+                     f"{best.consistency:.0%}" if best else ""]
+            for c, txt in enumerate(cells):
+                item = QTableWidgetItem(txt)
+                item.setFont(mono_font())
+                if c == 8 and best:
+                    colour = COLORS["green"] if best.consistency >= 0.8 else COLORS["amber"]
+                    item.setForeground(QBrush(QColor(colour)))
+                self.blocks_table.setItem(r, c, item)
+        self.btn_run_blocks.setEnabled(True)
+        if self._blocks:
+            self.blocks_table.selectRow(0)
+            self.lbl_blocks_status.setText(
+                f"{len(self._blocks)} block(s). Pick one, then a field, then add it "
+                "to every member.")
+        else:
+            self.block_fields_table.setRowCount(0)
+            self.btn_add_block.setEnabled(False)
+            self.lbl_blocks_status.setText(
+                "No run of consecutive IDs shares a length and rate here.")
+
+    def _selected_block(self):
+        rows = {i.row() for i in self.blocks_table.selectedIndexes()}
+        if not rows:
+            return None
+        r = min(rows)
+        return self._blocks[r] if r < len(self._blocks) else None
+
+    def _on_block_selected(self):
+        b = self._selected_block()
+        self.block_fields_table.setRowCount(0)
+        if b is None:
+            self.btn_add_block.setEnabled(False)
+            return
+        self.block_prefix.setText(b.name)
+        self.block_fields_table.setRowCount(len(b.fields))
+        for r, f in enumerate(b.fields):
+            cells = [f.label.rsplit(" ", 1)[0], f.byte_order, f"{f.members_active}",
+                     f"{f.consistency:.0%}", f"{f.band[0]:.0f}..{f.band[1]:.0f}", f.hint]
+            for c, txt in enumerate(cells):
+                item = QTableWidgetItem(txt)
+                item.setFont(mono_font())
+                self.block_fields_table.setItem(r, c, item)
+        if b.fields:
+            self.block_fields_table.selectRow(0)
+        self.btn_add_block.setEnabled(bool(b.fields))
+
+    def _add_block_candidates(self):
+        b = self._selected_block()
+        if b is None or not b.fields:
+            return
+        rows = {i.row() for i in self.block_fields_table.selectedIndexes()}
+        f = b.fields[min(rows)] if rows and min(rows) < len(b.fields) else b.fields[0]
+        from canlab.core.block_detector import block_to_signals
+        from canlab.core.dbc_manager import validate_signals
+        sigs = block_to_signals(b, f, self.block_prefix.text().strip() or None)
+        errors = validate_signals(sigs)
+        if errors:
+            QMessageBox.warning(self, "Blocks", "Not added:\n" + "\n".join(errors[:6]))
+            return
+        n = self._state.add_dbc_signals(sigs)
+        self.lbl_blocks_status.setText(
+            f"Added {n} candidate signal(s) for {f.label} across {b.name}. "
+            "Undo takes them all back.")
+
+    def cleanup(self):
+        w = self._blocks_worker
+        if w is not None and w.isRunning():
+            w.wait(5000)
 
     def _on_frames_loaded(self, _count: int):
         self._refresh_guesser_ids()

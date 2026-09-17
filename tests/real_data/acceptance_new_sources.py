@@ -582,6 +582,56 @@ def phase_exports():
 
 # ── 7. the transmit gate is still shut ───────────────────────────────────────
 
+def phase_blocks():
+    """Repeated blocks on the Tigor EV capture. The data is the user's own
+    car and is not in the corpus, so this runs only when CANLAB_PRIVATE_DATA
+    names the directory holding tatatigor.canlab.zip."""
+    section("REPEATED BLOCKS ON A PRIVATE EV CAPTURE")
+    import os
+    import zipfile
+    from canlab.core.block_detector import block_to_signals, detect_blocks
+    from canlab.core.canid import normalize_id
+    from canlab.core.dbc_manager import validate_signals
+
+    private = os.environ.get("CANLAB_PRIVATE_DATA")
+    zip_path = Path(private).expanduser() / "tatatigor.canlab.zip" if private else None
+
+    def tigor():
+        if zip_path is None:
+            return None, "CANLAB_PRIVATE_DATA not set"
+        if not zip_path.is_file():
+            return None, f"{zip_path} missing"
+        import pandas as pd
+        with zipfile.ZipFile(zip_path) as zf:
+            df = pd.read_csv(zf.open("frames.csv"), dtype={"ID": str})
+        df["ID"] = df["ID"].apply(normalize_id)
+        t0 = time.perf_counter()
+        blocks = detect_blocks(df, max_gap=2)
+        took = time.perf_counter() - t0
+        by_first = {b.first: b for b in blocks}
+        big = by_first.get("380")
+        small = by_first.get("244")
+        ok = (big is not None and len(big.members) == 27 and big.last == "39A"
+              and abs(big.rate_hz - 2.0) < 0.1 and big.dlc == 8
+              and big.constant_members == 9 and small is not None
+              and [m.can_id for m in small.members] == ["244", "245", "247", "249"]
+              and took < 10.0)
+        names_ok = True
+        if big is not None and big.fields:
+            sigs = block_to_signals(big, big.best_field)
+            names_ok = (all("CANDIDATE" in s["signal_name"] for s in sigs)
+                        and validate_signals(sigs) == [])
+        detail = (f"{len(blocks)} blocks in {took:.2f} s on {len(df)} frames; "
+                  + (f"380..{big.last}: {len(big.members)} members at {big.rate_hz:.2f} Hz, "
+                     f"DLC {big.dlc}, {big.constant_members} constant, agreement "
+                     f"{big.layout_agreement:.0%}, best field "
+                     f"{big.best_field.label if big.best_field else 'none'} at "
+                     f"{big.best_field.consistency:.0%} consistency" if big else "no 380 block")
+                  + (f"; 244..249: {len(small.members)} members" if small else "; no 244 block"))
+        return ok and names_ok, detail
+    check("the EV's cell block and the four-message run are found", tigor)
+
+
 def phase_safety():
     section("NOTHING TRANSMITTED")
 
@@ -686,7 +736,7 @@ def main() -> int:
     print(f"{len(have)} file(s): {', '.join(have)}")
 
     for phase in (phase_mdf4, phase_native_binary, phase_cross_format,
-                  phase_analysis, phase_new_features, phase_exports, phase_multiframe, phase_safety):
+                  phase_analysis, phase_new_features, phase_exports, phase_multiframe, phase_blocks, phase_safety):
         phase()
 
     print("\n" + "=" * 70)
