@@ -1,6 +1,7 @@
 """Tests for reference-driven calibration (#1)."""
 import numpy as np
 import pandas as pd
+import pytest
 
 from canlab.core.reference_calibrate import calibrate_against_reference, best_signal
 
@@ -54,3 +55,132 @@ def test_unconfirmed_when_no_signal_matches():
     noise = rng.normal(size=len(ref_ts))
     res = calibrate_against_reference(df, ref_ts, noise, min_r2=0.9)
     assert all(c["verdict"] == "UNCONFIRMED" for c in res)
+
+
+# ── clock offset, de-dup, progress ───────────────────────────────────────────
+
+import os  # noqa: E402
+
+from canlab.core.dbc_manager import decode_frame, validate_signals  # noqa: E402
+from canlab.core.log_parser import parse_log_file  # noqa: E402
+from canlab.core.reference_calibrate import (  # noqa: E402
+    calibrate_many, calibrate_with_lag_search, candidate_to_signal_def, find_time_offset,
+)
+from canlab.core.reference_series import ReferenceSeries  # noqa: E402
+
+SAMPLE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                      "canlab", "sample_data", "sample_kona_drive.csv")
+
+
+def _walk(n=3000, seed=3, can_id="1B0"):
+    """A 16-bit little-endian field at bytes 2-3 following a random walk, so
+    the reference is not periodic and a lag has one answer."""
+    rng = np.random.default_rng(seed)
+    ts = np.arange(n) * 0.01
+    walk = np.cumsum(rng.normal(0, 0.3, n))
+    walk = walk - walk.min() + 5
+    raw = np.round(walk / 0.1).astype(int)
+    rows = [{"Timestamp": ts[i], "ID": can_id, "Bus": 0, "DLC": 8,
+             "B0": i & 0xFF, "B1": 0, "B2": raw[i] & 0xFF, "B3": (raw[i] >> 8) & 0xFF,
+             "B4": 0, "B5": 0, "B6": 0, "B7": 0} for i in range(n)]
+    return pd.DataFrame(rows), ts, walk
+
+
+def test_a_reference_running_3_7_seconds_ahead_is_lined_up():
+    df, ts, walk = _walk()
+    off = find_time_offset(df, ts[::10] + 3.7, walk[::10], window_s=30.0)
+    assert off["lag_s"] == pytest.approx(3.7, abs=0.2)
+    assert off["id"] == "1B0" and off["r"] > 0.95
+    fitted = calibrate_against_reference(df, ts[::10] + 3.7, walk[::10],
+                                         lag_s=off["lag_s"], top_k=1)[0]
+    assert fitted["verdict"] == "PASS" and fitted["r2"] > 0.99
+    assert (fitted["start_bit"], fitted["length"], fitted["byte_order"]) == (16, 16, "little")
+
+
+def test_without_the_lag_the_same_reference_does_not_fit():
+    df, ts, walk = _walk()
+    raw_fit = calibrate_against_reference(df, ts[::10] + 3.7, walk[::10], top_k=1)
+    assert not raw_fit or raw_fit[0]["r2"] < 0.9
+
+
+def test_an_epoch_reference_is_aligned_to_a_capture_that_starts_at_zero():
+    df, ts, walk = _walk()
+    off = find_time_offset(df, ts[::10] + 1.6e9 + 2.0, walk[::10], window_s=10.0)
+    assert off["base_shift_s"] == pytest.approx(1.6e9 + 2.0, abs=0.1)
+    assert off["lag_s"] == pytest.approx(1.6e9 + 2.0, abs=0.2)
+    best = calibrate_against_reference(df, ts[::10] + 1.6e9 + 2.0, walk[::10],
+                                       lag_s=off["lag_s"], top_k=1)[0]
+    assert best["r2"] > 0.99
+
+
+def test_overlapping_wins_collapse_to_one_row_per_field():
+    df, ts, walk = _walk()
+    loose = calibrate_against_reference(df, ts[::10], walk[::10], dedup=False, top_k=50)
+    tight = calibrate_against_reference(df, ts[::10], walk[::10], top_k=50)
+    # the same word read from bit 9, 10, ... fits just as well; only one survives
+    assert sum(1 for c in loose if c["r2"] > 0.99) > 3
+    assert sum(1 for c in tight if c["r2"] > 0.99) == 1
+    assert tight[0]["start_bit"] == 16 and tight[0]["length"] == 16
+
+
+def test_progress_is_reported_per_id_and_stop_is_honoured():
+    df, ts, walk = _walk()
+    other = df.copy()
+    other["ID"] = "2C0"
+    both = pd.concat([df, other], ignore_index=True)
+    seen = []
+    calibrate_against_reference(both, ts[::10], walk[::10],
+                                progress_cb=lambda d, t: seen.append((d, t)))
+    assert seen[0] == (0, 2) and seen[-1] == (2, 2)
+    halted = calibrate_against_reference(both, ts[::10], walk[::10], should_stop=lambda: True)
+    assert halted == []
+
+
+def test_two_references_are_calibrated_independently():
+    df, ts, walk = _walk()
+    speed = ReferenceSeries("speed", ts[::10] + 1.5, walk[::10], unit="km/h")
+    noise = ReferenceSeries("noise", ts[::10], np.random.default_rng(1).normal(size=300))
+    ticks = []
+    out = calibrate_many(df, [speed, noise], window_s=5.0, top_k=3,
+                         progress_cb=lambda d, t: ticks.append((d, t)))
+    by_series = {}
+    for cand in out:
+        by_series.setdefault(cand["series"], []).append(cand)
+    assert by_series["speed"][0]["verdict"] == "PASS"
+    assert by_series["speed"][0]["lag_s"] == pytest.approx(1.5, abs=0.2)
+    assert by_series["speed"][0]["unit"] == "km/h"
+    assert all(c["verdict"] == "UNCONFIRMED" for c in by_series.get("noise", []))
+    assert ticks[-1] == (200, 200)
+
+
+def test_a_big_endian_candidate_becomes_a_signal_cantools_decodes():
+    df, ref_ts, ref_val = _synth(scale=0.05, big_endian=True, start_byte=3)
+    cand = best_signal(df, ref_ts, ref_val, min_r2=0.95)
+    assert cand["byte_order"] == "big"
+    sig = candidate_to_signal_def(cand, "speed", "km/h")
+    assert validate_signals([sig]) == []
+    assert sig["start_bit"] == 31                       # MSB of byte 3, DBC Motorola
+    row = df.iloc[100]
+    frame = bytes(int(row[f"B{i}"]) for i in range(8))
+    raw = frame[3] * 256 + frame[4]
+    decoded = decode_frame([sig], "0A6", frame)
+    assert decoded["speed"] == pytest.approx(raw * cand["scale"] + cand["offset"], rel=1e-6)
+    assert sig["unit"] == "km/h" and "PASS" in sig["description"]
+
+
+def test_the_shipped_sample_gives_wheel_speed_at_one_thirty_second():
+    """0x0A6 carries int(speed * 32) big-endian in all four words, with speed
+    60 + 20 sin(2 pi t / 5). The reference clock is put one second ahead and
+    the window kept under half the period so the lag is unambiguous."""
+    df = parse_log_file(SAMPLE)
+    t = np.arange(0, 10, 0.1)
+    speed = 60 + 20 * np.sin(2 * np.pi * t / 5)
+    series = ReferenceSeries("speed", t + 1.0, speed, unit="km/h")
+    cands = calibrate_with_lag_search(df, series, window_s=2.0, top_k=8)
+    wins = [c for c in cands if c["verdict"] == "PASS"]
+    assert len(wins) == 4
+    assert {(c["start_bit"], c["length"], c["byte_order"]) for c in wins} == {
+        (0, 16, "big"), (16, 16, "big"), (32, 16, "big"), (48, 16, "big")}
+    for c in wins:
+        assert c["id"] == "0A6" and c["scale"] == pytest.approx(1 / 32)
+        assert c["r2"] > 0.99 and c["lag_s"] == pytest.approx(1.0, abs=0.2)
