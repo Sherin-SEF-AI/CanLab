@@ -279,3 +279,19 @@ def test_transport_tools_return_plain_json():
     for name in ("list_pgns", "list_transport_messages"):
         assert name in CanLabTools.TOOL_NAMES
         assert not any(w in name for w in ("send", "inject", "transmit", "replay", "fuzz"))
+
+
+def test_calibrate_reads_named_columns_and_reports_the_lag(tools, tmp_path):
+    import numpy as np
+    t = np.arange(0, 10, 0.1)
+    speed = 60 + 20 * np.sin(2 * np.pi * t / 5)
+    p = tmp_path / "gps.csv"
+    p.write_text("time,speed (km/h),junk (x)\n" + "".join(
+        f"{a + 1.0:.1f},{b:.3f},{i % 7}\n" for i, (a, b) in enumerate(zip(t, speed))))
+    out = tools.calibrate(str(p), top_k=4, series="speed", lag_window_s=2.0)
+    assert out and all(c["series"] == "speed" for c in out)
+    best = out[0]
+    assert best["id"] == "0A6" and best["verdict"] == "PASS"
+    assert abs(best["lag_s"] - 1.0) < 0.2 and best["unit"] == "km/h"
+    with pytest.raises(ValueError):
+        tools.calibrate(str(p), series="nothing")
