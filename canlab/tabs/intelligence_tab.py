@@ -75,6 +75,11 @@ class IntelligenceTab(QWidget):
         self._build_ui()
         self._state.frames_loaded.connect(self._on_frames_loaded)
         self._state.dbc_updated.connect(self._on_dbc_updated)
+        # Marks arrive from outside this tab too: a loaded project, the REST
+        # /mark endpoint, the live watch. Without these the list only ever
+        # refreshed from its own buttons, so a project's marks were invisible.
+        self._state.project_loaded.connect(self._ann_refresh_list)
+        self._state.annotations_changed.connect(self._ann_refresh_list)
 
     # ── UI ────────────────────────────────────────────────────────────────────
 

@@ -1265,9 +1265,13 @@ class MainWindow(QMainWindow):
     def _start_rest_api(self):
         from canlab.core.rest_api import RestAPIServer
         try:
+            if not hasattr(self, "_gui_invoker"):
+                from canlab.ui.gui_invoke import GuiInvoker
+                self._gui_invoker = GuiInvoker(self)
             self._rest_api_server = RestAPIServer(
                 state_getter=get_state,
                 port=self._state.rest_api_port,
+                on_mark=self._on_rest_mark,
             )
             self._rest_api_server.start()
             self._state.rest_api_running = True
@@ -1377,6 +1381,29 @@ class MainWindow(QMainWindow):
 
     def _open_mcp_settings(self):
         self._open_settings(tab="MCP")
+
+    def _on_rest_mark(self, label: str, action: str, at: float) -> str:
+        """POST /mark, answered on the server thread; the state lives here."""
+        return self._gui_invoker(lambda: self._mark_from_rest(label, action, at))
+
+    def _mark_from_rest(self, label: str, action: str, at: float) -> str:
+        """Record a mark the way the INTELLIGENCE tab does, then tell it."""
+        marks = self._state.annotations
+        if action == "toggle":
+            open_same = any(a.label == label and not a.closed for a in marks.items)
+            action = "end" if open_same else "begin"
+        if action == "begin":
+            marks.begin(label, at)
+        elif action == "end":
+            marks.end(label, at)
+        elif action == "point":
+            # A momentary event needs a width to be scored: rank_candidates
+            # only counts closed intervals with frames on both sides.
+            marks.add(label, at - 0.5, at + 0.5)
+        else:
+            raise ValueError(f"unknown mark action {action!r}")
+        self._state.annotations_changed.emit()
+        return action
 
     def _stop_rest_api(self):
         if self._rest_api_server:

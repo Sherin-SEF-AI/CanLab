@@ -225,3 +225,49 @@ def test_loading_a_project_does_not_discard_session_memory(tmp_path):
     load_project(other, path)
     conclusions = {e["conclusion"] for e in other.ai_memory}
     assert conclusions == {"from this session", "from the project"}
+
+
+# ── the streaming project writer the capture kit relies on ───────────────────
+
+def test_write_project_streams_chunks_and_loads_back_whole(tmp_path):
+    """A recording of millions of frames never exists as one table on the
+    way to disk: chunks are written as they arrive, header once."""
+    import pandas as pd
+
+    from canlab.core.log_parser import make_row
+    from canlab.core.project import load_project, write_project
+    from canlab.core.state import AppState
+
+    seen = []
+
+    def chunks():
+        for k in range(3):
+            rows = [make_row(k * 10 + i, 0x100 + i, False, 0, bytes([i] * 8))
+                    for i in range(10)]
+            seen.append(len(rows))
+            yield pd.DataFrame(rows)
+
+    path = tmp_path / "streamed.canlab"
+    written = write_project(str(path), frames_chunks=chunks(),
+                            annotations_json='[{"label": "brake", "start": 1.0, "end": 2.0}]')
+    assert written == 30 and seen == [10, 10, 10]
+
+    state = AppState()
+    load_project(state, str(path))
+    assert len(state.frames_df) == 30
+    assert list(state.frames_df.columns[:2]) == ["Timestamp", "ID"]
+    assert state.frames_df["ID"].iloc[0] == "100"
+    assert [a.label for a in state.annotations.items] == ["brake"]
+
+
+def test_write_project_with_no_frames_has_no_frames_member(tmp_path):
+    """An empty frames.csv would fail to parse on load; the member is simply absent."""
+    import zipfile
+
+    from canlab.core.project import write_project
+
+    path = tmp_path / "empty.canlab"
+    assert write_project(str(path), frames_chunks=[]) == 0
+    with zipfile.ZipFile(path) as zf:
+        assert "frames.csv" not in zf.namelist()
+        assert "meta.json" in zf.namelist()
