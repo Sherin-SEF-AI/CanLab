@@ -74,6 +74,7 @@ class AppState(QObject):
         # The live anomaly watch, when the WATCH sub-tab has started one;
         # read by the MCP backend so an assistant can list its events.
         self.live_watch = None
+        self.live_watch_running = False
         self.fuzz_running:      bool         = False
         self.active_backend:    str          = "python-can"
         # Framing conventions for injection/export/AI hints; "generic" asserts

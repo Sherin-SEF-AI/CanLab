@@ -558,10 +558,44 @@ def phase_gui():
     gc.collect()
 
 
+def phase_live_watch():
+    """The watch replays the two-channel car log as if it were arriving."""
+    section("LIVE WATCH OVER 154,896 FRAMES")
+    df = load(DUAL)
+
+    def replay():
+        from canlab.core.live_watch import LiveWatch
+        t0 = float(df["Timestamp"].min())
+        head = df[df["Timestamp"] < t0 + 60.0]
+        rest = df[df["Timestamp"] >= t0 + 60.0]
+        watch = LiveWatch()
+        with timed("watch fit 60 s") as fit:
+            info = watch.fit(head)
+        batch = 2000
+        slowest = 0.0
+        with timed("watch replay") as t:
+            for start in range(0, len(rest), batch):
+                t1 = time.perf_counter()
+                watch.observe(rest.iloc[start:start + batch])
+                slowest = max(slowest, time.perf_counter() - t1)
+        st = watch.stats()
+        FACTS["live_watch"] = {"fitted_ids": info["ids"], "fit_frames": info["frames"],
+                               "observed": st["observed_frames"], "batches": st["batches"],
+                               "events": st["events"], "by_kind": st["by_kind"],
+                               "slowest_batch_ms": round(1000 * slowest, 2)}
+        kinds = ", ".join(f"{k} {v}" for k, v in st["by_kind"].items() if v) or "none"
+        return slowest < 0.020, (
+            f"fitted {info['ids']} IDs on {info['frames']} frames in {fit.seconds:.2f} s; "
+            f"{st['observed_frames']} frames in {st['batches']} batches of {batch}, "
+            f"slowest batch {1000 * slowest:.1f} ms, {t.seconds:.2f} s in all; "
+            f"{st['events']} events ({kinds}), reported not asserted")
+    check("fit 60 s, replay the rest in 2,000-frame batches", replay)
+
+
 def main() -> int:
     print(f"CanLab stress run over {DATA}")
     for phase in (phase_parse, phase_j1939, phase_detectors, phase_decode,
-                  phase_formats, phase_gui):
+                  phase_formats, phase_live_watch, phase_gui):
         phase()
 
     section("SUMMARY")

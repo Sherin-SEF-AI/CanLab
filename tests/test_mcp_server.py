@@ -281,6 +281,13 @@ def test_transport_tools_return_plain_json():
         assert not any(w in name for w in ("send", "inject", "transmit", "replay", "fuzz"))
 
 
+def test_watch_events_are_empty_and_honest_headless(tools):
+    out = tools.list_watch_events()
+    assert out["running"] is False and out["events"] == []
+    assert "window" in out["stats"]["note"]
+    assert "list_watch_events" in CanLabTools.TOOL_NAMES
+
+
 def test_calibrate_reads_named_columns_and_reports_the_lag(tools, tmp_path):
     import numpy as np
     t = np.arange(0, 10, 0.1)

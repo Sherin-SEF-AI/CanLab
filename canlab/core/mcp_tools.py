@@ -45,6 +45,8 @@ class Backend(Protocol):
     def remove_signal(self, message_id: str, signal_name: str) -> bool: ...
     def annotations(self) -> AnnotationSet: ...
     def add_annotation(self, label: str, start: float, end: float) -> None: ...
+    def watch_events(self, limit: int, since_ts: float | None = None) -> list[dict]: ...
+    def watch_stats(self) -> dict: ...
 
 
 class HeadlessBackend:
@@ -94,6 +96,13 @@ class HeadlessBackend:
 
     def add_annotation(self, label: str, start: float, end: float) -> None:
         self._annotations.add(label, start, end)
+
+    def watch_events(self, limit: int, since_ts: float | None = None) -> list[dict]:
+        return []
+
+    def watch_stats(self) -> dict:
+        return {"running": False, "fitted": False,
+                "note": "the live watch runs inside the CanLab window"}
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -419,6 +428,18 @@ class CanLabTools:
                          "values": decode_frame(sigs, cid, data)})
         return clean({"id": cid, "frames": rows})
 
+    # -- the live watch ------------------------------------------------------
+    def list_watch_events(self, limit: int = DEFAULT_LIMIT,
+                          since_s: float | None = None) -> dict:
+        """What the live anomaly watch has reported: bytes out of band, an ID
+        gone silent, a burst, an ID the baseline never saw. Events carry the
+        frame clock. ``since_s`` returns only events after that time. Also
+        says whether the watch is running and what it was fitted on."""
+        stats = dict(self.backend.watch_stats())
+        events = self.backend.watch_events(_limit(limit), since_s)
+        return clean({"running": bool(stats.get("running", False)), "stats": stats,
+                      "events": events})
+
     # -- annotations ---------------------------------------------------------
     def list_annotations(self) -> list[dict]:
         """Marks on the capture timeline ("brake", 12.4 s to 14.1 s) that
@@ -554,6 +575,7 @@ class CanLabTools:
         "list_annotations", "add_annotation", "rank_annotations",
         "search", "fetch",
         "list_pgns", "list_transport_messages",
+        "list_watch_events",
     )
 
     def register(self, mcp) -> None:
