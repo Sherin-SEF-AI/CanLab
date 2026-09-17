@@ -1,0 +1,34 @@
+# CanLab capture kit as a systemd service on a Raspberry Pi.
+#
+#   sudo cp canlab-capture.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now canlab-capture
+#
+# The unit brings can0 up in listen-only mode before the kit starts, because
+# the kit itself never asks for privileges. AmbientCapabilities gives the
+# ExecStartPre ip command CAP_NET_ADMIN and nothing else; the kit runs as an
+# ordinary user. Each start records into a new directory under
+# WorkingDirectory and writes a .canlab project when it stops.
+
+[Unit]
+Description=CanLab capture kit
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/captures
+AmbientCapabilities=CAP_NET_ADMIN
+ExecStartPre=/usr/sbin/ip link set can0 up type can bitrate 500000 listen-only on
+ExecStart=/home/pi/.local/bin/canlab-cli capture \
+    --interface socketcan --channel can0 --bitrate 500000 \
+    --http 8765 --http-host 0.0.0.0 --token-file /home/pi/.canlab/kit-token \
+    --gpio 17=brake
+KillSignal=SIGINT
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

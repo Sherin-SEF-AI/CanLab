@@ -424,3 +424,29 @@ def adapters_from_json(text: str) -> list[Adapter]:
 def adapters_to_json(adapters: list[Adapter]) -> str:
     import json
     return json.dumps([a.to_dict() for a in adapters])
+
+
+#: Where the desktop mirrors its saved adapters so the capture kit, which
+#: runs without Qt, can open one by name. CANLAB_ADAPTERS_FILE overrides it.
+ADAPTERS_FILE = Path.home() / ".canlab" / "adapters.json"
+
+
+def adapters_file(path=None) -> Path:
+    import os
+    if path:
+        return Path(path).expanduser()
+    return Path(os.environ.get("CANLAB_ADAPTERS_FILE") or ADAPTERS_FILE).expanduser()
+
+
+def save_adapters_file(adapters: list[Adapter], path=None) -> Path:
+    p = adapters_file(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(adapters_to_json(adapters))
+    return p
+
+
+def load_adapters_file(path=None) -> list[Adapter]:
+    p = adapters_file(path)
+    if not p.is_file():
+        return []
+    return adapters_from_json(p.read_text())
