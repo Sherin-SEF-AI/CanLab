@@ -1,7 +1,6 @@
 import time
 import os
 import can
-import pandas as pd
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QToolBar, QStatusBar, QLabel, QFileDialog,
     QMessageBox, QProgressBar, QMenu, QComboBox, QToolButton, QSizePolicy, QVBoxLayout,
@@ -369,7 +368,7 @@ class MainWindow(QMainWindow):
             ("Match against opendbc…",   self._match_opendbc),
             ("Export decoded time-series…", self._export_timeseries),
             ("Detect multiplexed signals…", self._detect_mux),
-            ("Calibrate signal from reference CSV…", self._calibrate_ref),
+            ("Calibrate signals from a reference file (CSV, GPX)…", self._calibrate_ref),
             ("Trim capture…",            self._trim_capture),
             ("Create virtual CAN bus (vcan0)…", self._create_vcan),
             ("Allow USB CAN adapters without root…", self._install_udev_rule),
@@ -1210,34 +1209,17 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Multiplexed signals", "\n".join(lines))
 
     def _calibrate_ref(self):
-        if self._state.frames_df.empty:
+        """Find which fields track a recorded reference (GPS speed, OBD RPM)."""
+        from canlab.ui.calibrate_dialog import CalibrateDialog
+        df = self._state.frames_snapshot()
+        if df is None or df.empty:
             QMessageBox.information(self, "Calibrate", "Load a capture first.")
             return
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Reference CSV (columns: timestamp,value)", "",
-            "CSV (*.csv);;All Files (*)")
-        if not path:
-            return
-        try:
-            ref = pd.read_csv(path)
-            cols = [c.lower() for c in ref.columns]
-            tcol = ref.columns[cols.index("timestamp")] if "timestamp" in cols else ref.columns[0]
-            vcol = ref.columns[cols.index("value")] if "value" in cols else ref.columns[1]
-            from canlab.core.reference_calibrate import calibrate_against_reference
-            cand = calibrate_against_reference(
-                self._state.frames_df,
-                ref[tcol].to_numpy(), ref[vcol].to_numpy(), top_k=8)
-        except Exception as e:
-            QMessageBox.warning(self, "Calibrate", f"Failed: {e}")
-            return
-        if not cand:
-            QMessageBox.information(self, "Calibrate", "No candidate signal found.")
-            return
-        lines = [f"[{c['verdict']}] 0x{c['id']} bit{c['start_bit']} len{c['length']} "
-                 f"{c['byte_order']}  scale={c['scale']} offset={c['offset']}  "
-                 f"R2={c['r2']} (n={c['n']})" for c in cand]
-        QMessageBox.information(self, "Reference calibration (ranked)",
-                                "\n".join(lines))
+        dlg = CalibrateDialog(self._state, self)
+        dlg.exec()
+        if dlg.added:
+            self.statusBar().showMessage(
+                f"Added {dlg.added} calibrated signal(s) to the DBC", 5000)
 
     def _toggle_arm(self, checked: bool):
         from canlab.core.safety import set_armed

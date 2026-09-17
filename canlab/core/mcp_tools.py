@@ -293,17 +293,27 @@ class CanLabTools:
         ids = set(self.backend.frames()["ID"].unique().tolist())
         return clean(match_capture(ids, top_k=top_k))
 
-    def calibrate(self, reference_csv: str, top_k: int = 8) -> list[dict]:
-        """Find the field that linearly explains a physical reference. The CSV
-        has columns timestamp,value (GPS speed, OBD RPM). Returns candidates
-        with scale, offset and R squared."""
-        from canlab.core.reference_calibrate import calibrate_against_reference
-        ref = pd.read_csv(reference_csv)
-        cols = [c.lower() for c in ref.columns]
-        tcol = ref.columns[cols.index("timestamp")] if "timestamp" in cols else ref.columns[0]
-        vcol = ref.columns[cols.index("value")] if "value" in cols else ref.columns[1]
-        return clean(calibrate_against_reference(self.backend.frames(), ref[tcol].to_numpy(),
-                                                 ref[vcol].to_numpy(), top_k=top_k))
+    def calibrate(self, reference_path: str, top_k: int = 8, series: str | None = None,
+                  lag_window_s: float = 0.0) -> list[dict]:
+        """Find the fields that linearly explain a recorded physical reference:
+        a CSV with a time column and one or more value columns (GPS speed, OBD
+        RPM; a header like "speed (km/h)" keeps the unit), or a GPX track
+        (speed, altitude, latitude, longitude). ``series`` limits the run to
+        one column name. ``lag_window_s`` above zero searches that many
+        seconds either way for the clock offset between the reference and the
+        capture first. Returns ranked candidates per series with id, start
+        bit, length, byte order, scale, offset, R squared, the lag used and a
+        verdict."""
+        from canlab.core.reference_calibrate import calibrate_many
+        from canlab.core.reference_series import load_reference_file
+        refs = load_reference_file(reference_path)
+        if series:
+            wanted = series.strip().lower()
+            refs = [r for r in refs if r.name.lower() == wanted]
+            if not refs:
+                raise ValueError(f"no series named {series!r} in {reference_path}")
+        return clean(calibrate_many(self.backend.frames(), refs, window_s=float(lag_window_s),
+                                    top_k=top_k))
 
     def run_all_detectors(self) -> dict:
         """Every offline detector at once: counters, checksums, flags, value
