@@ -29,6 +29,7 @@ NAV = [
     ("diagnostics.html", "Diagnostics"),
     ("exports.html", "Exports"),
     ("integrations.html", "Integrations"),
+    ("cli.html", "Command line"),
     ("reference.html", "Reference"),
 ]
 

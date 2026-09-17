@@ -16,7 +16,7 @@
 <header class="masthead">
   <div class="masthead-inner">
     <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">CanLab<span>/docs</span></a>
-    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html" aria-current="page">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html">Integrations</a><a href="reference.html">Reference</a></nav>
+    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html" aria-current="page">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html">Integrations</a><a href="cli.html">Command line</a><a href="reference.html">Reference</a></nav>
   </div>
 </header>
 <div class="wrap">
@@ -85,6 +85,18 @@
    table applies. Single-frame NMEA 2000 PGNs such as vessel heading, rate of
    turn, rapid position, course and speed, wind and temperature are decoded.
    Every layout is checked in the tests against frames from a real recording.</p>
+<p>Messages that span several frames are reassembled by
+   <code>core/multiframe.py</code> before decoding: J1939 transport protocol,
+   both BAM broadcasts and RTS/CTS sessions between two other nodes (observed
+   only; CanLab never sends a CTS), and NMEA 2000 fast packets with their
+   sequence and counter byte. Timeouts run on the frame clock. On the marine
+   recording this rebuilds 60 GNSS position fixes of 43 bytes, decoded to a
+   position, date, time, altitude and satellite count, and 60 satellite lists
+   of 135 bytes; on the truck log, 85 BAM broadcasts of engine and retarder
+   configuration with nothing dropped. The PGN scan in INTELLIGENCE shows the
+   reassembled messages; <code>list_pgns</code> and
+   <code>list_transport_messages</code> serve them over MCP. RTS/CTS is tested
+   against synthetic frames, because no recording in the corpus has one.</p>
 
 <h2 id="bus-load-and-health">Bus load and health</h2>
 <p>Two monitor sub-tabs. Load shows utilisation over time. Health tracks error

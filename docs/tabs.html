@@ -16,7 +16,7 @@
 <header class="masthead">
   <div class="masthead-inner">
     <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">CanLab<span>/docs</span></a>
-    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html">Guide</a><a href="tabs.html" aria-current="page">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html">Integrations</a><a href="reference.html">Reference</a></nav>
+    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html">Guide</a><a href="tabs.html" aria-current="page">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html">Integrations</a><a href="cli.html">Command line</a><a href="reference.html">Reference</a></nav>
   </div>
 </header>
 <div class="wrap">
@@ -108,9 +108,10 @@
    change-on-action capture, a J1939 and NMEA 2000 PGN decoder, and a value
    reverse lookup.</p>
 <p>The PGN decoder works the protocol out from the identifier: NMEA 2000 uses
-   data page 1 in the 126208 to 130836 range. Multi-frame PGNs are named but
-   not decoded, because one frame of one read alone gives a confident wrong
-   answer.</p>
+   data page 1 in the 126208 to 130836 range. Multi-frame PGNs are reassembled
+   first, J1939 transport protocol and NMEA 2000 fast packets alike, and
+   decoded whole; one frame of one is never decoded alone, because that gives
+   a confident wrong answer.</p>
 <p>Change-on-action is the one worth knowing about: capture a baseline, perform
    a physical action, capture again, and it shows which bytes changed. That is
    often the fastest route from "somewhere in these 60 messages" to a
@@ -145,12 +146,15 @@
    driven by signals you have defined.</p>
 
 <h2 id="auto-re">AUTO-RE</h2>
-<p>The tedious part, automated. Four sub-tabs: <strong>COUNTER/CHECKSUM</strong>
+<p>The tedious part, automated. Six sub-tabs: <strong>COUNTER/CHECKSUM</strong>
    detection across every message, <strong>ENTROPY BOUNDARIES</strong> to
    suggest where fields begin and end, <strong>CORRELATION</strong> between
-   bytes, and a <strong>CHECKSUM GUESSER</strong> that takes one message and
-   one byte and tries every algorithm it knows. Runs in worker threads, so the
-   window stays responsive. See <a href="analysis.html">how it works</a>.</p>
+   bytes, a <strong>CHECKSUM GUESSER</strong> that takes one message and
+   one byte and tries every algorithm it knows, <strong>FLAGS &amp; ENUMS</strong>
+   for switches and value tables, and <strong>BLOCKS</strong> for runs of
+   consecutive IDs that share one layout, with a shared field added to every
+   member at once. Runs in worker threads, so the window stays responsive. See
+   <a href="analysis.html">how it works</a>.</p>
 
 <h2 id="timeline">TIMELINE</h2>
 <p>Questions about <em>when</em>. Several signals stacked on one scrubbable
@@ -170,6 +174,11 @@
    checksum, boolean flag, physical value or padding with a confidence, fits a
    baseline from normal traffic and scores frames against it for anomalies, and
    finds messages with similar behaviour by embedding.</p>
+<p>The <strong>WATCH</strong> sub-tab does the scoring live: fit a baseline
+   from the last half minute, start the watch, and each new batch of frames is
+   scored as it arrives. A payload out of band, an ID gone quiet, a burst or an
+   ID the baseline never saw becomes a row, a flash in the status bar and, if
+   you ask, a mark on the timeline.</p>
 
 <h2 id="gateway">GATEWAY</h2>
 <p>Bridges two CAN channels and puts you in between. Rules are applied in
