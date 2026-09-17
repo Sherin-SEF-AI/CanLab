@@ -295,6 +295,7 @@ def main() -> int:
     # 6 ── what the protocol decoders say ────────────────────────────────────
     tab("INTELLIGENCE")
     window.intelligence_tab._run_j1939()
+    wait_until(lambda: window.intelligence_tab.j1939_table.rowCount() > 0, 60)
     pump(0.8)
     scene("protocol",
           """The protocol decoders are asked as well, and they decline. Every

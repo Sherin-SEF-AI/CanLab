@@ -607,6 +607,76 @@ def phase_safety():
 
 # ── run ──────────────────────────────────────────────────────────────────────
 
+# ── 8. multi-frame messages, reassembled and checked against the world ───────
+
+def phase_multiframe():
+    section("MULTI-FRAME MESSAGES REASSEMBLED")
+    from canlab.core.j1939 import decode_n2k
+    from canlab.core.multiframe import Reassembler, summarize
+
+    def marine():
+        if not (DATA / "canedge_c.MF4").is_file():
+            return None, "canedge_c.MF4 missing"
+        df = load("canedge_c.MF4")
+        r = Reassembler()
+        t0 = time.perf_counter()
+        r.update_dataframe(df)
+        r.finish()
+        took = time.perf_counter() - t0
+        st = r.stats()
+        gnss = [m for m in r.messages if m.pgn == 129029]
+        sats = [m for m in r.messages if m.pgn == 129540]
+        ok = (st["dropped"] == 0 and len(gnss) == 60
+              and all(m.size == 43 for m in gnss)
+              and len(sats) == 60 and all(m.size == 135 for m in sats)
+              and all(m.data[2] == 11 for m in sats))
+        return ok, (f"{st['complete']} messages, {st['dropped']} dropped in {took:.2f} s; "
+                    f"{len(gnss)} GNSS fixes of 43 B, {len(sats)} satellite lists of "
+                    f"135 B each naming 11 satellites")
+    check("the marine log reassembles with nothing dropped", marine)
+
+    def position_agrees():
+        if not (DATA / "canedge_c.MF4").is_file():
+            return None, "canedge_c.MF4 missing"
+        df = load("canedge_c.MF4")
+        r = Reassembler()
+        r.update_dataframe(df)
+        first = next(m for m in r.messages if m.pgn == 129029)
+        fix = decode_n2k(129029, first.data)
+        rapid = df[df["ID"] == "9F80123"].iloc[0]
+        lat_rapid = int.from_bytes(bytes(int(rapid[f"B{i}"]) for i in range(4)),
+                                   "little", signed=True) * 1e-7
+        lat, lon, alt = fix["Latitude"][0], fix["Longitude"][0], fix["Altitude"][0]
+        ok = (abs(lat - lat_rapid) < 1e-3 and abs(lat - 42.661) < 1e-3
+              and abs(lon + 81.2128) < 1e-3 and abs(alt - 173.5) < 0.6
+              and fix["Date"][0] == "2021-03-25")
+        return ok, (f"reassembled fix {lat:.5f}, {lon:.5f} at {alt:.1f} m on "
+                    f"{fix['Date'][0]}; the single-frame rapid position says "
+                    f"{lat_rapid:.5f}; Lake Erie's surface is about 174 m")
+    check("a reassembled GNSS fix agrees with the single-frame position", position_agrees)
+
+    def truck():
+        if not (DATA / "canedge_big.MF4").is_file():
+            return None, "canedge_big.MF4 missing"
+        df = load("canedge_big.MF4")
+        r = Reassembler()
+        t0 = time.perf_counter()
+        r.update_dataframe(df)
+        r.finish()
+        took = time.perf_counter() - t0
+        rows = {(row["pgn"], row["sa"]): row for row in summarize(r.messages)}
+        ec1 = rows.get((0xFEE3, 0x00))
+        rc = rows.get((0xFEE1, 0x0F))
+        ok = (r.stats()["dropped"] == 0 and took < 2.0
+              and ec1 is not None and ec1["count"] == 46 and ec1["bytes"] == 39
+              and rc is not None and rc["count"] == 39 and rc["bytes"] == 19)
+        return ok, (f"{r.stats()['complete']} BAM messages in {took:.2f} s over 145,534 "
+                    f"frames: {ec1['count'] if ec1 else 0} x Engine Configuration (39 B) "
+                    f"from the engine, {rc['count'] if rc else 0} x Retarder Configuration "
+                    f"(19 B) from address 0x0F, none dropped")
+    check("the truck log's BAM broadcasts reassemble", truck)
+
+
 def main() -> int:
     print(f"CanLab end-to-end acceptance against new real sources\ndata: {DATA}")
     if not DATA.is_dir():
@@ -616,7 +686,7 @@ def main() -> int:
     print(f"{len(have)} file(s): {', '.join(have)}")
 
     for phase in (phase_mdf4, phase_native_binary, phase_cross_format,
-                  phase_analysis, phase_new_features, phase_exports, phase_safety):
+                  phase_analysis, phase_new_features, phase_exports, phase_multiframe, phase_safety):
         phase()
 
     print("\n" + "=" * 70)

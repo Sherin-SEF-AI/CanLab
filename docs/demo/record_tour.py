@@ -196,6 +196,7 @@ def main() -> int:
     # 2 ── what protocol is this ─────────────────────────────────────────────
     tab("INTELLIGENCE")
     window.intelligence_tab._run_j1939()
+    wait_until(lambda: window.intelligence_tab.j1939_table.rowCount() > 0, 60)
     pump(0.5)
     shot("protocol",
          """First question on an unknown bus: what is it. Twenty-nine bit

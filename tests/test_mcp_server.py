@@ -244,3 +244,38 @@ def test_cli_parser():
     from canlab.mcp_server import build_parser
     a = build_parser().parse_args(["--http", "--port", "9000", "--token", "x"])
     assert a.http and a.port == 9000 and a.token == "x" and not a.attach
+
+
+def test_transport_tools_return_plain_json():
+    """The reassembled messages and the PGN scan, as an assistant sees them."""
+    import json
+
+    import pandas as pd
+
+    from canlab.core.mcp_tools import CanLabTools, HeadlessBackend
+
+    cm = bytes([0x20, 0x13, 0x00, 0x03, 0xFF, 0xE1, 0xFE, 0x00])
+    dt = [bytes([0x01, 0x03, 0x03, 0x60, 0x22, 0x4A, 0x80, 0x4D]),
+          bytes([0x02, 0x27, 0x28, 0x2D, 0x2B, 0xB8, 0x42, 0x1D]),
+          bytes([0x03, 0x60, 0x3B, 0x5D, 0x04, 0x19, 0xFF, 0xFF])]
+    rows = [{"Timestamp": 0.0, "ID": "1CECFF0F", "Bus": 0, "DLC": 8, "Extended": True,
+             **{f"B{k}": cm[k] for k in range(8)}}]
+    rows += [{"Timestamp": 0.05 * (i + 1), "ID": "1CEBFF0F", "Bus": 0, "DLC": 8,
+              "Extended": True, **{f"B{k}": d[k] for k in range(8)}}
+             for i, d in enumerate(dt)]
+    backend = HeadlessBackend()
+    backend.df = pd.DataFrame(rows)
+    tools = CanLabTools(backend)
+
+    pgns = tools.list_pgns()
+    assert any(r["pgn_name"].startswith("TP.CM") for r in pgns)
+    messages = tools.list_transport_messages()
+    assert len(messages) == 1
+    m = messages[0]
+    assert m["pgn"] == 0xFEE1 and m["count"] == 1 and m["bytes"] == 19
+    assert m["transport"] == "BAM"
+    json.dumps(messages)                                   # clean() did its job
+    assert tools.list_transport_messages(pgn=0xF004) == []
+    for name in ("list_pgns", "list_transport_messages"):
+        assert name in CanLabTools.TOOL_NAMES
+        assert not any(w in name for w in ("send", "inject", "transmit", "replay", "fuzz"))

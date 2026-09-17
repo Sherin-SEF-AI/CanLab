@@ -512,6 +512,28 @@ class CanLabTools:
             raise ValueError(f"no signal {name} on {mid}")
         raise ValueError(f"unknown id {id!r}; use search first")
 
+    def list_pgns(self, limit: int = DEFAULT_LIMIT) -> list[dict]:
+        """Every 29-bit identifier as a J1939 or NMEA 2000 parameter group:
+        the PGN, its name where known, the protocol worked out from the
+        identifier, the source address and how many frames it sent. A quick
+        way to learn what kind of bus a capture came from."""
+        from canlab.core.j1939 import scan_for_j1939
+        return clean(scan_for_j1939(self.backend.frames())[:_limit(limit)])
+
+    def list_transport_messages(self, pgn: int | None = None,
+                                limit: int = DEFAULT_LIMIT) -> list[dict]:
+        """Messages larger than one frame, put back together: J1939 transport
+        protocol broadcasts and sessions, and NMEA 2000 fast packets. One row
+        per PGN and sender with the count, the size, the last payload as hex
+        and its decode where a layout is known (a GNSS fix, a fault-code
+        list). Reading these frames one at a time gives confident nonsense,
+        so this is the only honest way to see them."""
+        from canlab.core.multiframe import reassemble_dataframe, summarize
+        rows = summarize(reassemble_dataframe(self.backend.frames()))
+        if pgn is not None:
+            rows = [r for r in rows if r["pgn"] == int(pgn)]
+        return clean(rows[:_limit(limit)])
+
     # -- registration --------------------------------------------------------
     TOOL_NAMES = (
         "status", "load_log", "list_ids", "byte_stats", "frames",
@@ -521,6 +543,7 @@ class CanLabTools:
         "list_dbc_signals", "add_dbc_signal", "remove_dbc_signal", "export_dbc", "decode",
         "list_annotations", "add_annotation", "rank_annotations",
         "search", "fetch",
+        "list_pgns", "list_transport_messages",
     )
 
     def register(self, mcp) -> None:

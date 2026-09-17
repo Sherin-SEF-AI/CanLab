@@ -225,6 +225,7 @@ def main() -> int:
     # 3 ──────────────────────────────────────────────────────────────────────
     tab("INTELLIGENCE")
     window.intelligence_tab._run_j1939()
+    wait_until(lambda: window.intelligence_tab.j1939_table.rowCount() > 0, 60)
     pump(0.8)
     scene("pgn",
           """Every identifier in the truck half decodes as a J1939 parameter
