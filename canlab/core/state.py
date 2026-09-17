@@ -30,6 +30,7 @@ class AppState(QObject):
     pid_value_updated    = pyqtSignal(int, float, str)  # pid, value, unit
 
     anomaly_detected     = pyqtSignal(str, float)        # id, score
+    annotations_changed  = pyqtSignal()                  # marks edited outside INTELLIGENCE
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -70,6 +71,9 @@ class AppState(QObject):
         # made live or against a loaded log, and ranked against every byte.
         from canlab.core.annotations import AnnotationSet
         self.annotations = AnnotationSet()
+        # The live anomaly watch, when the WATCH sub-tab has started one;
+        # read by the MCP backend so an assistant can list its events.
+        self.live_watch = None
         self.fuzz_running:      bool         = False
         self.active_backend:    str          = "python-can"
         # Framing conventions for injection/export/AI hints; "generic" asserts

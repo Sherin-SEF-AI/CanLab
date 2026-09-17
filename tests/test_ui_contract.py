@@ -224,3 +224,26 @@ def test_the_frame_counter_survives_being_re_targeted_mid_flight(qcore):
     assert lbl._current == 12
     assert lbl.text() == "12 frames"
     lbl.deleteLater()
+
+
+def test_marks_in_a_loaded_project_are_listed(window, qcore, tmp_path):
+    """The marks list only ever refreshed from its own buttons, so a project's
+    marks landed in state and stayed invisible until the user did something."""
+    import pandas as pd
+
+    from canlab.core.log_parser import make_row
+    from canlab.core.project import load_project, write_project
+
+    path = tmp_path / "marked.canlab"
+    rows = [make_row(i * 0.1, 0x100, False, 0, bytes(8)) for i in range(20)]
+    write_project(str(path), frames_chunks=[pd.DataFrame(rows)],
+                  annotations_json='[{"label": "brake", "start": 0.5, "end": 1.0}]')
+    load_project(window._state, str(path))
+    qcore.processEvents()
+    items = [window.intelligence_tab.ann_list.item(i).text()
+             for i in range(window.intelligence_tab.ann_list.count())]
+    assert any("brake" in text for text in items), items
+    window._state.annotations.clear()
+    window._state.annotations_changed.emit()
+    qcore.processEvents()
+    assert window.intelligence_tab.ann_list.count() == 0

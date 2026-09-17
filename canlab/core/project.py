@@ -9,28 +9,65 @@ import pandas as pd
 PROJECT_FORMAT_VERSION = 2
 
 
+def write_project(path: str, *, frames_chunks, signals=None, memory=None,
+                  triggers=None, notes=None, annotations_json: str = "[]",
+                  meta: dict | None = None) -> int:
+    """Write a .canlab archive from parts, streaming the frames.
+
+    `frames_chunks` is any iterable of DataFrames. They are written into one
+    frames.csv member as they arrive, header once, so a recording of a few
+    million frames never has to exist in memory as a single table. That is
+    what lets the headless capture kit produce the same file the window
+    saves. Returns the number of frames written.
+
+    The layout is unchanged from save_project, so the format version stays 2
+    and load_project reads both.
+    """
+    frames = 0
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        member = None
+        text = None
+        for chunk in frames_chunks:
+            if chunk is None or len(chunk) == 0:
+                continue
+            if member is None:
+                # Opened lazily: an archive with no frames must not carry an
+                # empty frames.csv, which the reader would choke on.
+                member = zf.open("frames.csv", "w", force_zip64=True)
+                text = io.TextIOWrapper(member, encoding="utf-8", newline="")
+            chunk.to_csv(text, index=False, header=frames == 0)
+            frames += len(chunk)
+        if text is not None:
+            text.flush()
+            text.detach()
+            member.close()
+
+        zf.writestr("signals.json", json.dumps(signals or [], indent=2))
+        zf.writestr("memory.json", json.dumps(memory or [], indent=2))
+        zf.writestr("triggers.json", json.dumps(triggers or [], indent=2))
+        zf.writestr("notes.json", json.dumps(notes or {}, indent=2))
+        zf.writestr("annotations.json", annotations_json or "[]")
+        full_meta = {"format_version": PROJECT_FORMAT_VERSION,
+                     "periodicities": {}, "vehicle_profile": "generic"}
+        full_meta.update(meta or {})
+        zf.writestr("meta.json", json.dumps(full_meta, indent=2))
+    return frames
+
+
 def save_project(state, path: str):
     """Zip: frames.csv, signals.json, memory.json, meta.json"""
-    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        if not state.frames_df.empty:
-            buf = io.StringIO()
-            state.frames_df.to_csv(buf, index=False)
-            zf.writestr("frames.csv", buf.getvalue())
-
-        zf.writestr("signals.json", json.dumps(state.dbc_signals, indent=2))
-        zf.writestr("memory.json",  json.dumps(state.ai_memory,   indent=2))
-        zf.writestr("triggers.json",json.dumps(state.triggers,    indent=2))
-        zf.writestr("notes.json",   json.dumps(getattr(state, "notes_by_signal", {}), indent=2))
-        ann = getattr(state, "annotations", None)
-        zf.writestr("annotations.json", ann.to_json() if ann is not None else "[]")
-
-        meta = {
-            "format_version": PROJECT_FORMAT_VERSION,
-            "periodicities": {k: float(v) for k, v in state.periodicities.items()},
-            "vehicle_profile": getattr(state, "vehicle_profile", "generic"),
-        }
-        zf.writestr("meta.json", json.dumps(meta, indent=2))
-
+    ann = getattr(state, "annotations", None)
+    write_project(
+        path,
+        frames_chunks=[state.frames_df],
+        signals=state.dbc_signals,
+        memory=state.ai_memory,
+        triggers=state.triggers,
+        notes=getattr(state, "notes_by_signal", {}),
+        annotations_json=ann.to_json() if ann is not None else "[]",
+        meta={"periodicities": {k: float(v) for k, v in state.periodicities.items()},
+              "vehicle_profile": getattr(state, "vehicle_profile", "generic")},
+    )
     state.project_path = path
 
 

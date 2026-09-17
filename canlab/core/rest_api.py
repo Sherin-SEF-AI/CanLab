@@ -101,7 +101,17 @@ def _json_safe(records: list) -> list:
     return out
 
 
-def _build_app(state_getter, token: str):
+def _build_app(state_getter, token: str, *, expose_inject: bool = True, on_mark=None):
+    """Build the FastAPI app.
+
+    `expose_inject` gates the one endpoint that can put a frame on a bus. The
+    headless capture kit runs this server on a phone-reachable address purely
+    so a passenger can mark events, and an injection endpoint has no business
+    being reachable from a phone, so the kit builds the app without it.
+
+    `on_mark(label, action, at)` is called for POST /mark when given; it
+    returns the action actually performed ("begin" or "end" for a toggle).
+    """
     try:
         from fastapi import FastAPI, HTTPException, Header, Depends
         from fastapi.responses import JSONResponse, HTMLResponse
@@ -127,6 +137,29 @@ def _build_app(state_getter, token: str):
         id:   str            # hex, e.g. "018"
         data: str            # hex bytes space-separated, e.g. "01 02 03 04 05 06 07 08"
         extended: bool = False
+
+    class MarkRequest(BaseModel):
+        label: str
+        action: str = "toggle"       # begin | end | point | toggle
+        at: float | None = None      # capture clock; server time when absent
+
+    if on_mark is not None:
+        @app.post("/mark", dependencies=auth)
+        def mark(req: MarkRequest):
+            """Record that something happened, for ranking bytes against it later."""
+            import time as _time
+            label = req.label.strip()
+            if not label:
+                raise HTTPException(status_code=400, detail="label is required")
+            if req.action not in ("begin", "end", "point", "toggle"):
+                raise HTTPException(status_code=400,
+                                    detail="action must be begin, end, point or toggle")
+            at = float(req.at) if req.at is not None else _time.time()
+            try:
+                performed = on_mark(label, req.action, at)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            return {"ok": True, "label": label, "action": performed or req.action, "at": at}
 
     @app.get("/frames", dependencies=auth)
     def get_frames(n: int = 200):
@@ -157,6 +190,9 @@ def _build_app(state_getter, token: str):
         state = state_getter()
         return JSONResponse(content=state.ai_memory)
 
+    if not expose_inject:
+        return app
+
     @app.post("/inject", dependencies=auth)
     def inject_frame(req: InjectRequest):
         import can
@@ -184,14 +220,19 @@ def _build_app(state_getter, token: str):
 
 class RestAPIServer:
     def __init__(self, state_getter, host: str = "127.0.0.1", port: int = 8765,
-                 token: str = None, allow_remote: bool = False):
-        # Refuse to expose an unauthenticated-by-address, frame-injecting API on
-        # a non-loopback interface unless the caller explicitly opts in.
+                 token: str = None, allow_remote: bool = False, *,
+                 expose_inject: bool = True, on_mark=None):
+        # Refuse to expose the API on a non-loopback interface unless the
+        # caller explicitly opts in. Frames and marks still travel with the
+        # token, and with /inject exposed the stakes are higher still.
+        self._expose_inject = expose_inject
+        self._on_mark = on_mark
         if not allow_remote:
             try:
                 if not ipaddress.ip_address(host).is_loopback:
+                    what = "with /inject" if expose_inject else "frames and marks"
                     raise ValueError(
-                        f"Refusing to bind REST API (with /inject) to non-loopback "
+                        f"Refusing to bind REST API ({what}) to non-loopback "
                         f"address {host!r}; pass allow_remote=True to override."
                     )
             except ValueError:
@@ -212,7 +253,8 @@ class RestAPIServer:
         bind used to kill that thread silently while the app reported the API
         as running and handed the user a token for a server that did not exist.
         """
-        app = _build_app(self._state_getter, self.token)
+        app = _build_app(self._state_getter, self.token,
+                         expose_inject=self._expose_inject, on_mark=self._on_mark)
         if app is None:
             raise ImportError("fastapi or uvicorn not installed")
 
