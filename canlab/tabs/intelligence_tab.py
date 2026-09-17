@@ -59,10 +59,14 @@ def _decoded_preview(decoded: dict) -> str:
         return (f"{len(codes)} active code{'s' if len(codes) != 1 else ''}: {summary}"
                 if first else f"{len(codes)} active codes")
     parts = []
-    for name, value in list(decoded.items())[:3]:
+    scalars = [(k, v) for k, v in decoded.items() if not isinstance(v, list)]
+    for name, value in scalars[:3]:
         if isinstance(value, tuple) and len(value) == 2:
             number, unit = value
-            parts.append(f"{name}={number:g} {unit}".rstrip())
+            # A reassembled GNSS fix carries its date as text; only numbers
+            # take the compact format.
+            shown = f"{number:g}" if isinstance(number, (int, float)) else str(number)
+            parts.append(f"{name}={shown} {unit}".rstrip())
         else:
             parts.append(f"{name}={value}")
     return "  |  ".join(parts)
@@ -639,11 +643,33 @@ class IntelligenceTab(QWidget):
         if df.empty:
             QMessageBox.information(self, "No Data", "Load frames first.")
             return
-        from canlab.core.j1939 import scan_for_j1939, decode_pgn
-        hits = scan_for_j1939(df)
+        self.btn_j1939.setEnabled(False)
+        # Cleared now rather than when the worker returns, so a table never
+        # shows the previous capture's rows under a "scanning" label.
+        self.j1939_table.setRowCount(0)
+        self.lbl_j1939.setText("Scanning PGNs and reassembling multi-frame messages…")
+        from canlab.core.j1939 import scan_for_j1939
+        from canlab.core.multiframe import reassemble_dataframe, summarize
+        from canlab.ui.compute_worker import ComputeWorker
+
+        def work(frames):
+            return scan_for_j1939(frames), summarize(reassemble_dataframe(frames))
+
+        self._j1939_worker = ComputeWorker(work, df)
+        self._j1939_worker.done.connect(self._on_j1939_done)
+        self._j1939_worker.failed.connect(
+            lambda e: (self.lbl_j1939.setText(f"Scan failed: {e}"),
+                       self.btn_j1939.setEnabled(True)))
+        self._j1939_worker.start()
+
+    def _on_j1939_done(self, result):
+        hits, transport = result
+        self.btn_j1939.setEnabled(True)
+        df = self._state.frames_df
         if not hits:
             self.lbl_j1939.setText(
                 "No 29-bit IDs, so neither J1939 nor NMEA 2000 (all IDs are ≤ 0x7FF).")
+            self.j1939_table.setRowCount(0)
             return
         # Say which protocol the bus actually is. Both use the same 29-bit
         # frame, and reporting a marine bus as J1939 was misleading enough that
@@ -654,41 +680,81 @@ class IntelligenceTab(QWidget):
         named = sum(1 for h in hits if not h["pgn_name"].startswith("PGN "))
         summary = ", ".join(f"{n} {proto}" for proto, n in
                             sorted(counts.items(), key=lambda kv: -kv[1]))
-        self.lbl_j1939.setText(f"{len(hits)} PGNs: {summary}. {named} named.")
+        text = f"{len(hits)} PGNs: {summary}. {named} named."
+        if transport:
+            messages = sum(row["count"] for row in transport)
+            text += f" {len(transport)} multi-frame PGNs reassembled ({messages} messages)."
+        self.lbl_j1939.setText(text)
 
-        # Populate right-panel J1939 table
+        from canlab.core.j1939 import decode_pgn
+        from canlab.core.multiframe import TP_CM_PGN, TP_DT_PGN
+
+        # What each transport envelope carried, and what each multi-frame PGN
+        # decoded to, keyed for the rows below.
+        carried: dict[int, list] = {}
+        by_pgn: dict[int, list] = {}
+        for row in transport:
+            by_pgn.setdefault(row["pgn"], []).append(row)
+            if row["transport"] in ("BAM", "RTS/CTS"):
+                carried.setdefault(row["sa"], []).append(row)
+
         self.j1939_table.setRowCount(0)
+        seen_pgns = set()
         for h in hits:
+            seen_pgns.add(h["pgn"])
             frames = df[df["ID"] == h["id_hex"]]
-            # Decode first frame for SPN preview
             spn_preview = ""
-            if not h["single_frame"]:
-                # An NMEA 2000 fast-packet message is split across frames with
-                # a sequence byte. Decoding one frame of it in isolation gives
-                # a confident wrong answer, so say nothing instead.
-                spn_preview = "fast packet, needs reassembly"
+            if h["pgn"] in (TP_CM_PGN, TP_DT_PGN):
+                rows = carried.get(h["sa"], [])
+                if h["pgn"] == TP_CM_PGN and rows:
+                    spn_preview = "; ".join(
+                        f"{r['count']} {r['transport']} messages carrying "
+                        f"{r['pgn_name']} ({r['bytes']} B)" for r in rows)
+                elif h["pgn"] == TP_DT_PGN:
+                    spn_preview = f"{h['frame_count']} data packets"
+            elif not h["single_frame"]:
+                rows = by_pgn.get(h["pgn"], [])
+                if rows:
+                    r = rows[0]
+                    decoded = _decoded_preview(r["decoded"])
+                    spn_preview = (f"{r['count']} messages of {r['bytes']} B"
+                                   + (f"; {decoded}" if decoded else ""))
+                else:
+                    spn_preview = "fast packet: no complete message"
             elif not frames.empty:
                 spn_preview = _decoded_preview(
                     decode_pgn(h["pgn"], _frame_bytes(frames.iloc[0])))
-            r = self.j1939_table.rowCount()
-            self.j1939_table.insertRow(r)
-            cells = [
+            self._add_j1939_row(
                 h["id_hex"],
                 f"0x{h['pgn']:04X}" if h["protocol"] == "J1939" else str(h["pgn"]),
-                h["pgn_name"],
-                h["protocol"],
-                h["sa_name"],
-                str(h["frame_count"]),
-                spn_preview,
-            ]
-            for ci, txt in enumerate(cells):
-                item = QTableWidgetItem(txt)
-                item.setFont(mono_font(8))
-                if ci == 2 and not txt.startswith("PGN "):
-                    item.setForeground(QBrush(QColor(COLORS["green"])))
-                elif ci == 6 and txt.startswith("fast packet"):
-                    item.setForeground(QBrush(QColor(COLORS["dim"])))
-                self.j1939_table.setItem(r, ci, item)
+                h["pgn_name"], h["protocol"], h["sa_name"], str(h["frame_count"]),
+                spn_preview)
+
+        # PGNs that only ever travel inside the transport protocol have no
+        # identifier of their own, so they get a row from the reassembly.
+        for row in transport:
+            if row["transport"] in ("BAM", "RTS/CTS") and row["pgn"] not in seen_pgns:
+                seen_pgns.add(row["pgn"])
+                self._add_j1939_row(
+                    f"TP SA{row['sa']:02X}",
+                    f"0x{row['pgn']:04X}" if row["protocol"] == "J1939" else str(row["pgn"]),
+                    row["pgn_name"], row["protocol"], row["sa_name"],
+                    str(row["count"]),
+                    f"{row['count']} messages of {row['bytes']} B via {row['transport']}"
+                    + (f"; {_decoded_preview(row['decoded'])}"
+                       if _decoded_preview(row["decoded"]) else ""))
+
+    def _add_j1939_row(self, *cells) -> None:
+        r = self.j1939_table.rowCount()
+        self.j1939_table.insertRow(r)
+        for ci, txt in enumerate(cells):
+            item = QTableWidgetItem(txt)
+            item.setFont(mono_font(8))
+            if ci == 2 and not txt.startswith("PGN "):
+                item.setForeground(QBrush(QColor(COLORS["green"])))
+            elif ci == 6 and txt.startswith("fast packet"):
+                item.setForeground(QBrush(QColor(COLORS["dim"])))
+            self.j1939_table.setItem(r, ci, item)
 
     # ── Value Reverse Lookup ──────────────────────────────────────────────────
 

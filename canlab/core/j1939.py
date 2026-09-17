@@ -64,6 +64,13 @@ _PGN_DB: dict[int, dict] = {
             110: ("Engine Coolant Temp",      5, 1, 1.0,  -40,"°C"),
         },
     },
+    # Transport protocol (J1939-21). The frames themselves are envelopes; the
+    # reassembler in core/multiframe.py turns them back into the PGN they carry.
+    0xEC00: {"name": "TP.CM - Transport Protocol Connection Management", "spns": {}},
+    0xEB00: {"name": "TP.DT - Transport Protocol Data Transfer", "spns": {}},
+    # Two configuration messages that only ever travel as BAM broadcasts.
+    0xFEE3: {"name": "EC1 - Engine Configuration 1", "spns": {}},
+    0xFEE1: {"name": "RC - Retarder Configuration", "spns": {}},
     # Ambient Conditions
     0xFEF5: {
         "name": "AMB — Ambient Conditions",
@@ -175,29 +182,39 @@ def parse_j1939_id(arb_id: int) -> dict:
         da  = ps
 
     if is_nmea2000(pgn):
-        name, single = _N2K_NAMES.get(pgn, (f"PGN {pgn}", True))
+        _name, single = _N2K_NAMES.get(pgn, (f"PGN {pgn}", True))
         return {
             "priority": priority,
             "pgn":      pgn,
             "sa":       sa,
             "da":       da,
             "sa_name":  f"Device 0x{sa:02X}",
-            "pgn_name": name,
+            "pgn_name": pgn_name(pgn),
             "protocol": "NMEA 2000",
             "single_frame": single,
+            "transport": False,
         }
 
-    pgn_info = _PGN_DB.get(pgn, {})
     return {
         "priority": priority,
         "pgn":      pgn,
         "sa":       sa,
         "da":       da,
         "sa_name":  _SA_NAMES.get(sa, f"SA 0x{sa:02X}"),
-        "pgn_name": pgn_info.get("name", f"PGN 0x{pgn:04X}"),
+        "pgn_name": pgn_name(pgn),
         "protocol": "J1939",
         "single_frame": True,
+        # The two transport-protocol envelopes: their payload is a message
+        # for another PGN, reassembled by core/multiframe.py.
+        "transport": pgn in (0xEC00, 0xEB00),
     }
+
+
+def pgn_name(pgn: int) -> str:
+    """The name of a PGN in whichever table owns it, or a placeholder."""
+    if is_nmea2000(pgn):
+        return _N2K_NAMES.get(pgn, (f"PGN {pgn}", True))[0]
+    return _PGN_DB.get(pgn, {}).get("name", f"PGN 0x{pgn:04X}")
 
 
 # ── NMEA 2000 ────────────────────────────────────────────────────────────────
@@ -207,7 +224,7 @@ def parse_j1939_id(arb_id: int) -> dict:
 # Only single-frame PGNs carry field definitions here. NMEA 2000 also has a
 # "fast packet" transport that spreads one message over several frames with a
 # sequence byte, and decoding a fast-packet PGN from a single frame produces
-# confident nonsense: PGN 129029 read that way dates a 2024 recording to 2002.
+# confident nonsense: PGN 129029 read that way dates a 2021 recording to 2002.
 # Those PGNs are named and left undecoded until reassembly exists.
 
 #: PGN → (name, is_single_frame)
@@ -313,13 +330,110 @@ def _n2k_value(data: bytes, start: int, length: int, signed: bool):
     if raw_bytes == b"\xFF" * length:
         return None                      # NMEA 2000's "data not available"
     raw = int.from_bytes(raw_bytes, "little")
-    if signed and raw >= 1 << (length * 8 - 1):
-        raw -= 1 << (length * 8)
+    if signed:
+        # A signed field says "not available" with its largest positive code
+        # (0x7FFF and so on), the way an unsigned one uses all ones. Without
+        # this a satellite's missing range residual read as 21,474 metres.
+        if raw == (1 << (length * 8 - 1)) - 1:
+            return None
+        if raw >= 1 << (length * 8 - 1):
+            raw -= 1 << (length * 8)
     return raw
 
 
+def _decode_gnss_position(data: bytes) -> dict:
+    """PGN 129029, 43 bytes once reassembled from seven fast-packet frames.
+
+    Checked against a Lake Erie recording: the latitude and longitude agree
+    with the single-frame rapid-position message on the same bus, and the
+    altitude is the lake's published surface elevation.
+    """
+    import datetime as _dt
+    out: dict = {}
+    days = _n2k_value(data, 1, 2, False)
+    if days is not None:
+        out["Date"] = ((_dt.date(1970, 1, 1) + _dt.timedelta(days=days)).isoformat(), "")
+    secs = _n2k_value(data, 3, 4, False)
+    if secs is not None:
+        out["Time"] = (round(secs * 1e-4, 4), "s UTC")
+    for name, start, unit in (("Latitude", 7, "deg"), ("Longitude", 15, "deg")):
+        raw = _n2k_value(data, start, 8, True)
+        if raw is not None:
+            out[name] = (round(raw * 1e-16, 7), unit)
+    alt = _n2k_value(data, 23, 8, True)
+    if alt is not None:
+        out["Altitude"] = (round(alt * 1e-6, 3), "m")
+    if len(data) > 31 and data[31] != 0xFF:
+        out["GNSS Type"] = (data[31] & 0x0F, "")
+        out["Method"] = ((data[31] >> 4) & 0x0F, "")
+    if len(data) > 32 and data[32] != 0xFF:
+        out["Integrity"] = (data[32] & 0x03, "")
+    svs = _n2k_value(data, 33, 1, False)
+    if svs is not None:
+        out["Satellites Used"] = (svs, "")
+    for name, start in (("HDOP", 34), ("PDOP", 36)):
+        raw = _n2k_value(data, start, 2, True)
+        if raw is not None:
+            out[name] = (round(raw * 0.01, 2), "")
+    sep = _n2k_value(data, 38, 4, True)
+    if sep is not None:
+        out["Geoidal Separation"] = (round(sep * 0.01, 2), "m")
+    refs = _n2k_value(data, 42, 1, False)
+    if refs is not None:
+        out["Reference Stations"] = (refs, "")
+    return out
+
+
+def _decode_satellites_in_view(data: bytes) -> dict:
+    """PGN 129540: a header and then twelve bytes per satellite."""
+    out: dict = {}
+    if len(data) > 1 and data[1] != 0xFF:
+        out["Mode"] = (data[1] & 0x03, "")
+    count = _n2k_value(data, 2, 1, False)
+    if count is None:
+        return out
+    out["Satellites in View"] = (count, "")
+    sats = []
+    for i in range(count):
+        base = 3 + 12 * i
+        if base + 12 > len(data):
+            break
+        prn = _n2k_value(data, base, 1, False)
+        elev = _n2k_value(data, base + 1, 2, True)
+        azim = _n2k_value(data, base + 3, 2, False)
+        snr = _n2k_value(data, base + 5, 2, True)
+        resid = _n2k_value(data, base + 7, 4, True)
+        status = data[base + 11] & 0x0F if data[base + 11] != 0xFF else None
+        sats.append({
+            "prn": prn,
+            "elevation_rad": None if elev is None else round(elev * 1e-4, 4),
+            "azimuth_rad": None if azim is None else round(azim * 1e-4, 4),
+            "snr_db": None if snr is None else round(snr * 0.01, 2),
+            "range_residual_m": None if resid is None else round(resid * 1e-5, 5),
+            "status": status,
+        })
+    out["satellites"] = sats
+    return out
+
+
+#: Multi-frame NMEA 2000 PGNs with a decoder, used only on a reassembled
+#: buffer. One 8-byte frame of these still decodes to nothing: read alone it
+#: gives a confident wrong answer.
+_N2K_DECODERS = {
+    129029: _decode_gnss_position,
+    129540: _decode_satellites_in_view,
+}
+
+
 def decode_n2k(pgn: int, data: bytes) -> dict:
-    """Decode an NMEA 2000 single-frame PGN into {field: (value, unit)}."""
+    """Decode an NMEA 2000 PGN into {field: (value, unit)}.
+
+    Single-frame PGNs decode from their one frame. Fast-packet PGNs decode
+    only from a reassembled buffer longer than a frame; see _N2K_DECODERS.
+    """
+    decoder = _N2K_DECODERS.get(pgn)
+    if decoder is not None:
+        return decoder(bytes(data)) if len(data) > 8 else {}
     fields = _N2K_FIELDS.get(pgn)
     if not fields:
         return {}

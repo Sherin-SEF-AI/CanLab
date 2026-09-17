@@ -122,7 +122,7 @@ def test_an_unknown_pgn_decodes_to_nothing_rather_than_guessing():
 def test_fast_packet_messages_are_named_but_not_decoded():
     """Reading one frame of a multi-frame message gives confident nonsense.
 
-    PGN 129029 decoded that way dated a recent recording to 2002.
+    PGN 129029 decoded that way dated a 2021 recording to 2002.
     """
     gnss = parse_j1939_id(0x0DF80523)
     assert gnss["pgn"] == 129029
@@ -175,3 +175,16 @@ def test_the_preview_still_reads_ordinary_pgns():
     assert _decoded_preview({}) == ""
     line = _decoded_preview({"Engine Speed": (1704.125, "rpm")})
     assert line.startswith("Engine Speed=1704.12") and line.endswith("rpm")
+
+
+def test_the_preview_shows_a_text_value_such_as_a_date():
+    """A reassembled GNSS fix carries its date as text. Formatting every value
+    as a number raised, which took the whole scan's table fill down with it."""
+    pytest.importorskip("PyQt6")
+    from canlab.tabs.intelligence_tab import _decoded_preview
+
+    line = _decoded_preview({"Date": ("2021-03-25", ""), "Latitude": (42.661, "deg"),
+                             "satellites": [{"prn": 3}]})
+    assert line.startswith("Date=2021-03-25")
+    assert "Latitude=42.661 deg" in line
+    assert "satellites" not in line, "a list has no place on a one-line preview"
