@@ -83,6 +83,19 @@ class AppBackend:
     def add_annotation(self, label: str, start: float, end: float) -> None:
         self.invoke(lambda: self.state.annotations.add(label, start, end))
 
+    def watch_events(self, limit: int, since_ts: float | None = None) -> list[dict]:
+        watch = getattr(self.state, "live_watch", None)
+        if watch is None:
+            return []
+        return [e.as_dict() for e in watch.events(since_ts, limit)]
+
+    def watch_stats(self) -> dict:
+        watch = getattr(self.state, "live_watch", None)
+        if watch is None:
+            return {"running": False, "fitted": False}
+        running = bool(getattr(self.state, "live_watch_running", False))
+        return {"running": running, **watch.stats()}
+
 
 class McpService:
     """Streamable HTTP on a background thread; start() returns once it answers."""

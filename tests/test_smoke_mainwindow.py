@@ -364,3 +364,81 @@ def test_close_disarms_and_stops_workers(window, app):
     window.close()
     app.processEvents()
     assert not safety.is_armed()
+
+
+class _WatchFeeder:
+    """Steady frames on one ID, then a single frame far outside the band once
+    the test releases it, then quiet. The watch must catch the odd one."""
+
+    def __init__(self, normal=300):
+        self.left = normal
+        self.release_bad = False
+        self.bad_sent = False
+        self.sent = []
+
+    def recv(self, timeout=0.1):
+        if self.left:
+            self.left -= 1
+            return FakeMsg(0x1A0, bytes([self.left & 0x0F, 7, 0, 0, 0, 0, 0, 0]),
+                           timestamp=time.time())
+        if self.release_bad and not self.bad_sent:
+            self.bad_sent = True
+            return FakeMsg(0x1A0, bytes([0xFF] * 8), timestamp=time.time())
+        time.sleep(0.005)
+        return None
+
+    def send(self, msg):
+        self.sent.append(msg)
+
+    def shutdown(self):
+        pass
+
+
+def _pump_until(app, pred, timeout=10.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if pred():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_live_watch_reports_an_out_of_band_frame_during_capture(window, app):
+    st = get_state()
+    st.load_frames(parse_log_file(SAMPLE), "sample")
+    tab = window.ml_intel_tab
+    feeder = _WatchFeeder(300)
+    window._open_bus = lambda *a, **k: feeder
+    before = len(st.frames_df)
+    window._connect_can()
+    try:
+        assert _pump_until(app, lambda: len(st.store) >= before + 300)
+        assert window.lbl_watch.text() == "WATCH: off"
+
+        tab.chk_watch_autofit.setChecked(True)
+        tab.chk_watch_mark.setChecked(True)
+        marks_before = len(st.annotations.items)
+        tab.btn_watch_toggle.setChecked(True)          # fits on the recent frames, then starts
+        assert _pump_until(app, lambda: tab.watch_active)
+        assert window.lbl_watch.text() == "WATCH: quiet"
+        assert "1 IDs" in tab.lbl_watch_baseline.text()
+        assert st.live_watch is tab._watch and st.live_watch_running
+
+        feeder.release_bad = True
+        assert _pump_until(app, lambda: tab.watch_table.rowCount() > 0)
+        assert tab.watch_table.item(0, 1).text() == "1A0"
+        assert tab.watch_table.item(0, 2).text() == "bytes"
+        assert window.lbl_watch.text().startswith("WATCH: 1A0 ")
+        assert len(st.annotations.items) == marks_before + 1
+        assert st.annotations.items[-1].label == "anomaly 1A0 bytes"
+        assert feeder.sent == []                        # observed, never answered
+
+        tab.btn_watch_toggle.setChecked(False)
+        assert not tab.watch_active and not st.live_watch_running
+        assert window.lbl_watch.text() == "WATCH: off"
+        assert "1 events" in tab.lbl_watch_status.text()
+    finally:
+        tab.btn_watch_toggle.setChecked(False)
+        window._disconnect_can()
+        app.processEvents()

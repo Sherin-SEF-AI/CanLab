@@ -189,13 +189,28 @@ class EmbeddingWorker(QThread):
 # ── Main tab ──────────────────────────────────────────────────────────────────
 
 class SignalIntelligenceTab(QWidget):
+    #: True while the live watch timer runs; the status bar follows it.
+    watch_running = pyqtSignal(bool)
+
+    WATCH_TICK_MS = 250
+    WATCH_MAX_ROWS = 500
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._state          = get_state()
         from canlab.ui.worker_pool import WorkerPool
+        from canlab.core.live_watch import LiveWatch
         self._pool           = WorkerPool()
         self._anomaly_det    = None    # fitted baseline
         self._embedding_idx: dict = {}
+        self._watch          = LiveWatch()
+        self._watch_cursor   = 0
+        self._watch_timer    = QTimer(self)
+        self._watch_timer.setInterval(self.WATCH_TICK_MS)
+        self._watch_timer.timeout.connect(self._watch_tick)
+        self._watch_fit_worker = None
+        self._state.live_watch = self._watch
+        self._state.live_watch_running = False
 
         self._build_ui()
         self._state.frames_loaded.connect(self._on_frames_loaded)
@@ -257,6 +272,7 @@ class SignalIntelligenceTab(QWidget):
         self._tabs.addTab(self._build_correlation_tab(), "CORRELATION")
         self._tabs.addTab(self._build_change_tab(),      "CHANGE DETECT")
         self._tabs.addTab(self._build_anomaly_tab(),     "ANOMALY")
+        self._tabs.addTab(self._build_watch_tab(),       "WATCH")
         self._tabs.addTab(self._build_similarity_tab(),  "FIND SIMILAR")
 
         rl.addWidget(self._tabs)
@@ -552,9 +568,220 @@ class SignalIntelligenceTab(QWidget):
         lay.addWidget(self.lbl_sim_status)
         return w
 
+    # ── WATCH tab ─────────────────────────────────────────────────────────────
+
+    def _build_watch_tab(self) -> QWidget:
+        """Score frames as they arrive, against a baseline fitted from the
+        recent past, and report the ones that leave it."""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setSpacing(4)
+
+        grp_fit = QGroupBox("BASELINE")
+        fit_lay = QHBoxLayout(grp_fit)
+        fit_lay.addWidget(QLabel("Fit window:", font=mono_font(8)))
+        self.watch_fit_window = QDoubleSpinBox()
+        self.watch_fit_window.setRange(1.0, 3600.0)
+        self.watch_fit_window.setValue(30.0)
+        self.watch_fit_window.setSuffix(" s")
+        self.watch_fit_window.setFixedWidth(90)
+        self.watch_fit_window.setToolTip("How far back from the newest frame the baseline is fitted.")
+        fit_lay.addWidget(self.watch_fit_window)
+        self.chk_watch_autofit = QCheckBox("Fit when started")
+        self.chk_watch_autofit.setChecked(True)
+        fit_lay.addWidget(self.chk_watch_autofit)
+        fit_lay.addStretch()
+        self.btn_watch_fit = QPushButton("Fit from Recent Frames")
+        self.btn_watch_fit.setObjectName("btn_green")
+        self.btn_watch_fit.clicked.connect(self._watch_fit)
+        fit_lay.addWidget(self.btn_watch_fit)
+        lay.addWidget(grp_fit)
+
+        self.lbl_watch_baseline = QLabel("Baseline: not fitted")
+        self.lbl_watch_baseline.setFont(mono_font(8))
+        self.lbl_watch_baseline.setObjectName("label_dim")
+        lay.addWidget(self.lbl_watch_baseline)
+
+        grp_run = QGroupBox("WATCH")
+        run_lay = QHBoxLayout(grp_run)
+        run_lay.addWidget(QLabel("Threshold:", font=mono_font(8)))
+        self.watch_threshold = QDoubleSpinBox()
+        self.watch_threshold.setRange(0.10, 1.00)
+        self.watch_threshold.setSingleStep(0.05)
+        self.watch_threshold.setValue(0.60)
+        self.watch_threshold.setFixedWidth(70)
+        self.watch_threshold.valueChanged.connect(self._watch_settings_changed)
+        run_lay.addWidget(self.watch_threshold)
+        run_lay.addWidget(QLabel("Cooldown:", font=mono_font(8)))
+        self.watch_cooldown = QDoubleSpinBox()
+        self.watch_cooldown.setRange(0.0, 60.0)
+        self.watch_cooldown.setSingleStep(0.5)
+        self.watch_cooldown.setValue(2.0)
+        self.watch_cooldown.setSuffix(" s")
+        self.watch_cooldown.setFixedWidth(80)
+        self.watch_cooldown.valueChanged.connect(self._watch_settings_changed)
+        run_lay.addWidget(self.watch_cooldown)
+        self.chk_watch_mark = QCheckBox("Mark anomalies on the timeline")
+        self.chk_watch_mark.setToolTip("Each event adds a one second annotation the "
+                                       "TIMELINE and INTELLIGENCE tabs show.")
+        run_lay.addWidget(self.chk_watch_mark)
+        run_lay.addStretch()
+        self.btn_watch_toggle = QPushButton("Start Watch")
+        self.btn_watch_toggle.setObjectName("btn_amber")
+        self.btn_watch_toggle.setCheckable(True)
+        self.btn_watch_toggle.toggled.connect(self._watch_toggled)
+        run_lay.addWidget(self.btn_watch_toggle)
+        lay.addWidget(grp_run)
+
+        self.watch_table = _make_table(["Time", "CAN ID", "Kind", "Score", "Detail"])
+        lay.addWidget(self.watch_table)
+
+        self.lbl_watch_status = QLabel("Fit a baseline, then start the watch. "
+                                       "Events also flash in the status bar.")
+        self.lbl_watch_status.setFont(mono_font(7))
+        self.lbl_watch_status.setObjectName("label_dim")
+        lay.addWidget(self.lbl_watch_status)
+        return w
+
+    @property
+    def watch_active(self) -> bool:
+        return self._watch_timer.isActive()
+
+    def _recent_frames(self, window_s: float) -> pd.DataFrame:
+        """The newest ``window_s`` seconds of the store, by the frame clock."""
+        store = self._state.store
+        df = store.tail(min(len(store), 250_000))
+        if df.empty:
+            return df
+        newest = float(df["Timestamp"].max())
+        return df[df["Timestamp"] >= newest - window_s]
+
+    def _watch_fit(self, then_start: bool = False):
+        df = self._recent_frames(float(self.watch_fit_window.value()))
+        if df.empty:
+            self.lbl_watch_baseline.setText("Baseline: no frames to fit on")
+            if then_start:
+                self.btn_watch_toggle.setChecked(False)
+            return
+        self.btn_watch_fit.setEnabled(False)
+        self.lbl_watch_baseline.setText(f"Fitting on {len(df)} frames…")
+        from canlab.ui.compute_worker import ComputeWorker
+        w = ComputeWorker(self._watch.fit, df, parent=self)
+        w.done.connect(lambda info, start=then_start: self._on_watch_fitted(info, start))
+        w.failed.connect(self._on_watch_fit_failed)
+        self._watch_fit_worker = w
+        self._pool.add(w)
+        w.start()
+
+    def _on_watch_fitted(self, info: dict, then_start: bool):
+        self.btn_watch_fit.setEnabled(True)
+        self.lbl_watch_baseline.setText(
+            f"Baseline: {info.get('ids', 0)} IDs from {info.get('frames', 0)} frames "
+            f"over {info.get('span_s', 0):.1f} s")
+        set_status(self.lbl_watch_baseline, "ok")
+        # the watch starts from what arrives next, not from the fit window
+        self._watch_cursor = len(self._state.store)
+        if then_start and self.btn_watch_toggle.isChecked():
+            self._start_watch()
+
+    def _on_watch_fit_failed(self, message: str):
+        self.btn_watch_fit.setEnabled(True)
+        self.lbl_watch_baseline.setText(f"Baseline: fit failed ({message})")
+        set_status(self.lbl_watch_baseline, "error")
+        self.btn_watch_toggle.setChecked(False)
+
+    def _watch_settings_changed(self, *_):
+        self._watch.threshold = float(self.watch_threshold.value())
+        self._watch.cooldown_s = float(self.watch_cooldown.value())
+
+    def _watch_toggled(self, on: bool):
+        if not on:
+            self._stop_watch()
+            return
+        self._watch_settings_changed()
+        if not self._watch.is_fitted or self.chk_watch_autofit.isChecked():
+            self._watch_fit(then_start=True)
+            return
+        self._start_watch()
+
+    def _start_watch(self):
+        if not self._watch.is_fitted:
+            self.btn_watch_toggle.setChecked(False)
+            return
+        self._watch_cursor = len(self._state.store)
+        self.btn_watch_toggle.setText("Stop Watch")
+        self.lbl_watch_status.setText("Watching. Events appear here as frames arrive.")
+        self._watch_timer.start()
+        self._state.live_watch_running = True
+        self.watch_running.emit(True)
+
+    def _stop_watch(self):
+        was = self._watch_timer.isActive()
+        self._watch_timer.stop()
+        self._state.live_watch_running = False
+        self.btn_watch_toggle.setText("Start Watch")
+        if was:
+            st = self._watch.stats()
+            self.lbl_watch_status.setText(
+                f"Stopped after {st['observed_frames']} frames: {st['events']} events "
+                + ", ".join(f"{k} {v}" for k, v in st["by_kind"].items() if v))
+            self.watch_running.emit(False)
+
+    def _watch_tick(self):
+        """Everything appended since the last tick, scored against the baseline."""
+        store = self._state.store
+        total = len(store)
+        if total < self._watch_cursor:          # the ring wrapped or the capture changed
+            self._watch_cursor = 0
+        if total == self._watch_cursor:
+            events = self._watch.observe(store.tail(0))
+        else:
+            new = min(total - self._watch_cursor, 50_000)
+            events = self._watch.observe(store.tail(new))
+            self._watch_cursor = total
+        if not events:
+            return
+        mark = self.chk_watch_mark.isChecked()
+        for ev in events:
+            self._add_watch_row(ev)
+            self._state.anomaly_detected.emit(ev.can_id, float(ev.score))
+            if mark:
+                self._state.annotations.add(f"anomaly {ev.can_id} {ev.kind}",
+                                            ev.ts - 0.5, ev.ts + 0.5)
+        if mark:
+            self._state.annotations_changed.emit()
+        st = self._watch.stats()
+        self.lbl_watch_status.setText(
+            f"{st['observed_frames']} frames watched, {st['events']} events: "
+            + ", ".join(f"{k} {v}" for k, v in st["by_kind"].items() if v))
+
+    def _add_watch_row(self, ev):
+        t = self.watch_table
+        t.insertRow(0)
+        color = COLORS["error"] if ev.score >= 0.8 else COLORS["amber"]
+        cells = [f"{ev.ts:.3f}", ev.can_id, ev.kind, f"{ev.score:.2f}", ev.detail]
+        for c, text in enumerate(cells):
+            item = QTableWidgetItem(text)
+            item.setFont(mono_font(8))
+            if c == 3:
+                item.setForeground(QBrush(QColor(color)))
+            t.setItem(0, c, item)
+        while t.rowCount() > self.WATCH_MAX_ROWS:
+            t.removeRow(t.rowCount() - 1)
+
+    def cleanup(self):
+        """Stop the watch timer and every worker; the window calls this on close."""
+        self._watch_timer.stop()
+        self._state.live_watch_running = False
+        self._pool.stop_all()
+
     # ── State handlers ────────────────────────────────────────────────────────
 
     def _on_frames_loaded(self, count: int):
+        self._watch_cursor = 0 if self._watch_timer.isActive() else len(self._state.store)
+        self.watch_table.setRowCount(0)
+        self._watch.clear()
         self.id_list.clear()
         for can_id in self._state.get_unique_ids():
             item = QListWidgetItem(can_id)
@@ -1051,7 +1278,3 @@ def _make_table(headers: list[str]) -> QTableWidget:
     t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     t.setAlternatingRowColors(True)
     return t
-
-
-    def cleanup(self):
-        self._pool.stop_all()

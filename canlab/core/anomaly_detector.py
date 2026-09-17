@@ -24,42 +24,103 @@ BYTE_COLS = [f"B{i}" for i in range(8)]
 # ── Z-score baseline ──────────────────────────────────────────────────────────
 
 class ZScoreBaseline:
-    """Per-ID, per-byte Z-score scorer.  score() returns 0-1 (higher = anomalous)."""
+    """Per-ID, per-byte Z-score scorer.  score() returns 0-1 (higher = anomalous).
+
+    The fit also keeps each ID's timing (median period and its spread), which
+    the live watch uses to notice an ID that has gone quiet or is bursting.
+    Scoring is vectorised over a byte matrix; ``score()`` on one row is the
+    same arithmetic on a one-row matrix.
+    """
 
     def __init__(self, threshold_sigma: float = 4.0):
         self._sigma     = threshold_sigma
         self._baselines: dict[str, dict[str, tuple[float, float]]] = {}
+        self._mean:  dict[str, np.ndarray] = {}
+        self._std:   dict[str, np.ndarray] = {}
+        self._valid: dict[str, np.ndarray] = {}
+        self._period: dict[str, tuple[float, float, int]] = {}
 
     def fit(self, frames_df: pd.DataFrame) -> None:
         """Fit per-ID, per-byte mean/std from a clean capture."""
         self._baselines = {}
-        for can_id, grp in frames_df.groupby("ID"):
-            self._baselines[can_id] = {}
-            for col in BYTE_COLS:
-                if col not in grp.columns:
-                    continue
-                s = grp[col].dropna().astype(float)
-                if len(s) < 2:
-                    continue
-                self._baselines[can_id][col] = (float(s.mean()), float(s.std()) + 1e-6)
+        self._mean, self._std, self._valid, self._period = {}, {}, {}, {}
+        if frames_df.empty:
+            return
+        cols = [c for c in BYTE_COLS if c in frames_df.columns]
+        for can_id, grp in frames_df.groupby("ID", sort=False):
+            can_id = str(can_id)
+            mat = np.full((len(grp), 8), np.nan)
+            for i, c in enumerate(cols):
+                mat[:, BYTE_COLS.index(c)] = pd.to_numeric(grp[c], errors="coerce").to_numpy(dtype=float)
+            count = np.isfinite(mat).sum(axis=0)
+            valid = count >= 2
+            mean = np.zeros(8)
+            std = np.ones(8)
+            with np.errstate(invalid="ignore"):
+                if valid.any():
+                    mean[valid] = np.nanmean(mat[:, valid], axis=0)
+                    # ddof=1 to match the pandas std the first version used
+                    std[valid] = np.nanstd(mat[:, valid], axis=0, ddof=1) + 1e-6
+            self._mean[can_id], self._std[can_id], self._valid[can_id] = mean, std, valid
+            self._baselines[can_id] = {
+                BYTE_COLS[i]: (float(mean[i]), float(std[i])) for i in range(8) if valid[i]}
+            ts = np.sort(pd.to_numeric(grp["Timestamp"], errors="coerce").dropna().to_numpy(dtype=float))
+            if len(ts) >= 3:
+                dt = np.diff(ts)
+                med = float(np.median(dt))
+                mad = float(np.median(np.abs(dt - med)))
+                self._period[can_id] = (med, mad, int(len(ts)))
+
+    def score_matrix(self, can_id: str, mat: np.ndarray) -> np.ndarray:
+        """Scores for an (N, 8) byte matrix (NaN for bytes a frame lacks)."""
+        mat = np.asarray(mat, dtype=float)
+        if mat.ndim == 1:
+            mat = mat[None, :]
+        n = mat.shape[0]
+        if can_id not in self._mean or n == 0:
+            return np.zeros(n)
+        if mat.shape[1] < 8:
+            mat = np.hstack([mat, np.full((n, 8 - mat.shape[1]), np.nan)])
+        mat = mat[:, :8]
+        use = np.isfinite(mat) & self._valid[can_id][None, :]
+        z2 = np.where(use, ((mat - self._mean[can_id]) / self._std[can_id]) ** 2, 0.0)
+        count = use.sum(axis=1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            rms = np.sqrt(np.where(count > 0, z2.sum(axis=1) / np.maximum(count, 1), 0.0))
+        return np.clip(rms / self._sigma, 0.0, 1.0)
 
     def score(self, can_id: str, row: dict) -> float:
-        if can_id not in self._baselines:
+        if can_id not in self._mean:
             return 0.0
-        baseline = self._baselines[can_id]
-        z2s = []
+        vals = []
         for col in BYTE_COLS:
-            if col not in baseline:
-                continue
             val = row.get(col)
-            if val is None or (isinstance(val, float) and np.isnan(val)):
+            try:
+                vals.append(np.nan if val is None else float(val))
+            except (TypeError, ValueError):
+                vals.append(np.nan)
+        return float(self.score_matrix(can_id, np.array([vals]))[0])
+
+    def period_stats(self, can_id: str) -> dict | None:
+        """``{"median_dt", "mad_dt", "n"}`` for an ID seen at least three times."""
+        p = self._period.get(can_id)
+        if p is None:
+            return None
+        return {"median_dt": p[0], "mad_dt": p[1], "n": p[2]}
+
+    def byte_deviations(self, can_id: str, values) -> list[tuple[int, float, float]]:
+        """(byte index, value, z) for the bytes of one frame, largest |z| first."""
+        if can_id not in self._mean:
+            return []
+        vals = np.asarray(values, dtype=float)
+        out = []
+        for i in range(min(8, len(vals))):
+            if not self._valid[can_id][i] or not np.isfinite(vals[i]):
                 continue
-            mean, std = baseline[col]
-            z2s.append(((float(val) - mean) / std) ** 2)
-        if not z2s:
-            return 0.0
-        rms_z = float(np.sqrt(np.mean(z2s)))
-        return min(1.0, rms_z / self._sigma)
+            z = (vals[i] - self._mean[can_id][i]) / self._std[can_id][i]
+            out.append((i, float(vals[i]), float(z)))
+        out.sort(key=lambda t: -abs(t[2]))
+        return out
 
     @property
     def is_fitted(self) -> bool:
@@ -141,13 +202,38 @@ def fit_baseline(frames_df: pd.DataFrame,
     return det
 
 
+def byte_matrix(frames_df: pd.DataFrame) -> np.ndarray:
+    """An (N, 8) float matrix of the byte columns, NaN where a frame has none."""
+    mat = np.full((len(frames_df), 8), np.nan)
+    for i, c in enumerate(BYTE_COLS):
+        if c in frames_df.columns:
+            mat[:, i] = pd.to_numeric(frames_df[c], errors="coerce").to_numpy(dtype=float)
+    return mat
+
+
 def score_dataframe(frames_df: pd.DataFrame,
                     baseline) -> pd.DataFrame:
-    """Return frames_df with an added 'anomaly_score' float column (0-1)."""
+    """Return frames_df with an added 'anomaly_score' float column (0-1).
+
+    A baseline with ``score_matrix`` is scored one ID at a time in one
+    vectorised call each; the row loop remains for the Isolation Forest.
+    """
+    out = frames_df.copy()
+    if frames_df.empty:
+        out["anomaly_score"] = np.zeros(0)
+        return out
+    if hasattr(baseline, "score_matrix"):
+        scores = np.zeros(len(frames_df))
+        mat = byte_matrix(frames_df)
+        ids = frames_df["ID"].astype(str).to_numpy()
+        for can_id in pd.unique(ids):
+            where = np.flatnonzero(ids == can_id)
+            scores[where] = baseline.score_matrix(str(can_id), mat[where])
+        out["anomaly_score"] = scores
+        return out
     scores = []
     for _, row in frames_df.iterrows():
         can_id = str(row.get("ID", ""))
         scores.append(baseline.score(can_id, dict(row)))
-    out = frames_df.copy()
     out["anomaly_score"] = scores
     return out

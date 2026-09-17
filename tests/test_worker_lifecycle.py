@@ -168,3 +168,20 @@ def test_cleanup_leaves_nothing_running(qcore):
     assert len(tab._pool) == 0, "a worker outlived the tab that owns it"
     tab.deleteLater()
     qcore.processEvents()
+
+
+def test_cleanup_stops_the_live_watch_timer(qcore):
+    from canlab.core.state import get_state
+    from canlab.tabs.signal_intelligence_tab import SignalIntelligenceTab
+
+    get_state().load_frames(sample(), "small")
+    tab = SignalIntelligenceTab()
+    tab._watch.fit(sample())
+    tab.chk_watch_autofit.setChecked(False)
+    tab.btn_watch_toggle.setChecked(True)
+    assert tab.watch_active and get_state().live_watch_running
+    tab.cleanup()
+    assert not tab.watch_active and not get_state().live_watch_running
+    assert len(tab._pool) == 0
+    tab.deleteLater()
+    qcore.processEvents()

@@ -752,6 +752,13 @@ class MainWindow(QMainWindow):
         sb.addPermanentWidget(self.load_bar)
         sb.addPermanentWidget(_sep())
 
+        self.lbl_watch = QLabel("WATCH: off")
+        self.lbl_watch.setFont(mono_font(8))
+        self.lbl_watch.setToolTip("The live anomaly watch (ML INTEL, WATCH tab)")
+        set_status(self.lbl_watch, "dim")
+        sb.addPermanentWidget(self.lbl_watch)
+        sb.addPermanentWidget(_sep())
+
         self.lbl_frame_rate = QLabel("0 fps")
         self.lbl_frame_rate.setFont(mono_font(8))
         sb.addPermanentWidget(self.lbl_frame_rate)
@@ -773,6 +780,8 @@ class MainWindow(QMainWindow):
         self._state.frames_loaded.connect(self._on_frames_loaded)
         self._state.can_connected.connect(self._on_can_status)
         self._state.bus_load_update.connect(self._on_bus_load_update)
+        self._state.anomaly_detected.connect(self._on_anomaly)
+        self.ml_intel_tab.watch_running.connect(self._on_watch_running)
         self.id_panel.analyze_requested.connect(self._analyze_id)
         self.id_panel.plot_requested.connect(self._plot_id)
         self.inspector.send_to_ai.connect(self._analyze_id)
@@ -1591,6 +1600,19 @@ class MainWindow(QMainWindow):
         else:
             self.lbl_connection.setText("BUS: disconnected")
             set_status(self.lbl_connection, "dim")
+
+    def _on_watch_running(self, running: bool):
+        self.lbl_watch.setText("WATCH: quiet" if running else "WATCH: off")
+        set_status(self.lbl_watch, "ok" if running else "dim")
+
+    def _on_anomaly(self, can_id: str, score: float):
+        """The first subscriber the anomaly signal has had: flash it, then settle."""
+        self.lbl_watch.setText(f"WATCH: {can_id} {score:.2f}")
+        set_status(self.lbl_watch, "warn")
+        QTimer.singleShot(3000, self._settle_watch_label)
+
+    def _settle_watch_label(self):
+        self._on_watch_running(self.ml_intel_tab.watch_active)
 
     def _update_frame_rate(self):
         """Frames a second, measured, not assumed.

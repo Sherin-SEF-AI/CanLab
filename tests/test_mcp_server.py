@@ -279,3 +279,10 @@ def test_transport_tools_return_plain_json():
     for name in ("list_pgns", "list_transport_messages"):
         assert name in CanLabTools.TOOL_NAMES
         assert not any(w in name for w in ("send", "inject", "transmit", "replay", "fuzz"))
+
+
+def test_watch_events_are_empty_and_honest_headless(tools):
+    out = tools.list_watch_events()
+    assert out["running"] is False and out["events"] == []
+    assert "window" in out["stats"]["note"]
+    assert "list_watch_events" in CanLabTools.TOOL_NAMES

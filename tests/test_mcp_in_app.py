@@ -204,3 +204,22 @@ def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def test_watch_events_are_readable_through_the_application_backend(window, qcore):
+    import pandas as pd
+    state = get_state()
+    state.load_frames(parse_log_file(SAMPLE), "sample")
+    qcore.processEvents()
+    tab = window.ml_intel_tab
+    tab._watch.fit(state.frames_snapshot())
+    odd = pd.DataFrame([{"Timestamp": 12.5, "ID": "0A6", "Bus": 0, "DLC": 8,
+                         **{f"B{i}": 255 for i in range(8)}}])
+    assert [e.kind for e in tab._watch.observe(odd)] == ["bytes"]
+
+    tools = CanLabTools(AppBackend(state))
+    out = tools.list_watch_events(limit=10)
+    assert out["running"] is False and out["stats"]["fitted"] is True
+    assert out["events"][-1]["id"] == "0A6" and out["events"][-1]["ts"] == 12.5
+    assert tools.list_watch_events(since_s=13.0)["events"] == []
+    assert isinstance(out["stats"]["by_kind"], dict)
