@@ -16,12 +16,12 @@
 <header class="masthead">
   <div class="masthead-inner">
     <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">CanLab<span>/docs</span></a>
-    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html" aria-current="page">Integrations</a><a href="reference.html">Reference</a></nav>
+    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html" aria-current="page">Integrations</a><a href="cli.html">Command line</a><a href="reference.html">Reference</a></nav>
   </div>
 </header>
 <div class="wrap">
   <div class="layout">
-    <aside class="toc"><h2>On this page</h2><nav><a href="#rest-api">REST API</a><a href="#mcp-server-claude-chatgpt-and-codex">MCP server: Claude, ChatGPT and Codex</a><a href="#plugins">Plugins</a><a href="#ai-engine">AI engine</a><a href="#hardware-adapters">Hardware adapters</a><a href="#trimming-a-capture">Trimming a capture</a></nav></aside>
+    <aside class="toc"><h2>On this page</h2><nav><a href="#rest-api">REST API</a><a href="#mcp-server-claude-chatgpt-and-codex">MCP server: Claude, ChatGPT and Codex</a><a href="#capture-kit">Capture kit</a><a href="#plugins">Plugins</a><a href="#ai-engine">AI engine</a><a href="#hardware-adapters">Hardware adapters</a><a href="#trimming-a-capture">Trimming a capture</a></nav></aside>
     <main id="main">
 
 <h1>Integrations</h1>
@@ -37,10 +37,14 @@ GET  /frames      # last N frames  (?n=N)
 GET  /signals     # decoded DBC signals
 GET  /status      # connection state and frame count
 GET  /memory      # AI memory entries
+POST /mark        # add an event mark: {"label":"brake","action":"toggle"}
+                  # action is toggle (default), begin, end or point
 POST /inject      # inject a frame: needs the token AND ARM TX
                   # {"id":"0x200","data":"01 02 03 04 05 06 07 08"}</code></pre>
 <p>Loopback only. It is meant for scripting the tool from the same machine, not
-   for exposing a bus to a network.</p>
+   for exposing a bus to a network. <code>/mark</code> is what a phone uses to
+   say "this is the brake" while someone else drives; the mark lands on the
+   INTELLIGENCE tab's list and the TIMELINE.</p>
 <div class="note">
   <span class="callout-title">Injection is doubly gated</span>
   <p><code>/inject</code> needs both a valid token and ARM TX on. The token
@@ -51,7 +55,9 @@ POST /inject      # inject a frame: needs the token AND ARM TX
 <p>CanLab is a Model Context Protocol server. An assistant connected to it can
    load a capture, list IDs, read byte statistics and raw frames, run every
    detector, draft a DBC, define and remove signals, decode frames, annotate
-   the timeline and rank bytes against those annotations: 25 tools in
+   the timeline and rank bytes against those annotations, list reassembled
+   multi-frame messages, find repeated blocks, calibrate against a reference
+   file and read the live watch's events: 29 tools in
    <code>canlab/core/mcp_tools.py</code>. <strong>No MCP tool transmits.</strong>
    Putting frames on a wire stays behind ARM TX in the window, where a person
    is watching.</p>
@@ -81,6 +87,15 @@ canlab-mcp --attach http://127.0.0.1:8766/mcp
      URL can read the capture and edit the signal list. Nothing can transmit,
      but close the tunnel when you are done.</p>
 </div>
+
+<h2 id="capture-kit">Capture kit</h2>
+<p>A desktop captures well when someone is sitting at it. A day of driving
+   needs a logger that starts at boot, writes to disk as it goes, and lets the
+   driver say "this is the brake" without a screen. <code>canlab-cli
+   capture</code> is that logger; see <a href="cli.html#capture">the command
+   line page</a>. It serves the same REST API as the window, with
+   <code>/mark</code> and <code>/frames</code> but without <code>/inject</code>,
+   so a phone on the same network can add marks while the kit records.</p>
 
 <h2 id="plugins">Plugins</h2>
 <p>Drop a <code>.py</code> file into <code>~/.canlab/plugins/</code>. It needs

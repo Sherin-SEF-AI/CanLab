@@ -132,13 +132,50 @@ Two real defects that the old corpus could not reach.
   is the present.
 
 ```
-54/54 passed
+57/57 passed, 1 skipped
   5 real MDF4 recordings, 2 to 154,896 frames, 29-bit and dual-bus
   14 native BLF/ASC files including 64-byte FD and error frames
   9,600 real 29-bit frames identical across csv, blf, asc, log and pcap
   every detector, every exporter, the sniffer, the splitter, the MCP tools
   and the GVRET codec, over data none of them had seen
+  60 GNSS fixes and 60 satellite lists reassembled from the marine log,
+  85 BAM broadcasts from the truck, nothing dropped
 ```
+
+### Multi-frame messages
+
+`phase_multiframe` reassembles the marine log's NMEA 2000 fast packets (PGN
+129029, 60 messages of 43 bytes, decoded to a position that agrees with the
+single-frame rapid-position message, the date 2021-03-25 and an altitude of
+173.5 m; PGN 129540, 60 messages of 135 bytes naming 11 satellites) and the
+truck log's J1939 BAM broadcasts (46 of PGN 65251 from SA 0x00 and 39 of PGN
+65249 from SA 0x0F), with nothing dropped and in under 2 s for 145,534
+frames. No recording in the corpus contains an RTS/CTS session, so that path
+is tested synthetically in the unit suite.
+
+### A private capture
+
+`phase_blocks` runs the repeated-block detector over a capture of the
+author's own car, which is not published. It is skipped unless
+`CANLAB_PRIVATE_DATA` names the directory holding `tatatigor.canlab.zip`:
+
+```bash
+CANLAB_PRIVATE_DATA=~/Documents/can-data \
+    python tests/real_data/acceptance_new_sources.py <data-dir>
+```
+
+It expects the 27-message block 0x380 to 0x39A at 2 Hz with DLC 8 and nine
+constant members, the four-message run 0x244, 0x245, 0x247, 0x249 with a gap
+of two, every candidate name containing `CANDIDATE`, and the scan under 10 s
+over 460,024 frames.
+
+### The live watch in the stress run
+
+`acceptance_stress.py` gained `phase_live_watch`: fit the first 60 s of the
+two-channel car log, replay the remaining 149,800 frames in 2,000-frame
+batches, require every batch under 20 ms, and report the events by kind
+without asserting them (a per-byte baseline fitted on one minute flags the
+range changes of the next 22).
 
 ## What this does not cover
 

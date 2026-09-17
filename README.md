@@ -266,14 +266,14 @@ that fits it and report the scale and offset.
 | 5 | **AI ENGINE** | Send one ID's statistics to Anthropic, OpenAI, Groq or a local Ollama model. The offline findings go with the question. Memory persists across sessions. |
 | 6 | **DBC BUILDER** | Visual signal editor with a bit grid and a live decode preview. Imports DBC, ARXML and CAN matrix; exports DBC, openpilot DBC, CANdb++, ARXML and Wireshark Lua. |
 | 7 | **CODE GEN** | Generates Python or C that opens the bus and decodes or encodes your signals. |
-| 8 | **INTELLIGENCE** | Annotated capture: mark when you did something and every byte and bit is ranked by how well it followed. Also periodicity, cross-ID correlation with a lag sweep, capture diffing, J1939 and NMEA 2000 PGN decode, value lookup. |
+| 8 | **INTELLIGENCE** | Annotated capture: mark when you did something and every byte and bit is ranked by how well it followed. Also periodicity, cross-ID correlation with a lag sweep, capture diffing, J1939 and NMEA 2000 PGN decode with transport-protocol and fast-packet reassembly, value lookup. |
 | 9 | **INJECTION** | Six sub-tabs: inject, replay with a scrubber and a signal override, trigger rules, actuator sweep with a watchdog, fuzzer, scripted test sequences. The inject page previews the frame it would send, each byte coloured by whether the signal or the vehicle profile put it there, and logs every send with its result. Gated by ARM TX. |
 | 10 | **DIAGNOSTICS** | Eight sub-tabs: OBD-II/UDS, UDS deep scan, UDS services, security access, bus load, bus health, XCP, DoIP. |
 | 11 | **DASHBOARD** | Byte-activity heatmap across all messages, message timeline, gauges pointed at signals you have defined. |
-| 12 | **AUTO-RE** | Counter and checksum detection, entropy boundaries, correlation, a per-byte checksum algorithm guesser, and bit-level flag and value-table detection. Runs in worker threads. |
+| 12 | **AUTO-RE** | Counter and checksum detection, entropy boundaries, correlation, a per-byte checksum algorithm guesser, bit-level flag and value-table detection, and repeated-block detection for runs of IDs that share one layout. Runs in worker threads. |
 | 13 | **TIMELINE** | Several signals stacked on one scrubbable axis with a shared playhead, plus video sync with an adjustable offset. |
 | 14 | **OBD-II** | Live PID gauges. Discovers supported PIDs by walking the continuation windows rather than assuming the first 32. |
-| 15 | **ML INTEL** | Per-byte role classification with confidence, anomaly scoring against a fitted baseline, change-point detection, embedding similarity. |
+| 15 | **ML INTEL** | Per-byte role classification with confidence, anomaly scoring against a fitted baseline, a live anomaly watch that scores frames as they arrive, change-point detection, embedding similarity. |
 | 16 | **GATEWAY** | Bridges two CAN channels with ordered pass, block and modify rules. Gated by ARM TX. |
 
 ---
@@ -304,15 +304,18 @@ None of this sends anything anywhere.
 | Feature | Module | Notes |
 |---|---|---|
 | Checksum algorithms | `core/checksums.py` | Parametrised CRC-8 plus OEM variants (Hyundai, Toyota, Honda, Subaru, AUTOSAR), checked against published check values and against commaai/opendbc. |
-| J1939 and NMEA 2000 | `core/j1939.py` | Both protocols share the 29-bit frame and split the identifier the same way, so the data page decides which PGN table applies: J1939 PGNs and SPNs, or NMEA 2000's own range with radians, metres per second and kelvin. Multi-frame PGNs are named and left undecoded, because reading one frame of one in isolation gives a confident wrong answer. |
+| J1939 and NMEA 2000 | `core/j1939.py` | Both protocols share the 29-bit frame and split the identifier the same way, so the data page decides which PGN table applies: J1939 PGNs and SPNs, or NMEA 2000's own range with radians, metres per second and kelvin. Multi-frame PGNs are reassembled first (see below) and decoded whole; one frame of one is never decoded alone, because that gives a confident wrong answer. |
 | Counter and checksum detection | `core/counter_checksum_detector.py` | Sweeps every message. Counters are whole-byte or per-nibble, with the modulus read from the values seen and reported only when a roll-over was actually observed. |
 | Checksum algorithm guesser | `core/checksum_guesser.py` | Takes one message and one byte and scores all twelve algorithms, fitting on the first 70% of the capture and validating on the rest. Reports both numbers. |
 | Byte role classifier | `core/signal_classifier.py` | COUNTER, CHECKSUM, BOOLEAN, PHYSICAL or PADDING per byte. |
 | Cross-ID correlation | `core/correlation_engine.py` | Pearson r per byte pair, nearest-timestamp alignment, lag sweep. |
-| Anomaly detection | `core/anomaly_detector.py` | Z-score per byte and Isolation Forest on the frame vector. |
+| Anomaly detection | `core/anomaly_detector.py` | Z-score per byte and Isolation Forest on the frame vector. The Z-score baseline scores a whole byte matrix in one call and keeps each ID's period, which is what the live watch runs on. |
 | Entropy boundaries | `core/entropy_boundary.py` | Per-bit entropy to suggest where one field ends and the next begins. |
 | Multiplexer detection | `core/mux_detector.py` | Finds a mode-selector byte and the bytes active in each mode. |
 | Reference calibration | `core/reference_calibrate.py` | See [below](#reference-driven-calibration). |
+| Multi-frame reassembly | `core/multiframe.py` | J1939 transport protocol (BAM, and RTS/CTS sessions between other nodes, observed only) and NMEA 2000 fast packets, from a capture or a live bus, with timeouts on the frame clock. CanLab never sends a CTS. |
+| Repeated blocks | `core/block_detector.py` | Runs of consecutive IDs sharing one DLC, one rate and one layout, the way a battery pack reports its cells, with a proposed shared field and one candidate signal per member. |
+| Live anomaly watch | `core/live_watch.py` | Scores frames against a baseline as they arrive: bytes out of band, an ID gone silent, a burst, an ID the baseline never saw. ML INTEL's WATCH sub-tab. |
 
 **Flags and enumerations.** Per-byte analysis cannot see a turn indicator,
 which is one bit, or a gear selector, which is four sparse values held for a
@@ -322,6 +325,39 @@ of a slowly moving measurement, which looks the same until you notice the bits
 below it churning. `core/value_tables.py` finds bytes that only ever take a
 few values and hold them, and drafts the value table for the DBC. AUTO-RE has
 a panel for both.
+
+**Multi-frame messages.** A J1939 transport-protocol session or an NMEA 2000
+fast packet spreads one message over several frames, and the PGN scan used to
+stop at "needs reassembly". `core/multiframe.py` reassembles both: BAM
+broadcasts and RTS/CTS sessions between two other nodes (observed only; CanLab
+never sends a CTS), and fast packets with their sequence and counter byte.
+Sessions time out on the frame clock, so a loaded log gives the same result
+every time. On the marine recording it rebuilds 60 GNSS position fixes of 43
+bytes each, which decode to 42.661 N, 81.213 W on 2021-03-25 at 173.5 m, and
+60 satellite lists of 135 bytes naming 11 satellites; on the truck log, 85 BAM
+messages with nothing dropped, in under 0.05 s. The INTELLIGENCE tab's PGN
+scan shows the reassembled messages, and two MCP tools list them.
+
+**Repeated blocks.** A battery pack reports its cells as a run of consecutive
+identifiers with the same layout, rate and length. Per-ID analysis sees
+unrelated messages; `core/block_detector.py` sees the run, scores how far the
+members agree on their byte roles, and proposes the field they share (8-bit
+bytes, 16-bit words, byte order by the smoother reading) so it can be added to
+every member at once. Every name it emits ends in `CANDIDATE` and every
+description says the scale is unknown, because a shared structure is not a
+unit. On a private EV capture of 460,024 frames it finds the 27-message block
+0x380 to 0x39A at 2 Hz with nine members that never change, in 0.23 s.
+
+**Live anomaly watch.** The anomaly detector used to be fitted and scored
+offline. `core/live_watch.py` holds a fitted baseline and is handed each batch
+of new frames as the store receives them: it reports a payload far from the
+baseline (once per ID per cooldown, so a stuck value does not report on every
+frame), an ID that has gone quiet (once, re-armed when it returns), a burst,
+and an ID the baseline never saw. Events carry the frame clock, flash in the
+status bar, and can mark the timeline. Replaying the 23-minute car log after a
+60 s fit takes 1 ms per 2,000-frame batch and reports 756 events, most of them
+bytes that left a band fitted on one minute of driving, which is what a
+per-byte baseline does with a short fit window.
 
 **On checksum detection.** A byte counts as a checksum only if the relation
 beats simply guessing that byte's most common value, so constant padding does
@@ -350,11 +386,14 @@ canlab-cli ids      capture.csv                          # IDs, rates, moving by
 canlab-cli detect   capture.csv --json out.json --dbc draft.dbc
 canlab-cli decode   capture.csv --dbc signals.dbc --out decoded.csv
 canlab-cli convert  capture.blf capture.csv              # csv, blf, asc, log
+canlab-cli capture  --interface socketcan --channel can0 --keys b=brake --http 8765
 ```
 
 `detect` runs every detector and can draft a DBC from what it found, with
 overlapping claims resolved so the file loads in cantools. `convert` writes
 SavvyCAN's own CSV layout, so the result opens there as well as here.
+`capture` is the [capture kit](#capture-kit): a headless logger that writes
+rotating segments and event marks and folds them into a project.
 
 ---
 
@@ -374,12 +413,31 @@ AI.
 
 `core/reference_calibrate.py` searches for the CAN field (ID, byte range,
 endianness) whose values best fit a **physical reference** by least squares, and
-reports scale and offset with an R² verdict of PASS or UNCONFIRMED. The
-reference is a CSV of `timestamp,value` (Tools → *Calibrate signal from
-reference CSV*). Sentinel codes meaning "signal unavailable" are masked, and the
-fitted scale is snapped to a neat value when that barely changes the decode.
-Both refinements are adapted from CSS Electronics' reverse-engineering skills
-(see [Acknowledgements](#acknowledgements)).
+reports scale and offset with an R² verdict of PASS or UNCONFIRMED. Sentinel
+codes meaning "signal unavailable" are masked, and the fitted scale is snapped
+to a neat value when that barely changes the decode. Both refinements are
+adapted from CSS Electronics' reverse-engineering skills (see
+[Acknowledgements](#acknowledgements)).
+
+The reference comes from a file (Tools → *Calibrate signals from a reference
+file (CSV, GPX)*). `core/reference_series.py` reads a CSV with a time column
+and any number of value columns, keeping a unit written in the header as
+`speed (km/h)`, or a GPX track, from which it derives speed (haversine
+distance over time, median-filtered), altitude, latitude and longitude. Each
+series is calibrated on its own.
+
+Two clocks rarely agree, so the dialog first searches a window (30 s by
+default) for the lag that lines the reference up with some field in the
+capture: a coarse pass over binned values, then a fine pass sample by sample,
+with ties going to the smaller lag. Overlapping wins on one ID, the 16-bit word
+and the byte inside it, collapse to the best reading. The sweep runs off the
+GUI thread with a progress bar and a Cancel button, and the rows you pick
+become DBC signals as one undoable step, with the Motorola start bit written
+correctly for big-endian fields (an earlier version wrote the low byte). On
+the shipped sample, a reference put one second ahead is found at 1.0 s and
+the wheel speed comes back as four 16-bit big-endian words at scale 1/32 with
+R² 0.9987. A periodic reference is ambiguous at lags near a multiple of its
+period, so keep the window under half of it.
 
 ---
 
@@ -438,8 +496,9 @@ it works from the cache.
 
 | Capability | Module | Notes |
 |---|---|---|
-| REST API and live web dashboard | `core/rest_api.py` | Loopback only, token-authenticated. `GET /` serves a live-frames page; `/inject` also requires ARM TX. |
-| MCP server | `core/mcp_tools.py`, `core/mcp_service.py`, `mcp_server.py` | 25 tools over the capture, the detectors, the DBC and annotations, served from inside the window (live state) or headless. See below. |
+| REST API and live web dashboard | `core/rest_api.py` | Loopback only, token-authenticated. `GET /` serves a live-frames page; `POST /mark` adds an event mark; `/inject` also requires ARM TX. |
+| Capture kit | `core/capture_kit.py`, `core/capture_writer.py` | `canlab-cli capture`: a headless, receive-only logger with rotating segments and marks from the keyboard, HTTP or GPIO, producing a project the desktop opens. See below. |
+| MCP server | `core/mcp_tools.py`, `core/mcp_service.py`, `mcp_server.py` | 29 tools over the capture, the detectors, the DBC, annotations, reassembled messages, repeated blocks and the live watch, served from inside the window (live state) or headless. See below. |
 | Hardware adapters | `core/adapters.py` | Named adapter profiles for every python-can backend, detection of connected adapters, and a listen-only test. See below. |
 | GVRET hardware | `core/gvret.py` | The serial protocol SavvyCAN's own boards speak (Macchina M2/A0, EVTV CANDue, ESP32RET over WiFi). python-can has no such backend, so CanLab supplies one and registers it as the `gvret` interface. |
 | Capture trimming | `core/capture_split.py` | Cut the loaded capture to a time window, a frame or percentage range, a set of IDs, or one bus. Tools > Trim capture. |
@@ -454,7 +513,7 @@ IDs, read byte statistics and raw frames, run every detector, draft a DBC,
 define and remove signals, decode frames, annotate the timeline and rank bytes
 against the annotations. It cannot transmit: no MCP tool touches the bus.
 
-There are two servers with the same 25 tools:
+There are two servers with the same 29 tools:
 
 - **Inside the window.** The **MCP** toolbar toggle (or Settings > MCP) starts
   a Streamable HTTP server on `127.0.0.1:8766/mcp` over the capture you have
@@ -554,9 +613,43 @@ GET  /frames      # last N frames  (?n=N)
 GET  /signals     # decoded DBC signals
 GET  /status      # connection state and frame count
 GET  /memory      # AI memory entries
+POST /mark        # add an event mark: {"label":"brake","action":"toggle"}
+                  # action is toggle (default), begin, end or point
 POST /inject      # inject a frame: needs the token AND ARM TX
                   # {"id":"0x200","data":"01 02 03 04 05 06 07 08"}
 ```
+
+### Capture kit
+
+A desktop captures well when someone is sitting at it. A day of driving needs
+a logger that starts at boot, writes to disk as it goes, and lets the driver
+say "this is the brake" without a screen. `canlab-cli capture` is that
+logger, for a Raspberry Pi with a CAN HAT or any Linux box with a SocketCAN
+adapter:
+
+```bash
+canlab-cli capture --interface socketcan --channel can0 --bitrate 500000 \
+    --keys b=brake,h=horn --http 8765 --http-host 0.0.0.0 \
+    --token-file ~/.canlab/kit-token --gpio 17=brake
+```
+
+It writes SavvyCAN CSV segments as frames arrive, rotating by frame count or
+by time, and a `marks.json` updated on every mark. Marks come from a key (`b`
+opens a `brake` interval, `b` closes it), a typed label, `POST /mark` on the
+same REST API the desktop serves (with `/inject` not served at all), or a
+GPIO switch through `gpiozero` when it is installed. Ctrl-C, SIGTERM or
+`--duration` stop it cleanly: open marks are closed, the last segment is
+flushed, and the segments and marks are folded into one `.canlab` project
+the desktop opens with every mark on the timeline. `--adapter NAME` opens an
+adapter saved in Settings, which the desktop mirrors to
+`~/.canlab/adapters.json` for this purpose.
+
+It is receive only and never asks for privileges: a SocketCAN link that is
+down gets the `ip link` command printed and exit code 2. A systemd unit for a
+Pi that brings the link up in listen-only mode before starting the kit is in
+[`canlab/examples/capture-kit/`](canlab/examples/capture-kit/). The kit has
+been exercised on python-can's virtual backend and a fake bus, not yet in a
+vehicle.
 
 ---
 
@@ -591,12 +684,12 @@ The unit suite uses fixtures and a generated sample. Separately, the whole
 application is run end to end over real vehicle recordings, because synthetic
 data agrees with whatever the code assumes.
 
-Two corpora, 90 checks:
+Two corpora, 93 checks:
 
 | Corpus | What it is | Checks |
 |---|---|---|
 | SavvyCAN examples | 12,974 frames, 180 IDs, 11-bit, one bus | 36 |
-| CANedge recordings and python-can format files | 2 to 154,896 frames, native MDF4, 11-bit and 29-bit, dual-bus, CAN FD and error frames | 54 |
+| CANedge recordings and python-can format files | 2 to 154,896 frames, native MDF4, 11-bit and 29-bit, dual-bus, CAN FD and error frames | 57 |
 
 The second corpus is other people's hardware output, none of it produced here:
 five CANedge logger recordings in native MDF4 from
@@ -622,7 +715,7 @@ the identifier. All are fixed and pinned by tests.
 A third run pushes the size instead of the variety. It merges the 145,534-frame
 J1939 truck log and the 154,896-frame two-channel car log into one 300,430-frame
 capture carrying 11-bit and 29-bit identifiers on three bus tags, then times
-every stage against a budget: 29 checks, all passing.
+every stage against a budget: 30 checks, all passing.
 
 | | |
 |---|---|
@@ -638,6 +731,18 @@ message, so a plausible diesel is external evidence rather than the code
 agreeing with itself. The run found a real defect too. The PGN scan crashed on
 any log containing an active fault code, because those decode to lamps and a
 list rather than to a value and a unit, and this truck sends 196 of them.
+
+The same recordings check the newer analysis. Multi-frame reassembly rebuilds
+the marine log's 60 GNSS fixes and 60 satellite lists with nothing dropped,
+and the truck's 85 BAM broadcasts, in under 0.05 s; the position agrees with
+the single-frame rapid-position message to a thousandth of a degree. The live
+watch fits the first minute of the two-channel car log and replays the other
+149,800 frames in 2,000-frame batches at 1 ms a batch. Block detection runs
+on a private capture of the author's car that is not in the corpus, only
+when `CANLAB_PRIVATE_DATA` names it: the 27-message cell block is found in
+0.23 s over 460,024 frames. There is no real-data check for the reference
+calibrator's clock-offset search, because the boat was moored and the truck
+log has no GPS track; the shipped sample stands in for it.
 
 ```bash
 for p in 1 2 3; do python tests/real_data/acceptance_phase$p.py <data-dir>; done
@@ -656,7 +761,7 @@ A recording of the run is
 
 ```bash
 pip install -e ".[dev]"
-QT_QPA_PLATFORM=offscreen python -m pytest -q     # 578 passed
+QT_QPA_PLATFORM=offscreen python -m pytest -q     # 673 passed
 ruff check canlab tests
 ```
 
@@ -673,9 +778,16 @@ window with the official MCP client; adapter detection and a listen-only open
 on the virtual bus; the GVRET codec against byte strings built to its wire
 format, including chunk splitting and resynchronisation after noise; the
 sniffer's change detection and notch masking; the capture splitter; the NMEA 2000 field layouts against frames lifted verbatim
-from a real marine recording; who owns an animation and who is allowed to free
-it; and an offscreen smoke test that builds the real window, cycles every tab,
-runs a live capture and asserts no thread is left running.
+from a real marine recording; transport-protocol and fast-packet reassembly
+against verbatim frames, including an RTS/CTS session observed through the
+hub with nothing sent; the reference calibrator's clock-offset search and
+big-endian start bit through a cantools round trip; the live watch on the
+frame clock, including a smoke test that feeds one out-of-band frame through
+a live capture; block detection and the candidates it emits; the capture kit
+on a recording bus and on python-can's virtual backend, with marks from
+stdin, HTTP and a fake gpiozero; who owns an animation and who is allowed to
+free it; and an offscreen smoke test that builds the real window, cycles
+every tab, runs a live capture and asserts no thread is left running.
 
 The single skip is the MDF4 parser, which needs the optional `asammdf` extra.
 
@@ -726,6 +838,16 @@ batch stays flat as the capture grows. Memory is bounded by the ring buffer cap.
 - The GVRET backend is written to the protocol in SavvyCAN's source and tested
   against byte streams built to that format, including a scripted board behind
   the bus object. It has not been run against a physical GVRET board.
+- J1939 RTS/CTS reassembly is observe-only and, because no recording in the
+  corpus contains an RTS/CTS session, tested against synthetic frames. BAM and
+  NMEA 2000 fast packets are tested on real recordings.
+- The capture kit has been run on python-can's virtual backend and a fake bus,
+  not in a vehicle. The systemd unit is a starting point.
+- The reference calibrator's lag search is ambiguous for a periodic reference
+  at lags near a multiple of its period. Keep the window under half the period.
+- The live watch's baseline is a per-byte Z-score. A short fit window flags
+  legitimate range changes as events; fit on a stretch that covers what you
+  expect to see.
 - Plugins run with full application privileges once enabled. Only enable plugins
   you trust.
 - The prebuilt Linux binary on the releases page is x86_64 and unsigned.

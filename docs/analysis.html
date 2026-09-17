@@ -16,12 +16,12 @@
 <header class="masthead">
   <div class="masthead-inner">
     <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">CanLab<span>/docs</span></a>
-    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html" aria-current="page">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html">Integrations</a><a href="reference.html">Reference</a></nav>
+    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html" aria-current="page">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html">Integrations</a><a href="cli.html">Command line</a><a href="reference.html">Reference</a></nav>
   </div>
 </header>
 <div class="wrap">
   <div class="layout">
-    <aside class="toc"><h2>On this page</h2><nav><a href="#counters-and-checksums">Counters and checksums</a><a href="#identifying-the-checksum-algorithm">Identifying the checksum algorithm</a><a href="#entropy-boundaries">Entropy boundaries</a><a href="#cross-id-correlation">Cross-ID correlation</a><a href="#byte-role-classification">Byte role classification</a><a href="#anomaly-detection">Anomaly detection</a><a href="#multiplexer-detection">Multiplexer detection</a><a href="#reference-calibration">Reference calibration</a><a href="#performance">Performance</a></nav></aside>
+    <aside class="toc"><h2>On this page</h2><nav><a href="#counters-and-checksums">Counters and checksums</a><a href="#identifying-the-checksum-algorithm">Identifying the checksum algorithm</a><a href="#entropy-boundaries">Entropy boundaries</a><a href="#cross-id-correlation">Cross-ID correlation</a><a href="#byte-role-classification">Byte role classification</a><a href="#anomaly-detection">Anomaly detection</a><a href="#multiplexer-detection">Multiplexer detection</a><a href="#repeated-blocks">Repeated blocks</a><a href="#reference-calibration">Reference calibration</a><a href="#performance">Performance</a></nav></aside>
     <main id="main">
 
 <h1>How the analysis works</h1>
@@ -98,6 +98,16 @@
    byte and an Isolation Forest over the frame vector. The use is finding the
    one message that behaves differently when a fault is present or a button is
    pressed.</p>
+<p><code>core/live_watch.py</code> runs the same baseline against a bus as it
+   is captured. Each batch of new frames is scored in one vectorised call; a
+   payload far from the baseline is reported once per ID per cooldown, an ID
+   that stops arriving once until it returns, a burst when an ID arrives far
+   faster than its fitted period, and an unknown ID once. Time is the frame
+   clock, so a replayed log gives the same events every time. Replaying the
+   23-minute car log from the real-data corpus after a 60 s fit costs 1 ms per
+   2,000-frame batch. A short fit window flags legitimate range changes, which
+   is what a per-byte baseline does; fit on a stretch that covers what you
+   expect to see.</p>
 
 <h2 id="multiplexer-detection">Multiplexer detection</h2>
 <p><code>core/mux_detector.py</code> looks for a selector byte whose value
@@ -105,22 +115,58 @@
    like nonsense, because the same byte offset means different things depending
    on the mode.</p>
 
+<h2 id="repeated-blocks">Repeated blocks</h2>
+<p>A battery pack with 96 cells does not get 96 signals in one frame. It gets
+   a run of consecutive identifiers, each carrying the same layout for a few
+   cells, all at the same rate and length. Per-ID analysis sees unrelated
+   messages. <code>core/block_detector.py</code> sees the run: consecutive IDs
+   (a gap of one identifier allowed) with the same DLC and a rate within
+   tolerance, a score for how far the members agree on which bytes are
+   constant, counters, values or noise, and a proposal for the field they
+   share. Candidates are 8-bit bytes and 16-bit words at even offsets; the
+   byte order is the one that reads more smoothly, and a word whose low byte
+   never moves, or whose high byte is always zero, is dropped because the
+   byte proposal already covers it.</p>
+<p>One decision then becomes a candidate signal in every member. Every name
+   ends in <code>CANDIDATE</code> and every description says the scale is
+   unknown: a shared structure is evidence of a repeated layout, not of what
+   it means. On a private EV capture of 460,024 frames the 27-message block
+   0x380 to 0x39A at 2 Hz is found in 0.23 s, with nine members that never
+   change and a layout that turns out not to be uniform, which the
+   consistency figure says plainly.</p>
+
 <h2 id="reference-calibration">Reference calibration</h2>
 <p><code>core/reference_calibrate.py</code> is the one method here that can
    give you a definitive answer, because it uses ground truth.</p>
-<p>Give it a CSV of <code>timestamp,value</code> from an independent
-   measurement and it searches across arbitration IDs, byte ranges and
-   endianness for the field whose values best fit by least squares. It reports
-   scale, offset and an R² verdict of PASS or UNCONFIRMED.</p>
+<p>Give it an independent measurement and it searches across arbitration IDs,
+   byte ranges and endianness for the field whose values best fit by least
+   squares. It reports scale, offset and an R² verdict of PASS or
+   UNCONFIRMED. <code>core/reference_series.py</code> reads the measurement
+   from a CSV with a time column and any number of value columns, keeping a
+   unit written in the header as <code>speed (km/h)</code>, or from a GPX
+   track, from which it derives speed by haversine distance over time,
+   altitude, latitude and longitude. Each series is calibrated on its own.</p>
+<p>Two clocks rarely agree: a GPS logger stamps epoch seconds while a capture
+   may start at zero, and even on one clock a phone and an adapter drift a
+   few seconds apart. The search first finds the lag that lines the reference
+   up with some field in the capture, a coarse pass over binned values across
+   the window and then a fine pass sample by sample, with ties toward the
+   smaller lag. Overlapping wins on one ID, a 16-bit word and the byte inside
+   it, collapse to the best reading. On the shipped sample a reference put one
+   second ahead is found at 1.0 s and the wheel speed comes back as four
+   16-bit big-endian words at scale 1/32 with R² 0.9987. A periodic reference
+   is ambiguous at lags near a multiple of its period; keep the window under
+   half of it.</p>
 <p>Two refinements matter in practice. Sentinel codes that mean "signal
    unavailable", typically all bits set, are masked so they do not wreck the
    fit. And a fitted scale is snapped to a neat value when doing so barely
    changes the decode, because a real scale is far more likely to be 0.03125
    than 0.031248. Both are adapted from CSS Electronics' reverse-engineering
    skills.</p>
-<p>The vision variant (<code>core/vision_reference.py</code>) reads the
-   reference value off a dashboard video by OCR instead of a CSV. It needs
-   <code>opencv-python</code> and <code>rapidocr</code>.</p>
+<p>The dialog (Tools &rarr; Calibrate signals from a reference file) runs the
+   sweep off the GUI thread with a progress bar and a Cancel button, and the
+   rows you pick become DBC signals as one undoable step, with the Motorola
+   start bit written correctly for big-endian fields.</p>
 
 <h2 id="performance">Performance</h2>
 <p>Counter and checksum detection is vectorised over NumPy arrays rather than

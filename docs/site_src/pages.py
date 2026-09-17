@@ -416,10 +416,12 @@ def build_pages_2(*, h2, table, repo):
 {h2("6. Calibrate against something real")}
 <p>If you have an independent measurement of the same quantity, a GPS speed log
    for instance, you do not have to guess the scale.
-   <strong>Tools &rarr; Calibrate signal from reference CSV</strong> takes a
-   CSV of <code>timestamp,value</code> and searches for the CAN field whose
-   values best fit it by least squares, reporting scale, offset and an R²
-   verdict of PASS or UNCONFIRMED. See
+   <strong>Tools &rarr; Calibrate signals from a reference file (CSV, GPX)</strong>
+   takes a CSV with a time column and any value columns, or a GPX track, finds
+   the clock offset between the reference and the capture, and searches for
+   the CAN field whose values best fit each series by least squares, reporting
+   scale, offset and an R² verdict of PASS or UNCONFIRMED. The rows you pick
+   become DBC signals. See
    <a href="analysis.html#reference-calibration">reference calibration</a>.</p>
 
 {h2("7. Export")}
@@ -574,9 +576,10 @@ def build_pages_3(*, h2, table, repo):
    change-on-action capture, a J1939 and NMEA 2000 PGN decoder, and a value
    reverse lookup.</p>
 <p>The PGN decoder works the protocol out from the identifier: NMEA 2000 uses
-   data page 1 in the 126208 to 130836 range. Multi-frame PGNs are named but
-   not decoded, because one frame of one read alone gives a confident wrong
-   answer.</p>
+   data page 1 in the 126208 to 130836 range. Multi-frame PGNs are reassembled
+   first, J1939 transport protocol and NMEA 2000 fast packets alike, and
+   decoded whole; one frame of one is never decoded alone, because that gives
+   a confident wrong answer.</p>
 <p>Change-on-action is the one worth knowing about: capture a baseline, perform
    a physical action, capture again, and it shows which bytes changed. That is
    often the fastest route from "somewhere in these 60 messages" to a
@@ -611,12 +614,15 @@ def build_pages_3(*, h2, table, repo):
    driven by signals you have defined.</p>
 
 {h2("AUTO-RE")}
-<p>The tedious part, automated. Four sub-tabs: <strong>COUNTER/CHECKSUM</strong>
+<p>The tedious part, automated. Six sub-tabs: <strong>COUNTER/CHECKSUM</strong>
    detection across every message, <strong>ENTROPY BOUNDARIES</strong> to
    suggest where fields begin and end, <strong>CORRELATION</strong> between
-   bytes, and a <strong>CHECKSUM GUESSER</strong> that takes one message and
-   one byte and tries every algorithm it knows. Runs in worker threads, so the
-   window stays responsive. See <a href="analysis.html">how it works</a>.</p>
+   bytes, a <strong>CHECKSUM GUESSER</strong> that takes one message and
+   one byte and tries every algorithm it knows, <strong>FLAGS &amp; ENUMS</strong>
+   for switches and value tables, and <strong>BLOCKS</strong> for runs of
+   consecutive IDs that share one layout, with a shared field added to every
+   member at once. Runs in worker threads, so the window stays responsive. See
+   <a href="analysis.html">how it works</a>.</p>
 
 {h2("TIMELINE")}
 <p>Questions about <em>when</em>. Several signals stacked on one scrubbable
@@ -636,6 +642,11 @@ def build_pages_3(*, h2, table, repo):
    checksum, boolean flag, physical value or padding with a confidence, fits a
    baseline from normal traffic and scores frames against it for anomalies, and
    finds messages with similar behaviour by embedding.</p>
+<p>The <strong>WATCH</strong> sub-tab does the scoring live: fit a baseline
+   from the last half minute, start the watch, and each new batch of frames is
+   scored as it arrives. A payload out of band, an ID gone quiet, a burst or an
+   ID the baseline never saw becomes a row, a flash in the status bar and, if
+   you ask, a mark on the timeline.</p>
 
 {h2("GATEWAY")}
 <p>Bridges two CAN channels and puts you in between. Rules are applied in
@@ -731,6 +742,16 @@ def build_pages_4(*, h2, table, repo):
    byte and an Isolation Forest over the frame vector. The use is finding the
    one message that behaves differently when a fault is present or a button is
    pressed.</p>
+<p><code>core/live_watch.py</code> runs the same baseline against a bus as it
+   is captured. Each batch of new frames is scored in one vectorised call; a
+   payload far from the baseline is reported once per ID per cooldown, an ID
+   that stops arriving once until it returns, a burst when an ID arrives far
+   faster than its fitted period, and an unknown ID once. Time is the frame
+   clock, so a replayed log gives the same events every time. Replaying the
+   23-minute car log from the real-data corpus after a 60 s fit costs 1 ms per
+   2,000-frame batch. A short fit window flags legitimate range changes, which
+   is what a per-byte baseline does; fit on a stretch that covers what you
+   expect to see.</p>
 
 {h2("Multiplexer detection")}
 <p><code>core/mux_detector.py</code> looks for a selector byte whose value
@@ -738,22 +759,58 @@ def build_pages_4(*, h2, table, repo):
    like nonsense, because the same byte offset means different things depending
    on the mode.</p>
 
+{h2("Repeated blocks")}
+<p>A battery pack with 96 cells does not get 96 signals in one frame. It gets
+   a run of consecutive identifiers, each carrying the same layout for a few
+   cells, all at the same rate and length. Per-ID analysis sees unrelated
+   messages. <code>core/block_detector.py</code> sees the run: consecutive IDs
+   (a gap of one identifier allowed) with the same DLC and a rate within
+   tolerance, a score for how far the members agree on which bytes are
+   constant, counters, values or noise, and a proposal for the field they
+   share. Candidates are 8-bit bytes and 16-bit words at even offsets; the
+   byte order is the one that reads more smoothly, and a word whose low byte
+   never moves, or whose high byte is always zero, is dropped because the
+   byte proposal already covers it.</p>
+<p>One decision then becomes a candidate signal in every member. Every name
+   ends in <code>CANDIDATE</code> and every description says the scale is
+   unknown: a shared structure is evidence of a repeated layout, not of what
+   it means. On a private EV capture of 460,024 frames the 27-message block
+   0x380 to 0x39A at 2 Hz is found in 0.23 s, with nine members that never
+   change and a layout that turns out not to be uniform, which the
+   consistency figure says plainly.</p>
+
 {h2("Reference calibration")}
 <p><code>core/reference_calibrate.py</code> is the one method here that can
    give you a definitive answer, because it uses ground truth.</p>
-<p>Give it a CSV of <code>timestamp,value</code> from an independent
-   measurement and it searches across arbitration IDs, byte ranges and
-   endianness for the field whose values best fit by least squares. It reports
-   scale, offset and an R² verdict of PASS or UNCONFIRMED.</p>
+<p>Give it an independent measurement and it searches across arbitration IDs,
+   byte ranges and endianness for the field whose values best fit by least
+   squares. It reports scale, offset and an R² verdict of PASS or
+   UNCONFIRMED. <code>core/reference_series.py</code> reads the measurement
+   from a CSV with a time column and any number of value columns, keeping a
+   unit written in the header as <code>speed (km/h)</code>, or from a GPX
+   track, from which it derives speed by haversine distance over time,
+   altitude, latitude and longitude. Each series is calibrated on its own.</p>
+<p>Two clocks rarely agree: a GPS logger stamps epoch seconds while a capture
+   may start at zero, and even on one clock a phone and an adapter drift a
+   few seconds apart. The search first finds the lag that lines the reference
+   up with some field in the capture, a coarse pass over binned values across
+   the window and then a fine pass sample by sample, with ties toward the
+   smaller lag. Overlapping wins on one ID, a 16-bit word and the byte inside
+   it, collapse to the best reading. On the shipped sample a reference put one
+   second ahead is found at 1.0 s and the wheel speed comes back as four
+   16-bit big-endian words at scale 1/32 with R² 0.9987. A periodic reference
+   is ambiguous at lags near a multiple of its period; keep the window under
+   half of it.</p>
 <p>Two refinements matter in practice. Sentinel codes that mean "signal
    unavailable", typically all bits set, are masked so they do not wreck the
    fit. And a fitted scale is snapped to a neat value when doing so barely
    changes the decode, because a real scale is far more likely to be 0.03125
    than 0.031248. Both are adapted from CSS Electronics' reverse-engineering
    skills.</p>
-<p>The vision variant (<code>core/vision_reference.py</code>) reads the
-   reference value off a dashboard video by OCR instead of a CSV. It needs
-   <code>opencv-python</code> and <code>rapidocr</code>.</p>
+<p>The dialog (Tools &rarr; Calibrate signals from a reference file) runs the
+   sweep off the GUI thread with a progress bar and a Cancel button, and the
+   rows you pick become DBC signals as one undoable step, with the Motorola
+   start bit written correctly for big-endian fields.</p>
 
 {h2("Performance")}
 <p>Counter and checksum detection is vectorised over NumPy arrays rather than
@@ -829,6 +886,18 @@ def build_pages_4(*, h2, table, repo):
    table applies. Single-frame NMEA 2000 PGNs such as vessel heading, rate of
    turn, rapid position, course and speed, wind and temperature are decoded.
    Every layout is checked in the tests against frames from a real recording.</p>
+<p>Messages that span several frames are reassembled by
+   <code>core/multiframe.py</code> before decoding: J1939 transport protocol,
+   both BAM broadcasts and RTS/CTS sessions between two other nodes (observed
+   only; CanLab never sends a CTS), and NMEA 2000 fast packets with their
+   sequence and counter byte. Timeouts run on the frame clock. On the marine
+   recording this rebuilds 60 GNSS position fixes of 43 bytes, decoded to a
+   position, date, time, altitude and satellite count, and 60 satellite lists
+   of 135 bytes; on the truck log, 85 BAM broadcasts of engine and retarder
+   configuration with nothing dropped. The PGN scan in INTELLIGENCE shows the
+   reassembled messages; <code>list_pgns</code> and
+   <code>list_transport_messages</code> serve them over MCP. RTS/CTS is tested
+   against synthetic frames, because no recording in the corpus has one.</p>
 
 {h2("Bus load and health")}
 <p>Two monitor sub-tabs. Load shows utilisation over time. Health tracks error
@@ -933,10 +1002,14 @@ GET  /frames      # last N frames  (?n=N)
 GET  /signals     # decoded DBC signals
 GET  /status      # connection state and frame count
 GET  /memory      # AI memory entries
+POST /mark        # add an event mark: {{"label":"brake","action":"toggle"}}
+                  # action is toggle (default), begin, end or point
 POST /inject      # inject a frame: needs the token AND ARM TX
                   # {{"id":"0x200","data":"01 02 03 04 05 06 07 08"}}</code></pre>
 <p>Loopback only. It is meant for scripting the tool from the same machine, not
-   for exposing a bus to a network.</p>
+   for exposing a bus to a network. <code>/mark</code> is what a phone uses to
+   say "this is the brake" while someone else drives; the mark lands on the
+   INTELLIGENCE tab's list and the TIMELINE.</p>
 <div class="note">
   <span class="callout-title">Injection is doubly gated</span>
   <p><code>/inject</code> needs both a valid token and ARM TX on. The token
@@ -947,7 +1020,9 @@ POST /inject      # inject a frame: needs the token AND ARM TX
 <p>CanLab is a Model Context Protocol server. An assistant connected to it can
    load a capture, list IDs, read byte statistics and raw frames, run every
    detector, draft a DBC, define and remove signals, decode frames, annotate
-   the timeline and rank bytes against those annotations: 25 tools in
+   the timeline and rank bytes against those annotations, list reassembled
+   multi-frame messages, find repeated blocks, calibrate against a reference
+   file and read the live watch's events: 29 tools in
    <code>canlab/core/mcp_tools.py</code>. <strong>No MCP tool transmits.</strong>
    Putting frames on a wire stays behind ARM TX in the window, where a person
    is watching.</p>
@@ -986,6 +1061,15 @@ canlab-mcp --attach http://127.0.0.1:8766/mcp
      URL can read the capture and edit the signal list. Nothing can transmit,
      but close the tunnel when you are done.</p>
 </div>
+
+{h2("Capture kit")}
+<p>A desktop captures well when someone is sitting at it. A day of driving
+   needs a logger that starts at boot, writes to disk as it goes, and lets the
+   driver say "this is the brake" without a screen. <code>canlab-cli
+   capture</code> is that logger; see <a href="cli.html#capture">the command
+   line page</a>. It serves the same REST API as the window, with
+   <code>/mark</code> and <code>/frames</code> but without <code>/inject</code>,
+   so a phone on the same network can add marks while the kit records.</p>
 
 {h2("Plugins")}
 <p>Drop a <code>.py</code> file into <code>~/.canlab/plugins/</code>. It needs
@@ -1163,7 +1247,7 @@ def register(app):
 
 {h2("Testing")}
 <p>The suite runs headless:</p>
-<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 578 passed</code></pre>
+<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 673 passed</code></pre>
 <p>Tests that need an optional dependency skip cleanly when it is absent: the
    MDF4 importer without <code>asammdf</code>, the transport tests without the
    MCP SDK, the Lua dissector without a Lua runtime.</p>
@@ -1206,4 +1290,77 @@ def register(app):
    <a href="https://github.com/commaai/opendbc">commaai/opendbc</a> (MIT).</p>
 <p>Built on python-can, cantools, PyQt6, pandas, NumPy and pyqtgraph.</p>
 """))
+    pages.append((
+        "cli.html",
+        "Command line",
+        "canlab-cli: the analysis without the window, and the capture kit "
+        "for a small computer in a car.",
+        f"""
+<h1>Command line</h1>
+<p class="lede">The analysis modules are Qt-free, so everything here runs
+   without a display: in CI over a folder of drives, from a notebook, piped
+   into something else, or on a Raspberry Pi in a car. A test asserts the
+   process never imports Qt.</p>
+
+{h2("The commands")}
+<pre><code>canlab-cli ids      capture.csv                          # IDs, rates, moving bytes
+canlab-cli detect   capture.csv --json out.json --dbc draft.dbc
+canlab-cli decode   capture.csv --dbc signals.dbc --out decoded.csv
+canlab-cli convert  capture.blf capture.csv              # csv, blf, asc, log
+canlab-cli capture  --interface socketcan --channel can0 --keys b=brake</code></pre>
+<p>Every command reads any format the application does. <code>detect</code>
+   runs the counter and checksum sweep, entropy boundaries, bit-level flags,
+   value-table inference and multiplexer detection, and can draft a DBC from
+   what it found with overlapping claims resolved so the file loads in
+   cantools. <code>convert</code> writes SavvyCAN's own CSV layout, so the
+   result opens there as well as here. Nothing here transmits.</p>
+
+{h2("Capture")}
+<p><code>canlab-cli capture</code> is the capture kit: a headless, receive-only
+   logger that writes SavvyCAN CSV segments as frames arrive, rotating by frame
+   count (<code>--max-frames</code>, 200,000) or by time
+   (<code>--max-seconds</code>, 600), keeps a <code>marks.json</code> updated
+   on every mark, and when it stops folds the segments and marks into one
+   <code>.canlab</code> project the desktop opens with every mark on the
+   timeline.</p>
+<pre><code>sudo ip link set can0 up type can bitrate 500000 listen-only on
+canlab-cli capture --interface socketcan --channel can0 --bitrate 500000 \\
+    --keys b=brake,h=horn --http 8765 --http-host 0.0.0.0 \\
+    --token-file ~/.canlab/kit-token --gpio 17=brake --duration 3600</code></pre>
+{table(["Marks from", "How"], [
+    ["The keyboard",
+     "<code>--keys b=brake</code>: on a terminal, <code>b</code> opens a "
+     "<code>brake</code> interval and <code>b</code> closes it, <code>q</code> "
+     "stops. Without <code>--keys</code>, or when stdin is not a terminal, type "
+     "a label and Enter: <code>brake</code>, <code>brake off</code>, "
+     "<code>brake point</code>."],
+    ["HTTP",
+     "<code>--http PORT</code> serves the same REST API as the window with "
+     "<code>POST /mark</code>, <code>GET /frames</code> and "
+     "<code>GET /status</code>, and without <code>/inject</code>. The token is "
+     "generated on the first run and written to <code>--token-file</code>. "
+     "Binding to anything but loopback is announced at start."],
+    ["GPIO",
+     "<code>--gpio 17=brake</code>: a switch between the pin and ground marks "
+     "<code>brake</code> for as long as it is held, through gpiozero when it "
+     "is installed. Without it the kit says so and records without switches."],
+])}
+<p><code>--adapter NAME</code> opens an adapter saved in the desktop's
+   Settings, which are mirrored to <code>~/.canlab/adapters.json</code> for
+   this purpose. Ctrl-C, SIGTERM or <code>--duration</code> stop the run
+   cleanly: open marks are closed, the last segment is flushed, and the
+   summary and the project path are printed. <code>--no-project</code> leaves
+   the segments and marks only.</p>
+<div class="note">
+  <span class="callout-title">It never asks for privileges</span>
+  <p>A SocketCAN link that is down gets the <code>ip link</code> command
+     printed and exit code 2. The systemd unit in
+     <code>canlab/examples/capture-kit/</code> brings <code>can0</code> up in
+     listen-only mode with <code>CAP_NET_ADMIN</code> before the kit starts,
+     and runs the kit itself as an ordinary user.</p>
+</div>
+<p>The kit has been exercised on python-can's virtual backend and a fake bus,
+   with marks from stdin, HTTP and a fake gpiozero, not yet in a vehicle.</p>
+"""))
+
     return pages

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Command line · CanLab</title>
+<meta name="description" content="canlab-cli: the analysis without the window, and the capture kit for a small computer in a car.">
+<link rel="icon" href="assets/favicon.ico" sizes="16x16 24x24 32x32 48x48 64x64">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">CanLab<span>/docs</span></a>
+    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html">Integrations</a><a href="cli.html" aria-current="page">Command line</a><a href="reference.html">Reference</a></nav>
+  </div>
+</header>
+<div class="wrap">
+  <div class="layout">
+    <aside class="toc"><h2>On this page</h2><nav><a href="#the-commands">The commands</a><a href="#capture">Capture</a></nav></aside>
+    <main id="main">
+
+<h1>Command line</h1>
+<p class="lede">The analysis modules are Qt-free, so everything here runs
+   without a display: in CI over a folder of drives, from a notebook, piped
+   into something else, or on a Raspberry Pi in a car. A test asserts the
+   process never imports Qt.</p>
+
+<h2 id="the-commands">The commands</h2>
+<pre><code>canlab-cli ids      capture.csv                          # IDs, rates, moving bytes
+canlab-cli detect   capture.csv --json out.json --dbc draft.dbc
+canlab-cli decode   capture.csv --dbc signals.dbc --out decoded.csv
+canlab-cli convert  capture.blf capture.csv              # csv, blf, asc, log
+canlab-cli capture  --interface socketcan --channel can0 --keys b=brake</code></pre>
+<p>Every command reads any format the application does. <code>detect</code>
+   runs the counter and checksum sweep, entropy boundaries, bit-level flags,
+   value-table inference and multiplexer detection, and can draft a DBC from
+   what it found with overlapping claims resolved so the file loads in
+   cantools. <code>convert</code> writes SavvyCAN's own CSV layout, so the
+   result opens there as well as here. Nothing here transmits.</p>
+
+<h2 id="capture">Capture</h2>
+<p><code>canlab-cli capture</code> is the capture kit: a headless, receive-only
+   logger that writes SavvyCAN CSV segments as frames arrive, rotating by frame
+   count (<code>--max-frames</code>, 200,000) or by time
+   (<code>--max-seconds</code>, 600), keeps a <code>marks.json</code> updated
+   on every mark, and when it stops folds the segments and marks into one
+   <code>.canlab</code> project the desktop opens with every mark on the
+   timeline.</p>
+<pre><code>sudo ip link set can0 up type can bitrate 500000 listen-only on
+canlab-cli capture --interface socketcan --channel can0 --bitrate 500000 \
+    --keys b=brake,h=horn --http 8765 --http-host 0.0.0.0 \
+    --token-file ~/.canlab/kit-token --gpio 17=brake --duration 3600</code></pre>
+<div class="table-scroll"><table><thead><tr><th>Marks from</th><th>How</th></tr></thead><tbody><tr><td>The keyboard</td><td><code>--keys b=brake</code>: on a terminal, <code>b</code> opens a <code>brake</code> interval and <code>b</code> closes it, <code>q</code> stops. Without <code>--keys</code>, or when stdin is not a terminal, type a label and Enter: <code>brake</code>, <code>brake off</code>, <code>brake point</code>.</td></tr><tr><td>HTTP</td><td><code>--http PORT</code> serves the same REST API as the window with <code>POST /mark</code>, <code>GET /frames</code> and <code>GET /status</code>, and without <code>/inject</code>. The token is generated on the first run and written to <code>--token-file</code>. Binding to anything but loopback is announced at start.</td></tr><tr><td>GPIO</td><td><code>--gpio 17=brake</code>: a switch between the pin and ground marks <code>brake</code> for as long as it is held, through gpiozero when it is installed. Without it the kit says so and records without switches.</td></tr></tbody></table></div>
+<p><code>--adapter NAME</code> opens an adapter saved in the desktop's
+   Settings, which are mirrored to <code>~/.canlab/adapters.json</code> for
+   this purpose. Ctrl-C, SIGTERM or <code>--duration</code> stop the run
+   cleanly: open marks are closed, the last segment is flushed, and the
+   summary and the project path are printed. <code>--no-project</code> leaves
+   the segments and marks only.</p>
+<div class="note">
+  <span class="callout-title">It never asks for privileges</span>
+  <p>A SocketCAN link that is down gets the <code>ip link</code> command
+     printed and exit code 2. The systemd unit in
+     <code>canlab/examples/capture-kit/</code> brings <code>can0</code> up in
+     listen-only mode with <code>CAP_NET_ADMIN</code> before the kit starts,
+     and runs the kit itself as an ordinary user.</p>
+</div>
+<p>The kit has been exercised on python-can's virtual backend and a fake bus,
+   with marks from stdin, HTTP and a fake gpiozero, not yet in a vehicle.</p>
+
+    </main>
+  </div>
+</div>
+<footer>
+  <div class="wrap">
+    <p>CanLab is MIT licensed. Author: Sherin Joseph Roy.
+       <a href="https://github.com/Sherin-SEF-AI/CanLab">Source on GitHub</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/releases">Releases</a> ·
+       <a href="https://github.com/Sherin-SEF-AI/CanLab/issues">Issues</a></p>
+    <p>These pages describe the code on <code>main</code>. Where a statement is
+       about a specific module the module is named, so it can be checked
+       against the source.</p>
+  </div>
+</footer>
+</body>
+</html>

@@ -16,7 +16,7 @@
 <header class="masthead">
   <div class="masthead-inner">
     <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">CanLab<span>/docs</span></a>
-    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html" aria-current="page">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html">Integrations</a><a href="reference.html">Reference</a></nav>
+    <nav aria-label="Sections"><a href="index.html">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="guide.html" aria-current="page">Guide</a><a href="tabs.html">Tabs</a><a href="analysis.html">Analysis</a><a href="diagnostics.html">Diagnostics</a><a href="exports.html">Exports</a><a href="integrations.html">Integrations</a><a href="cli.html">Command line</a><a href="reference.html">Reference</a></nav>
   </div>
 </header>
 <div class="wrap">
@@ -98,10 +98,12 @@
 <h2 id="6-calibrate-against-something-real">6. Calibrate against something real</h2>
 <p>If you have an independent measurement of the same quantity, a GPS speed log
    for instance, you do not have to guess the scale.
-   <strong>Tools &rarr; Calibrate signal from reference CSV</strong> takes a
-   CSV of <code>timestamp,value</code> and searches for the CAN field whose
-   values best fit it by least squares, reporting scale, offset and an R²
-   verdict of PASS or UNCONFIRMED. See
+   <strong>Tools &rarr; Calibrate signals from a reference file (CSV, GPX)</strong>
+   takes a CSV with a time column and any value columns, or a GPX track, finds
+   the clock offset between the reference and the capture, and searches for
+   the CAN field whose values best fit each series by least squares, reporting
+   scale, offset and an R² verdict of PASS or UNCONFIRMED. The rows you pick
+   become DBC signals. See
    <a href="analysis.html#reference-calibration">reference calibration</a>.</p>
 
 <h2 id="7-export">7. Export</h2>
