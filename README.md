@@ -146,6 +146,39 @@ QT_QPA_PLATFORM=offscreen python docs/demo/record_tour.py   # stills + geometry
 python docs/demo/build_tour.py                              # narrate, render, encode
 ```
 
+### The command line tour
+
+**[canlab-cli-tour.mp4](docs/canlab-cli-tour.mp4?raw=1)** (1:42): the headless
+side, in one pass. Every command in it was run for real against recordings this
+project did not produce, and the terminal you see is replaying the bytes those
+commands actually wrote.
+
+| Chapter | What it runs on |
+|---|---|
+| What is on this bus | `ids` over a 145,534-frame J1939 truck log |
+| Every format, one reader | candump, GVRET CSV, MDF4, Vector ASC, and a 64-byte CAN FD file |
+| Find the structure | `detect` over 12,974 real frames: 25 counters, 5 checksums with their algorithms, 267 flags |
+| Decode it | the drafted DBC, then `decode` to a timestamp-by-signal matrix |
+| Convert and prove it | MDF4 to SavvyCAN CSV, read back to the same 9,600 frames and 50 IDs |
+| The capture kit | a genuine capture: one process replays a real log onto a bus, `capture` records 12,885 frames into rotating segments while a mark is posted over HTTP, and the project opens with the mark in place |
+| Assistants over MCP | `canlab-mcp`, the same analysis behind 29 tools |
+
+The data is fetched from the projects that published it, so the tour can be
+rebuilt from scratch:
+
+```bash
+python docs/demo/fetch_cli_data.py     # SavvyCAN examples, plus the corpus
+python docs/demo/record_cli.py         # run every command, keep what it printed
+python docs/demo/build_cli_tour.py     # draw the terminal, score it, encode
+```
+
+The recorder runs each command on a pseudo-terminal and timestamps its output,
+so the video cannot show a command succeeding that did not. Two defects were
+found by recording it: the capture kit printed an `Authorization: Bearer`
+example for `POST /mark` when the API checks `X-API-Token`, so no mark posted by
+following it ever worked, and `canlab-cli ids capture.csv | head` ended in a
+BrokenPipeError traceback. Both are fixed and pinned by tests.
+
 ### The full walkthrough
 
 Every tab, in four parts, 1080p with subtitles burned in.

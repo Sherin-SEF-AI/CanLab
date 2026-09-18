@@ -1302,6 +1302,22 @@ def register(app):
    into something else, or on a Raspberry Pi in a car. A test asserts the
    process never imports Qt.</p>
 
+<div class="video-card">
+  <video controls preload="metadata" playsinline>
+    <source src="canlab-cli-tour.mp4" type="video/mp4">
+    Your browser cannot play this video.
+    <a href="canlab-cli-tour.mp4">Download it instead</a>.
+  </video>
+  <div class="meta">
+    <h3>The command line tour</h3>
+    <p class="len">1:42</p>
+    <p>Every command run for real against recordings this project did not
+       produce, including a genuine capture: one process replays a real log
+       onto a bus while <code>canlab-cli capture</code> records it and a mark
+       is posted over HTTP.</p>
+  </div>
+</div>
+
 {h2("The commands")}
 <pre><code>canlab-cli ids      capture.csv                          # IDs, rates, moving bytes
 canlab-cli detect   capture.csv --json out.json --dbc draft.dbc
