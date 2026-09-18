@@ -3,6 +3,7 @@
 Nothing here opens hardware. The bus is a recording double or python-can's
 in-process virtual backend, and the kit must never send on either.
 """
+import shutil
 import sys
 import threading
 import time
@@ -228,3 +229,45 @@ def test_a_python_can_virtual_bus_run(tmp_path):
     (seg,) = summary["segments"]
     df = parse_savvycan_csv(seg)
     assert len(df) == 50 and df["ID"].iloc[0] == "123" and int(df["DLC"].iloc[0]) == 4
+
+
+def test_the_advertised_mark_command_uses_the_header_the_api_checks():
+    """The kit printed 'Authorization: Bearer', which the REST API does not
+    read, so every mark posted by following the instruction was rejected."""
+    from canlab.core.capture_kit import mark_curl_example
+    from canlab.core.rest_api import TOKEN_HEADER
+
+    line = mark_curl_example("0.0.0.0", 8765, "s3cret")
+    assert f"-H '{TOKEN_HEADER}: s3cret'" in line
+    assert "Bearer" not in line
+    assert "http://127.0.0.1:8765/mark" in line      # 0.0.0.0 is not dialable
+    assert mark_curl_example("kit.local", 9000, "t", "horn").endswith(
+        "http://kit.local:9000/mark")
+    assert '{"label":"horn"}' in mark_curl_example("kit.local", 9000, "t", "horn")
+
+
+def test_a_mark_posted_with_that_header_is_accepted(tmp_path):
+    """End to end: the command the kit prints actually adds a mark."""
+    pytest.importorskip("fastapi")
+    import shlex
+    import subprocess
+    from canlab.core.capture_kit import mark_curl_example
+    from canlab.core.rest_api import RestAPIServer
+
+    session = CaptureSession(RecordingBus(), CaptureOptions(out_dir=tmp_path / "srv"))
+    session.start()
+    server = RestAPIServer(session.state_getter, host="127.0.0.1", port=0,
+                           token="s3cret", expose_inject=False, on_mark=session.mark)
+    server.start()
+    try:
+        assert server.port != 0, "a server on port 0 must report the port it got"
+        line = mark_curl_example("127.0.0.1", server.port, server.token)
+        if shutil.which("curl") is None:
+            pytest.skip("curl is not installed")
+        out = subprocess.run(shlex.split(line), capture_output=True, text=True, timeout=30)
+        assert '"ok":true' in out.stdout.replace(" ", ""), out.stdout
+    finally:
+        server.stop()
+        session.stop()
+    assert session.marks.open_labels() == []          # stop closed the interval
+    assert len(session.marks) == 1
