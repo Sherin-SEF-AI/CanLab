@@ -49,12 +49,16 @@ MCAST_CHANNEL = "224.0.0.7"
 HTTP_PORT = 8799
 HTTP_TOKEN = "tour-demo-token"
 
-ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\r(?!\n)")
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
 
 
 def clean(text: str) -> str:
-    """Terminal control sequences out; the renderer draws plain text."""
-    return ANSI.sub("", text).replace("\x08", "")
+    """Terminal control sequences out; the renderer draws plain text.
+
+    A pty ends every line with CRLF. Left in, the carriage return reaches the
+    renderer as a character with no glyph and every line ends in a box.
+    """
+    return ANSI.sub("", text).replace("\r\n", "\n").replace("\r", "").replace("\x08", "")
 
 
 class Step:
@@ -137,11 +141,14 @@ def tour_steps(data: Path) -> list[Step]:
 
         # ── 3. every format ──────────────────────────────────────────────────
         S("for f in candump.log GVRET_Log.csv canedge_c.MF4 css_multi.asc "
-          "pc_test_CanFdMessage64.blf; do printf '%-28s' \"$f\"; "
+          "pc_test_CanFdMessage64.asc; do printf '%-30s' \"$f\"; "
           "canlab-cli ids \"$f\" | head -1; done", chapter="formats",
-          caption="The same reader for candump, GVRET, MDF4, ASC and BLF.",
-          note="Including a 64-byte CAN FD file from python-can's own tests.",
-          pause=3.0),
+          caption="One reader for candump, GVRET, MDF4 and Vector ASC.",
+          note="Five formats, four different tools wrote them, none of them this one.",
+          pause=3.2),
+        S("canlab-cli ids pc_test_CanFdMessage64.asc", chapter="formats",
+          caption="CAN FD too: 64-byte payloads, 11-bit and 29-bit side by side.",
+          pause=2.8),
 
         # ── 4. find the structure ────────────────────────────────────────────
         S("canlab-cli detect candump.log --json report.json --dbc draft.dbc",
@@ -149,15 +156,10 @@ def tour_steps(data: Path) -> list[Step]:
           caption="Every offline detector over 12,974 real frames.",
           note="Counters, checksums, bit flags, value tables, multiplexers.",
           pause=3.4),
-        S("python -c \"import json;r=json.load(open('report.json'));"
-          "print('messages with a checksum:', sum(1 for v in "
-          "r['counters_checksums'].values() if v['checksums']));"
-          "print('first:', [f\\\"{k} {c['col']} {c['algorithm']} \\\"\n"
-          "  f\\\"{c['confidence']:.0%}\\\" for k,v in "
-          "r['counters_checksums'].items() for c in v['checksums']][:3])\"",
-          chapter="detect",
+        S("python summarise_report.py", chapter="detect",
           caption="The report is JSON, so the findings are yours to query.",
-          pause=2.8),
+          note="Five checksum bytes, each with the algorithm that reproduces it.",
+          pause=3.0),
 
         # ── 5. decode ────────────────────────────────────────────────────────
         S("head -c 420 draft.dbc", chapter="decode",
@@ -196,13 +198,15 @@ def capture_chapter(data: Path, env: dict) -> list[Step]:
     if out.exists():
         shutil.rmtree(out)
 
+    # The kit takes about a second to import python-can and bind its server;
+    # the replay waits for it so the recording starts at the first frame.
     sender = subprocess.Popen(
-        [sys.executable, str(data / "replay_sender.py"), str(data / "candump.log"), "1.0"],
+        ["bash", "-c", f"sleep 2.5; exec {sys.executable} replay_sender.py candump.log 1.0"],
         cwd=str(data), env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         preexec_fn=os.setsid)
     marker = subprocess.Popen(
         ["bash", "-c",
-         f"sleep 5; curl -sS -X POST -H 'X-API-Token: {HTTP_TOKEN}' "
+         f"sleep 6.5; curl -sS -X POST -H 'X-API-Token: {HTTP_TOKEN}' "
          f"-H 'Content-Type: application/json' -d '{{\"label\":\"brake\"}}' "
          f"http://127.0.0.1:{HTTP_PORT}/mark >/dev/null; sleep 2.5; "
          f"curl -sS -X POST -H 'X-API-Token: {HTTP_TOKEN}' "
@@ -215,8 +219,8 @@ def capture_chapter(data: Path, env: dict) -> list[Step]:
             f"--out drive --prefix drive --max-frames 6000 --duration 12 "
             f"--http {HTTP_PORT} --token {HTTP_TOKEN}",
             chapter="capture",
-            caption="Recording a live bus. A phone posts the marks over HTTP.",
-            note="Another process is replaying the SavvyCAN capture onto the bus.",
+            caption="Recording a live bus, with the marks posted over HTTP.",
+            note="Another process replays the SavvyCAN capture; curl posts a mark.",
             pause=2.4), data, env))
     finally:
         for proc in (sender, marker):
@@ -224,7 +228,7 @@ def capture_chapter(data: Path, env: dict) -> list[Step]:
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
             proc.wait(timeout=20)
 
-    steps.append(run(Step("ls drive/", chapter="capture",
+    steps.append(run(Step("ls -1sh drive/", chapter="capture",
                           caption="Rotating segments, the marks, and a project.",
                           pause=2.2), data, env))
     steps.append(run(Step("cat drive/marks.json", chapter="capture",
@@ -232,16 +236,10 @@ def capture_chapter(data: Path, env: dict) -> list[Step]:
                           note="Ctrl-C or --duration closes whatever is open.",
                           pause=2.8), data, env))
     steps.append(run(Step(
-        "python -c \"from canlab.core.project import load_project;"
-        "from canlab.core.state import AppState;s=AppState();"
-        "load_project(s,'drive/drive.canlab.zip');"
-        "print(f'{len(s.frames_df)} frames, {s.frames_df[chr(34)+chr(34)] "
-        "if False else s.frames_df[\\\"ID\\\"].nunique()} IDs, "
-        "{len(s.annotations.items)} mark');"
-        "a=s.annotations.items[0];print(f'{a.label}: {a.end-a.start:.2f} s')\"",
-        chapter="capture",
+        "python open_project.py drive/drive.canlab.zip", chapter="capture",
         caption="The desktop opens that project with the mark in place.",
-        pause=3.0), data, env))
+        note="Same loader the window uses on File, Open Project.",
+        pause=3.2), data, env))
     return steps
 
 
@@ -266,6 +264,7 @@ def main() -> int:
     if not (data / "candump.log").is_file():
         raise SystemExit(f"no data in {data}; run docs/demo/fetch_cli_data.py first")
 
+    cwd_label = data.name
     env = dict(os.environ)
     env["COLUMNS"] = "104"
     env["LINES"] = "40"
@@ -284,6 +283,8 @@ def main() -> int:
         steps.extend(capture_chapter(data, env))
     for step in final_steps():
         steps.append(run(step, data, env))
+    for step in steps:
+        step.cwd = cwd_label
 
     failures = [s for s in steps if s.exit != 0]
     out = Path(args.out)
