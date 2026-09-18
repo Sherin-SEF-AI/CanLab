@@ -331,6 +331,16 @@ def gpio_marker(session: CaptureSession, pins: dict[int, str]) -> list[str]:
     return notes
 
 
+def mark_curl_example(host: str, port: int, token: str, label: str = "brake") -> str:
+    """The exact command that adds a mark, with the header the API checks."""
+    from canlab.core.rest_api import TOKEN_HEADER
+    shown = "127.0.0.1" if host in ("0.0.0.0", "") else host
+    return (f"curl -X POST -H '{TOKEN_HEADER}: {token}' "
+            f"-H 'Content-Type: application/json' "
+            f'-d \'{{"label":"{label}"}}\' '
+            f"http://{shown}:{port}/mark")
+
+
 def write_token_file(path, token: str) -> None:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)

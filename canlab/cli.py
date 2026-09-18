@@ -299,8 +299,8 @@ def cmd_capture(args) -> int:
     import signal
     import threading
     from canlab.core.capture_kit import (
-        CaptureOptions, CaptureSession, build_project, gpio_marker, parse_pin_map,
-        stdin_marker, summary_text, write_token_file,
+        CaptureOptions, CaptureSession, build_project, gpio_marker, mark_curl_example,
+        parse_pin_map, stdin_marker, summary_text, write_token_file,
     )
 
     adapter = _resolve_adapter(args)
@@ -366,9 +366,7 @@ def cmd_capture(args) -> int:
             raise SystemExit(f"could not start the HTTP server: {e}")
         if token_path is not None and not token_path.is_file():
             write_token_file(token_path, server.token)
-        log(f"marks: curl -X POST -H 'Authorization: Bearer {server.token}' "
-            f"-H 'Content-Type: application/json' -d '{{\"label\":\"brake\"}}' "
-            f"http://{args.http_host}:{args.http}/mark")
+        log("marks: " + mark_curl_example(args.http_host, server.port, server.token))
 
     for note in gpio_marker(session, pins):
         log(note)

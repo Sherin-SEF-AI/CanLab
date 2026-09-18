@@ -43,7 +43,7 @@ The token is generated on the first run and written to the file. From any
 device on the same network:
 
 ```bash
-curl -X POST -H "Authorization: Bearer $(cat ~/.canlab/kit-token)" \
+curl -X POST -H "X-API-Token: $(cat ~/.canlab/kit-token)" \
      -H "Content-Type: application/json" \
      -d '{"label": "brake"}' http://kit.local:8765/mark
 ```

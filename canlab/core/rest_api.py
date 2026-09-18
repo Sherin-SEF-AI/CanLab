@@ -20,6 +20,12 @@ import threading
 import secrets
 import ipaddress
 
+#: The header every data endpoint requires. Anything that tells a user how
+#: to call the API reads this, so a printed example cannot drift from the
+#: check: the capture kit advertised "Authorization: Bearer" and every mark
+#: posted by following it was rejected.
+TOKEN_HEADER = "X-API-Token"
+
 
 _DASHBOARD_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><title>CANLAB Live</title>
@@ -122,7 +128,7 @@ def _build_app(state_getter, token: str, *, expose_inject: bool = True, on_mark=
     def require_token(x_api_token: str = Header(None)):
         if not token or not x_api_token or not secrets.compare_digest(x_api_token, token):
             raise HTTPException(status_code=401,
-                                detail="Missing or invalid X-API-Token header")
+                                detail=f"Missing or invalid {TOKEN_HEADER} header")
 
     # Data endpoints require the token (per-route); the "/" dashboard shell is
     # open (it's just static HTML that asks the user to paste the token).
@@ -271,6 +277,9 @@ class RestAPIServer:
             sock.close()
             raise OSError(
                 f"Cannot bind {self._host}:{self._port} — {e}") from e
+        # Port 0 means "any free port"; record the one the kernel chose, so
+        # the address this server reports is the address it is listening on.
+        self._port = int(sock.getsockname()[1])
         sock.setblocking(False)
 
         config = uvicorn.Config(app, log_level="error")
@@ -280,6 +289,11 @@ class RestAPIServer:
             target=self._server.run, kwargs={"sockets": [sock]},
             daemon=True, name="canlab-rest-api")
         self._thread.start()
+
+    @property
+    def port(self) -> int:
+        """The port actually bound once started."""
+        return self._port
 
     def stop(self, timeout: float = 3.0):
         if self._server:
