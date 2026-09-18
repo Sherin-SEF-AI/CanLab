@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -481,7 +482,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    return args.fn(args)
+    try:
+        return args.fn(args)
+    except BrokenPipeError:
+        # `canlab-cli ids capture.csv | head` closes the pipe while the listing
+        # is still being written. That is the reader saying it has enough, not
+        # an error here, but unbuffered stdout turns it into a traceback and a
+        # non-zero exit. Point what is left at /dev/null so the interpreter's
+        # own flush at shutdown cannot raise it again.
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except OSError:
+            pass
+        return 0
 
 
 if __name__ == "__main__":
