@@ -122,3 +122,24 @@ def test_capture_names_a_missing_saved_adapter(tmp_path):
     r = cli("capture", "--adapter", "nothere", "--adapters-json", str(tmp_path / "none.json"),
             "--duration", "1", "--out", str(tmp_path / "k"))
     assert r.returncode != 0 and "no adapter named" in r.stderr
+
+
+def test_a_listing_piped_into_head_is_not_an_error():
+    """`canlab-cli ids capture.csv | head -1` used to end in a BrokenPipeError
+    traceback and exit 1. Unbuffered stdout, which is what CI and Docker give
+    you, made it happen every time."""
+    env = dict(os.environ)
+    env["PYTHONUNBUFFERED"] = "1"
+    env.pop("QT_QPA_PLATFORM", None)
+    reader = subprocess.Popen(["head", "-1"], stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE, text=True)
+    writer = subprocess.Popen([sys.executable, "-m", "canlab.cli", "ids", str(SAMPLE)],
+                              stdout=reader.stdin, stderr=subprocess.PIPE,
+                              text=True, env=env)
+    reader.stdin.close()
+    first = reader.stdout.read()
+    reader.wait(timeout=60)
+    err = writer.communicate(timeout=60)[1]
+    assert "frames" in first
+    assert "BrokenPipeError" not in err and "Traceback" not in err, err
+    assert writer.returncode == 0, f"exit {writer.returncode}: {err}"
