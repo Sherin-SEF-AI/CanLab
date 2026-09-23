@@ -1485,7 +1485,7 @@ class MainWindow(QMainWindow):
     def _open_rlog(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Open openpilot Log", "",
-            "openpilot Logs (*.rlog *.qlog);;All Files (*)"
+            "openpilot Logs (rlog qlog *.rlog *.qlog *.bz2 *.zst);;All Files (*)"
         )
         if path:
             self._load_log_file(path)

@@ -774,6 +774,87 @@ def phase_reference():
     check("the signal it writes decodes the car", decodes)
 
 
+OPENPILOT_RLOG = ("https://commadataci.blob.core.windows.net/openpilotci/"
+                  "0982d79ebb0de295/2021-01-03--20-03-36/6/rlog.bz2")
+
+
+def phase_openpilot():
+    """A real openpilot log: a 2021 Toyota RAV4 drive from openpilot's own CI
+    test routes, publicly downloadable. It carries the car's CAN traffic, an
+    external GPS receiver, and openpilot's decoded carState, so the reader and
+    the calibrator can both be checked against it."""
+    section("AN OPENPILOT LOG FROM A REAL DRIVE")
+    import urllib.request
+
+    import numpy as np
+    from canlab.core.dbc_manager import decode_frame
+    try:
+        from canlab.core import openpilot_parser as op
+        if not op.is_available():
+            raise ImportError
+    except ImportError:
+        check("openpilot rlog", lambda: (None, "pycapnp is not installed"))
+        return
+    from canlab.core.reference_calibrate import calibrate_with_lag_search, candidate_to_signal_def
+
+    path = DATA / "openpilot" / "rlog.bz2"
+    if not path.is_file():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with urllib.request.urlopen(OPENPILOT_RLOG, timeout=120) as r:
+                path.write_bytes(r.read())
+        except OSError as e:
+            reason = f"could not fetch it: {e}"
+            check("openpilot rlog", lambda: (None, reason))
+            return
+    state = {}
+
+    def reads():
+        t0 = time.perf_counter()
+        df = op.parse_rlog(str(path))
+        took = time.perf_counter() - t0
+        direct = sum(len(e.can) for e in op.events(path) if e.which() == "can")
+        state["df"] = df
+        ok = (len(df) + df.attrs["sent_frames"] == direct and df["ID"].nunique() > 100
+              and sorted(df["Bus"].unique()) == [0, 1, 2])
+        return ok, (f"{len(df):,} received frames from {df['ID'].nunique()} IDs on buses "
+                    f"0, 1 and 2 in {took:.1f} s; {df.attrs['sent_frames']:,} frames the "
+                    f"panda sent itself kept apart; the two add up to pycapnp's own count")
+    check("a real rlog opens with the bundled schema", reads)
+
+    def calibrates():
+        df = state.get("df")
+        if df is None:
+            return False, "no frames"
+        speed = op.gps_reference(str(path))[0]
+        t0 = df.attrs["t0_mono"]
+        vt, v = [], []
+        for ev in op.events(path):
+            if ev.which() == "carState":
+                vt.append(ev.logMonoTime / 1e9 - t0)
+                v.append(ev.carState.vEgo)
+        vt, v = np.array(vt), np.array(v)
+        cands = calibrate_with_lag_search(df[df["Bus"] == 0], speed, window_s=5.0, top_k=8)
+        hit = [c for c in cands if c["id"] == "0B4" and c["start_bit"] == 40
+               and c["length"] == 16 and c["byte_order"] == "big"]
+        if not hit:
+            return False, "0x0B4 bytes 5-6 not among the candidates"
+        sig = candidate_to_signal_def(hit[0], "SPEED")
+        errs = []
+        for r in df[(df["ID"] == "0B4") & (df["Bus"] == 0)].iloc[::20].itertuples():
+            frame = bytes(int(getattr(r, f"B{i}")) for i in range(int(r.DLC)))
+            got = decode_frame([sig], "0B4", frame)["SPEED"]
+            got = got / 3.6 if sig["unit"] == "km/h" else got
+            want = float(np.interp(r.Timestamp, vt, v))
+            errs.append(abs(got - want) / want)
+        med = float(np.median(errs))
+        ok = hit[0].get("native_unit") == "km/h" and hit[0].get("native_scale") == 0.01 and med < 0.02
+        return ok, (f"from the log's own GPS, 0x0B4 bytes 5-6 at {hit[0].get('native_scale')} "
+                    f"{hit[0].get('native_unit')} per bit (openpilot's DBC says 0.01 km/h), "
+                    f"R2 {hit[0]['r2']}; decodes within {100 * med:.2f}% of openpilot's vEgo")
+    check("the calibrator finds the speed in it from its own GPS", calibrates)
+
+
 def phase_safety():
     section("NOTHING TRANSMITTED")
 
@@ -878,7 +959,7 @@ def main() -> int:
     print(f"{len(have)} file(s): {', '.join(have)}")
 
     for phase in (phase_mdf4, phase_native_binary, phase_cross_format,
-                  phase_analysis, phase_new_features, phase_exports, phase_multiframe, phase_blocks, phase_reference, phase_safety):
+                  phase_analysis, phase_new_features, phase_exports, phase_multiframe, phase_blocks, phase_reference, phase_openpilot, phase_safety):
         phase()
 
     print("\n" + "=" * 70)
