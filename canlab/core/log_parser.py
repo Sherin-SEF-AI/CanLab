@@ -400,12 +400,23 @@ def parse_mdf(filepath: str) -> pd.DataFrame:
 
 # ── dispatch ─────────────────────────────────────────────────────────────────
 
+def is_openpilot_log(path) -> bool:
+    """openpilot names its logs rlog and qlog, usually as rlog.bz2 or rlog.zst,
+    so the suffix alone (".bz2", or none) says nothing."""
+    p = Path(path)
+    name = p.name.lower()
+    stem = name.split(".", 1)[0]
+    return (p.suffix.lower() in (".rlog", ".qlog")
+            or stem in ("rlog", "qlog")
+            or name.endswith((".rlog.bz2", ".qlog.bz2", ".rlog.zst", ".qlog.zst")))
+
+
 def parse_log_file(filepath: str) -> pd.DataFrame:
     """Auto-detect the capture format from the suffix/header and parse it."""
     path = Path(filepath)
     suffix = path.suffix.lower()
     try:
-        if suffix in (".rlog", ".qlog"):
+        if is_openpilot_log(path):
             from canlab.core.openpilot_parser import parse_rlog
             return parse_rlog(filepath)
         if suffix in (".pcap", ".pcapng"):

@@ -1,107 +1,156 @@
 """
-Parse openpilot .rlog / .qlog files into a standard CAN frames DataFrame.
+Read openpilot logs (rlog, qlog; plain, .bz2 or .zst) into CanLab frames.
 
-Requires pycapnp. Gracefully returns empty DataFrame if missing.
+An openpilot log is a stream of capnp ``Event`` messages. CAN traffic is the
+``can`` event: a list of frames with an address, the payload and ``src``, the
+panda's bus number. The schema is comma.ai's cereal, vendored under
+``core/data/cereal`` (MIT, see the NOTICE there), so only pycapnp is needed.
 
-openpilot log format (simplified):
-  Each log entry is a capnp-encoded Event with a union field.
-  CAN frames live in Event.can[], each entry has:
-    address, busTime, dat (bytes), src (bus index).
+Three things the previous reader got wrong, each of which stopped a real log
+from opening:
+
+- Logs are distributed compressed (``rlog.bz2``, ``rlog.zst``) and were read
+  as raw capnp.
+- The schema was looked for in places nobody has it, and when found was
+  loaded without an import path, which its absolute imports need.
+- A panda echoes the frames openpilot itself sends with ``src`` 128 plus the
+  bus. Those are openpilot's transmissions, not the car's traffic; they are
+  now left out of the capture unless asked for, and counted.
+
+The same log carries the car's GPS, which is a ready reference for the
+calibrator: ``gps_reference`` returns it as ``ReferenceSeries``.
 """
-from pathlib import Path
-import pandas as pd
+from __future__ import annotations
+
+import bz2
 import logging
+from pathlib import Path
+
+import pandas as pd
 
 log = logging.getLogger(__name__)
+
+SCHEMA_DIR = Path(__file__).resolve().parent / "data" / "cereal"
+#: panda marks a frame it transmitted with 128 added to the bus number
+SENT_FLAG = 0x80
 
 _CAPNP_AVAILABLE = False
 try:
     import capnp  # noqa: F401
     _CAPNP_AVAILABLE = True
 except ImportError:
-    log.debug("suppressed exception", exc_info=True)
+    log.debug("pycapnp not installed", exc_info=True)
 
 
 def is_available() -> bool:
     return _CAPNP_AVAILABLE
 
 
-def _normalize_id(val: int) -> str:
-    return format(val, "03X")
+def _schema():
+    import capnp
+    capnp.remove_import_hook()
+    path = SCHEMA_DIR / "log.capnp"
+    if not path.is_file():
+        raise FileNotFoundError(f"cereal schema missing at {path}")
+    return capnp.load(str(path), imports=[str(SCHEMA_DIR)])
 
 
-def parse_rlog(filepath: str) -> pd.DataFrame:
+_LOG = None
+
+
+def schema():
+    """The loaded cereal ``log`` module, cached."""
+    global _LOG
+    if _LOG is None:
+        _LOG = _schema()
+    return _LOG
+
+
+def read_bytes(path) -> bytes:
+    """The raw event stream of a log, decompressed if it needs to be."""
+    p = Path(path)
+    data = p.read_bytes()
+    if data[:3] == b"BZh":
+        return bz2.decompress(data)
+    if data[:4] == b"\x28\xb5\x2f\xfd":                   # zstd frame magic
+        try:
+            import zstandard
+        except ImportError as e:
+            raise RuntimeError("This log is zstd-compressed; pip install zstandard "
+                               "to read it, or decompress it first.") from e
+        return zstandard.ZstdDecompressor().decompressobj().decompress(data)
+    return data
+
+
+def events(path):
+    """Every Event in a log, in order."""
+    return schema().Event.read_multiple_bytes(read_bytes(path))
+
+
+def parse_rlog(filepath: str, include_sent: bool = False) -> pd.DataFrame:
     """
-    Parse an openpilot .rlog or .qlog file → standard CAN DataFrame.
+    An openpilot log's CAN traffic as a standard frames DataFrame.
 
-    Raises RuntimeError if pycapnp is not installed, the cereal schema is
-    missing, or the log cannot be decoded. Returns an empty DataFrame only when
-    the log genuinely contains no CAN events.
+    Timestamps are seconds from the first event. ``Bus`` is the panda bus.
+    Frames openpilot transmitted (``src`` >= 128) are dropped unless
+    ``include_sent``; how many were dropped is in ``df.attrs["sent_frames"]``.
+
+    Raises RuntimeError if pycapnp is missing or the file is not a log.
     """
     if not _CAPNP_AVAILABLE:
-        raise RuntimeError(
-            "pycapnp not installed. "
-            "Run: pip install pycapnp --break-system-packages"
-        )
-
+        raise RuntimeError("Reading openpilot logs needs pycapnp: "
+                           "pip install canlab[openpilot]")
+    from canlab.core.log_parser import _finish, make_row
     path = Path(filepath)
-
-    # openpilot logs are a concatenated stream of capnp-encoded Event messages.
-    # Decoding requires the cereal `log.capnp` schema. If parsing fails we raise
-    # rather than fabricating frames from arbitrary bytes (the old heuristic
-    # fallback emitted garbage "frames" that looked real).
     try:
-        rows = _parse_with_cereal(path)
-    except FileNotFoundError as e:
-        raise RuntimeError(
-            "openpilot cereal schema (log.capnp) not found. Install openpilot's "
-            "cereal or place log.capnp under canlab/resources/. An rlog cannot be "
-            "decoded without it."
-        ) from e
-    except Exception as e:
-        raise RuntimeError(f"Failed to parse openpilot rlog: {e}") from e
-
-    from canlab.core.log_parser import _finish
-    return _finish(rows)
-
-
-def _parse_with_cereal(path: Path) -> list:
-    """Try to read using cereal capnp schemas bundled with openpilot."""
-    import capnp
-    # Look for cereal schema in common openpilot locations
-    import os
-    schema_candidates = [
-        os.path.expanduser("~/openpilot/cereal/log.capnp"),
-        "/opt/openpilot/cereal/log.capnp",
-        str(Path(__file__).parent.parent / "resources" / "log.capnp"),
-    ]
-    schema_path = next((p for p in schema_candidates if os.path.exists(p)), None)
-    if not schema_path:
-        raise FileNotFoundError("cereal schema (log.capnp) not found")
-
-    log_capnp = capnp.load(schema_path)
-    rows = []
-    ts_base = 0.0
-
-    # Use pycapnp's streaming reader over the concatenated message stream rather
-    # than a hand-rolled length-prefix framing (which did not match the real
-    # format).
-    with open(path, "rb") as f:
-        for event in log_capnp.Event.read_multiple(f):
-            try:
-                if event.which() != "can":
-                    continue
-                ts = event.logMonoTime / 1e9
-                if ts_base == 0.0:
-                    ts_base = ts
-                for frame in event.can:
-                    from canlab.core.log_parser import make_row
-                    dat = bytes(frame.dat)[:64]
-                    rows.append(make_row(ts - ts_base, frame.address,
-                                         int(frame.address) > 0x7FF, frame.src, dat))
-            except Exception:
+        stream = events(path)
+        rows, sent, t0 = [], 0, None
+        for event in stream:
+            if event.which() != "can":
                 continue
+            ts = event.logMonoTime / 1e9
+            if t0 is None:
+                t0 = ts
+            for frame in event.can:
+                src = int(frame.src)
+                if src & SENT_FLAG and not include_sent:
+                    sent += 1
+                    continue
+                address = int(frame.address)
+                rows.append(make_row(ts - t0, address, address > 0x7FF, src,
+                                     bytes(frame.dat)[:64]))
+    except RuntimeError:
+        raise
+    except Exception as e:
+        raise RuntimeError(f"{path.name} is not an openpilot log this schema can read: {e}") from e
+    df = _finish(rows)
+    df.attrs["sent_frames"] = sent
+    df.attrs["t0_mono"] = t0
+    return df
 
-    return rows
 
-
+def gps_reference(filepath: str):
+    """The log's GPS as reference series on the same clock as ``parse_rlog``:
+    speed (m/s), latitude, longitude and altitude, from gpsLocationExternal
+    (the external receiver) or, failing that, gpsLocation."""
+    from canlab.core.reference_series import ReferenceSeries
+    t0, rows = None, {"gpsLocationExternal": [], "gpsLocation": []}
+    for event in events(filepath):
+        kind = event.which()
+        if t0 is None and kind == "can":
+            t0 = event.logMonoTime / 1e9
+        if kind in rows:
+            g = getattr(event, kind)
+            rows[kind].append((event.logMonoTime / 1e9, g.speed, g.latitude,
+                               g.longitude, g.altitude))
+    source = "gpsLocationExternal" if rows["gpsLocationExternal"] else "gpsLocation"
+    fixes = rows[source]
+    if not fixes or t0 is None:
+        return []
+    ts = [r[0] - t0 for r in fixes]
+    name = Path(filepath).name
+    return [ReferenceSeries("speed", ts, [r[1] for r in fixes], unit="m/s", source=name,
+                            meta={"from": source}),
+            ReferenceSeries("latitude", ts, [r[2] for r in fixes], unit="deg", source=name),
+            ReferenceSeries("longitude", ts, [r[3] for r in fixes], unit="deg", source=name),
+            ReferenceSeries("altitude", ts, [r[4] for r in fixes], unit="m", source=name)]

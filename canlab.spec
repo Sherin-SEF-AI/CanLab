@@ -12,10 +12,17 @@ ROOT = Path("canlab")
 # _imaging.so or the manylinux-bundled libtiff/libjpeg/etc. without collect_all.
 pil_datas, pil_binaries, pil_hiddenimports = collect_all("PIL")
 
+# pycapnp reads openpilot logs. It is a compiled extension with schema files of
+# its own, so it is collected whole when it is installed.
+try:
+    capnp_datas, capnp_binaries, capnp_hiddenimports = collect_all("capnp")
+except Exception:
+    capnp_datas, capnp_binaries, capnp_hiddenimports = [], [], []
+
 a = Analysis(
     [str(ROOT / "main.py")],
     pathex=["."],
-    binaries=pil_binaries,
+    binaries=pil_binaries + capnp_binaries,
     datas=[
         (str(ROOT / "canlab.png"),             "canlab"             ),
         (str(ROOT / "assets"),                 "canlab/assets"      ),
@@ -23,6 +30,7 @@ a = Analysis(
         # the NMEA 2000 table distilled from canboat, and its licence notice
         (str(ROOT / "core" / "data"),          "canlab/core/data"   ),
         *pil_datas,
+        *capnp_datas,
     ],
     hiddenimports=[
         *collect_submodules("canlab"),
@@ -63,6 +71,7 @@ a = Analysis(
         "pydantic", "pydantic.v1", "pydantic_core",
         "anthropic", "anthropic.types", "anthropic._models",
         *pil_hiddenimports,
+        *capnp_hiddenimports,
     ],
     excludes=[
         "tkinter",
