@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "canlab"
-version = "2.0.0"
+version = "2.1.0"
 description = "CAN bus reverse-engineering workstation (PyQt6)"
 readme = "README.md"
 license = {text = "MIT"}

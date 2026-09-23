@@ -36,7 +36,7 @@ TEXT = (236, 237, 238)
 DIM = (140, 144, 148)
 PANEL = (20, 22, 24)
 
-VERSION = "v2.0.0"
+VERSION = "v2.1.0"
 
 
 # ── easing ───────────────────────────────────────────────────────────────────
@@ -378,7 +378,7 @@ LINKS = [
     ("SOURCE AND RELEASES", "github.com/Sherin-SEF-AI/CanLab"),
     ("DOCUMENTATION", "sherin-sef-ai.github.io/CanLab"),
 ]
-FOOTER = "MIT licence    ·    Linux x86_64 build    ·    540 tests"
+FOOTER = "MIT licence    ·    Linux x86_64 build    ·    676 tests"
 
 
 def outro_frame(t: float, total: float) -> Image.Image:
