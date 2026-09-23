@@ -157,13 +157,17 @@ def phase_j1939():
         df = load(BIG)
         with timed("pgn scan") as t:
             hits = scan_for_j1939(df)
-        named = [h for h in hits if not h["pgn_name"].startswith("PGN ")]
+        # one row per sender: a PGN from four ECUs is four rows
+        pgns = {h["pgn"] for h in hits}
+        named = {h["pgn"] for h in hits if not h["pgn_name"].startswith("PGN ")}
         j1939 = [h for h in hits if h["protocol"] == "J1939"]
-        FACTS["pgns"] = {"total": len(hits), "named": len(named)}
-        return (len(hits) > 90 and len(named) >= 8 and len(j1939) == len(hits)
-                and t.seconds < 2), \
-            (f"{len(hits)} PGNs, {len(named)} named, all J1939 "
-             f"(unlike the marine log), in {t.seconds:.2f} s")
+        frames = sum(h["frame_count"] for h in hits)
+        FACTS["pgns"] = {"senders": len(hits), "total": len(pgns), "named": len(named)}
+        return (len(pgns) > 90 and len(named) >= 8 and len(j1939) == len(hits)
+                and frames == len(df) and t.seconds < 2), \
+            (f"{len(pgns)} PGNs from {len(hits)} PGN-sender pairs, {len(named)} named, "
+             f"all J1939 (unlike the marine log); counts cover all {frames:,} frames; "
+             f"{t.seconds:.2f} s")
     check("every identifier decodes as a J1939 PGN", scan)
 
     def engine_speed():
@@ -178,7 +182,8 @@ def phase_j1939():
             for _, row in eec1.iterrows():
                 data = bytes(int(row[f"B{i}"]) for i in range(8))
                 out = decode_pgn(0xF004, data)
-                if "Engine Speed" in out:
+                # a sensor error is reported as "error", never as a number
+                if "Engine Speed" in out and isinstance(out["Engine Speed"][0], float):
                     values.append(out["Engine Speed"][0])
         lo, hi = min(values), max(values)
         mean = sum(values) / len(values)
@@ -218,6 +223,79 @@ def phase_j1939():
             (f"{len(rows)} DM1 frames; first frame has {len(out['dtcs'])} active "
              f"codes, lamps {lamps}")
     check("active fault codes decode", dm1)
+
+    def series(cid, pgn, name):
+        import numpy as np
+        g = load(BIG)
+        g = g[g["ID"] == cid]
+        t, v = [], []
+        for r in g.itertuples():
+            data = bytes(int(getattr(r, f"B{i}")) for i in range(int(r.DLC)))
+            out = decode_pgn(pgn, data)
+            if name in out and isinstance(out[name][0], float):
+                t.append(r.Timestamp)
+                v.append(out[name][0])
+        return np.array(t), np.array(v)
+
+    def two_ecus_agree():
+        """The brakes (EBC2, SA 0x0B) and the engine (CCVS, SA 0x00) each report
+        road speed. Wrong layouts cannot agree with each other by accident."""
+        import numpy as np
+        ta, va = series("18FEBF0B", 0xFEBF, "Front Axle Speed")
+        tc, vc = series("18FEF100", 0xFEF1, "Wheel-Based Vehicle Speed")
+        if len(ta) < 100 or len(tc) < 100:
+            return None, "EBC2 or CCVS missing"
+        other = np.interp(ta, tc, vc)
+        diff = np.abs(va - other)
+        r = float(np.corrcoef(va, other)[0, 1])
+        FACTS["speed_agreement"] = {"pairs": len(ta), "mean_abs_kmh": float(diff.mean()), "r": r}
+        return diff.mean() < 1.0 and r > 0.999, (
+            f"{len(ta)} pairs, mean difference {diff.mean():.2f} km/h, r {r:.5f}, "
+            f"over {va.min():.0f} to {va.max():.0f} km/h")
+    check("two ECUs report the same road speed", two_ecus_agree)
+
+    def engine_readings_are_physical():
+        """A running diesel's temperatures, pressures and supply, each from the
+        message J1939-71 puts it in."""
+        import numpy as np
+        checks = {
+            "coolant": ("18FEEE00", 0xFEEE, "Engine Coolant Temperature", 60, 110),
+            "oil temperature": ("18FEEE00", 0xFEEE, "Engine Oil Temperature 1", 60, 130),
+            "oil pressure": ("18FEEF00", 0xFEEF, "Engine Oil Pressure", 100, 700),
+            "barometer": ("18FEF500", 0xFEF5, "Barometric Pressure", 70, 110),
+            "battery": ("18FEF700", 0xFEF7, "Battery Potential / Power Input 1", 11, 30),
+            "fuel level": ("18FEFC17", 0xFEFC, "Fuel Level 1", 0, 100),
+        }
+        ok, out = [], []
+        for label, (cid, pgn, name, lo, hi) in checks.items():
+            _, v = series(cid, pgn, name)
+            if len(v) == 0:
+                return False, f"no {label} decoded"
+            ok.append(lo <= v.min() and v.max() <= hi)
+            out.append(f"{label} {v.min():.4g}..{v.max():.4g}")
+        _, boost = series("18FEF600", 0xFEF6, "Engine Intake Manifold #1 Pressure")
+        _, inlet = series("18FEF600", 0xFEF6, "Engine Air Inlet Pressure")
+        gauge_to_absolute = float(np.median(inlet - boost))
+        ok.append(90 <= gauge_to_absolute <= 110)
+        out.append(f"absolute inlet minus boost {gauge_to_absolute:.0f} kPa, the barometer")
+        return all(ok), "; ".join(out)
+    check("engine readings come from the right messages and are physical",
+          engine_readings_are_physical)
+
+    def lifetime_counters_agree():
+        """Distance from VD and from HRVD, and distance over fuel against the
+        ECU's own average economy."""
+        _, vd = series("18FEE000", 0xFEE0, "Total Vehicle Distance")
+        _, hr = series("18FEC100", 0xFEC1, "High Resolution Total Vehicle Distance")
+        _, fuel = series("18FEE900", 0xFEE9, "Engine Total Fuel Used")
+        _, avg = series("18FEF200", 0xFEF2, "Engine Average Fuel Economy")
+        if not (len(vd) and len(hr) and len(fuel) and len(avg)):
+            return None, "a lifetime counter is missing"
+        economy = vd[-1] / fuel[-1]
+        ok = abs(vd[-1] - hr[-1]) < 1.0 and abs(economy - avg[-1]) / avg[-1] < 0.05
+        return ok, (f"VD {vd[-1]:,.1f} km, HRVD {hr[-1]:,.1f} km; "
+                    f"{economy:.3f} km/L lifetime against {avg[-1]:.3f} reported")
+    check("lifetime distance and fuel agree with each other", lifetime_counters_agree)
 
 
 # ── 3. the detectors, over whole logs ────────────────────────────────────────
