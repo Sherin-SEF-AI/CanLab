@@ -143,6 +143,12 @@ class ISOTPSession:
         sn  = 1            # consecutive-frame sequence number
         sent_in_block = 0
         st = self._stmin_seconds(st_min)
+        # STmin is the gap between two consecutive frames, and a flow control
+        # arriving between them does not reset it. Sleeping only inside a
+        # block sent the first frame after each flow control 0.1 ms after the
+        # previous one, which can-isotp's timestamps showed and an ECU with a
+        # slow receive buffer would drop.
+        last_cf = None
 
         while idx < len(data):
             if flow_status == 0x2:      # OVFLW — abort
@@ -158,11 +164,16 @@ class ISOTPSession:
 
             chunk = data[idx:idx + 7]
             cf = bytes([0x20 | (sn & 0x0F)]) + chunk + bytes(7 - len(chunk))
+            if last_cf is not None and st > 0:
+                wait = st - (time.monotonic() - last_cf)
+                if wait > 0:
+                    time.sleep(wait)
             try:
                 gated_send(self._bus, can.Message(arbitration_id=self._tx_id,
                                                   data=cf, is_extended_id=False))
             except Exception:
                 return False
+            last_cf = time.monotonic()
             idx += 7
             sn = (sn + 1) & 0x0F
             sent_in_block += 1
@@ -176,8 +187,6 @@ class ISOTPSession:
                 flow_status, block_size, st_min = fc
                 st = self._stmin_seconds(st_min)
                 sent_in_block = 0
-            elif st > 0:
-                time.sleep(st)
         return True
 
     def request(self, data: bytes, timeout: float = 1.0,
