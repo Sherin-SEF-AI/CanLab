@@ -184,3 +184,29 @@ def test_the_shipped_sample_gives_wheel_speed_at_one_thirty_second():
     for c in wins:
         assert c["id"] == "0A6" and c["scale"] == pytest.approx(1 / 32)
         assert c["r2"] > 0.99 and c["lag_s"] == pytest.approx(1.0, abs=0.2)
+
+
+def test_a_small_scale_is_not_rounded_to_zero():
+    """Scales were rounded to six decimal places, so a field in 1e-7 degrees,
+    a common GPS encoding, came back with scale 0.0."""
+    n = 400
+    ts = np.arange(n) * 0.05
+    lat = 42.66 + np.cumsum(np.random.default_rng(4).normal(0, 2e-5, n))
+    raw = np.round(lat / 1e-7).astype(np.int64)
+    rows = [{"Timestamp": ts[i], "ID": "3F0", "Bus": 0, "DLC": 8,
+             **{f"B{k}": int((int(raw[i]) >> (8 * k)) & 0xFF) if k < 4 else 0 for k in range(8)}}
+            for i in range(n)]
+    (best,) = calibrate_against_reference(pd.DataFrame(rows), ts, lat, widths=(16,), top_k=1)
+    assert (best["start_bit"], best["length"], best["byte_order"]) == (0, 16, "little")
+    assert best["scale"] == pytest.approx(1e-7, rel=1e-6)       # was 0.0
+    assert best["r2"] > 0.999
+
+
+def test_a_native_unit_is_written_into_the_dbc_signal():
+    cand = {"id": "0AA", "start_bit": 0, "length": 16, "byte_order": "big",
+            "scale": 0.002777778, "offset": -18.66, "r2": 0.9985, "n": 2479,
+            "verdict": "PASS", "unit": "m/s", "series": "speed",
+            "native_unit": "km/h", "native_scale": 0.01, "native_offset": -67.18}
+    sig = candidate_to_signal_def(cand, "WHEEL_SPEED_FR")
+    assert (sig["scale"], sig["offset"], sig["unit"]) == (0.01, -67.18, "km/h")
+    assert "fitted against a reference in m/s" in sig["description"]

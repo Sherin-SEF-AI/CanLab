@@ -1,6 +1,7 @@
 """Tests for the harvested calibration refinements (sentinel masking + OEM
 scale snapping) and their effect on the reference calibrator."""
 import numpy as np
+import pytest
 import pandas as pd
 
 from canlab.core.calibrate_refine import nice_scale, mask_sentinels, snap_calibration  # noqa: F401
@@ -65,3 +66,30 @@ def test_end_to_end_masks_and_snaps():
     # The winning window may be a bit-shifted equivalent (scale 0.1, 0.05, …) —
     # the contract is that whatever wins was snapped to a clean OEM value.
     assert nice_scale(best["scale"])["rel_err"] < 1e-6
+
+
+# ── scales defined in another unit ───────────────────────────────────────────
+
+def test_a_km_per_h_scale_snaps_when_the_reference_is_in_m_per_s():
+    """0.01 km/h per bit is 0.0027778 m/s per bit: no round number in m/s."""
+    raw = np.arange(0, 8000, 7, dtype=float)
+    ref = raw * 0.0027790                          # within 0.05% of 0.01 km/h
+    plain = snap_calibration(0.0027790, 0.0, raw, ref)
+    assert plain is None or plain["native_unit"] == ""
+    snap = snap_calibration(0.0027790, 0.0, raw, ref, unit="m/s")
+    assert snap["auto"] and snap["native_unit"] == "km/h"
+    assert snap["native_scale"] == pytest.approx(0.01)
+    assert snap["scale"] == pytest.approx(0.01 / 3.6)
+
+
+def test_the_bias_gate_still_refuses_a_snap_that_moves_the_decode():
+    raw = np.arange(0, 8000, 7, dtype=float)
+    snap = snap_calibration(0.00275, 0.0, raw, raw * 0.00275, unit="m/s")   # 1% off
+    assert snap is None or not snap["auto"]
+
+
+def test_degrees_and_radians():
+    raw = np.arange(0, 3600, 3, dtype=float)
+    scale = 0.1 * np.pi / 180                      # 0.1 degree per bit, reference in rad
+    snap = snap_calibration(scale * 1.0003, 0.0, raw, raw * scale, unit="rad")
+    assert snap["native_unit"] == "deg" and snap["native_scale"] == pytest.approx(0.1)
