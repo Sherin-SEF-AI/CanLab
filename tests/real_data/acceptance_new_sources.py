@@ -632,6 +632,148 @@ def phase_blocks():
     check("the EV's cell block and the four-message run are found", tigor)
 
 
+COMMA_SEGMENT = "b0c9d2329ad1606b%7C2018-08-02--08-34-47/40"
+COMMA_FILES = ("processed_log/CAN/raw_can/t", "processed_log/CAN/raw_can/address",
+               "processed_log/CAN/raw_can/data", "processed_log/CAN/raw_can/src",
+               "processed_log/CAN/speed/t", "processed_log/CAN/speed/value",
+               "processed_log/GNSS/live_gnss_ublox/t", "processed_log/GNSS/live_gnss_ublox/value")
+
+
+def _comma2k19() -> Path | None:
+    """comma.ai's comma2k19 example segment (MIT): one minute of raw CAN from a
+    Toyota RAV4 with a u-blox GNSS receiver alongside, and openpilot's own
+    decoded speed. About 6 MB, fetched once into the corpus directory."""
+    import urllib.request
+    root = DATA / "comma2k19"
+    base = ("https://raw.githubusercontent.com/commaai/comma2k19/master/Example_1/"
+            + COMMA_SEGMENT + "/")
+    for rel in COMMA_FILES:
+        dest = root / rel
+        if dest.is_file() and dest.stat().st_size > 0:
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with urllib.request.urlopen(base + rel, timeout=60) as r:
+                dest.write_bytes(r.read())
+        except OSError:
+            return None
+    return root
+
+
+def phase_reference():
+    """The calibrator on a real car, against a real GNSS receiver.
+
+    The answer keys are external: openpilot's DBC for the Toyota puts vehicle
+    speed in 0x0B4 bytes 5-6 and the four wheel speeds in 0x0AA at 0.01 km/h
+    with an offset of -67.67 km/h, and the u-blox rows carry both the log's
+    clock and UTC, so the true clock offset is known.
+    """
+    section("REFERENCE CALIBRATION ON A REAL CAR")
+    import numpy as np
+    import pandas as pd
+    from canlab.core.dbc_manager import decode_frame
+    from canlab.core.reference_calibrate import (
+        calibrate_with_lag_search, candidate_to_signal_def, find_time_offset,
+    )
+    from canlab.core.reference_series import ReferenceSeries
+
+    root = _comma2k19()
+    if root is None:
+        check("comma2k19 segment", lambda: (None, "could not fetch the comma2k19 segment"))
+        return
+    L = lambda rel: np.load(root / rel, allow_pickle=True)  # noqa: E731
+    t, addr = L("processed_log/CAN/raw_can/t"), L("processed_log/CAN/raw_can/address")
+    data, src = L("processed_log/CAN/raw_can/data"), L("processed_log/CAN/raw_can/src")
+    keep = src == 0
+    t, addr, data = t[keep], addr[keep], data[keep]
+    mat = np.full((len(t), 8), np.nan)
+    dlc = np.zeros(len(t), dtype=int)
+    for i, d in enumerate(data):
+        b = bytes(d)
+        dlc[i] = len(b)
+        mat[i, :len(b)] = list(b)
+    df = pd.DataFrame({"Timestamp": t, "ID": [f"{a:03X}" for a in addr], "Bus": 0,
+                       "DLC": dlc, "Extended": False,
+                       **{f"B{i}": mat[:, i] for i in range(8)}}).sort_values("Timestamp")
+    gt = L("processed_log/GNSS/live_gnss_ublox/t")
+    gv = L("processed_log/GNSS/live_gnss_ublox/value")
+    speed, utc = gv[:, 2], gv[:, 3] / 1000.0
+    st, sv = L("processed_log/CAN/speed/t"), L("processed_log/CAN/speed/value")[:, 0]
+    true_offset = float(np.median(utc - gt))
+    state = {}
+
+    def found():
+        series = ReferenceSeries("speed", utc, speed, unit="m/s")
+        t0 = time.perf_counter()
+        cands = calibrate_with_lag_search(df, series, window_s=30.0, top_k=8)
+        took = time.perf_counter() - t0
+        state["cands"] = cands
+        passing = [c for c in cands if c["verdict"] == "PASS"]
+        vehicle = [c for c in passing if c["id"] == "0B4" and c["start_bit"] == 40
+                   and c["length"] == 16 and c["byte_order"] == "big"]
+        wheel_cands = [c for c in passing if c["id"] == "0AA" and c["length"] == 16
+                       and c["byte_order"] == "big"]
+        wheels = {c["start_bit"] for c in wheel_cands}
+        targets = vehicle + wheel_cands
+        worst = min((c["r2"] for c in targets), default=0.0)
+        ok = bool(vehicle) and wheels == {0, 16, 32, 48} and worst > 0.99
+        return ok, (f"{len(df):,} frames from {df['ID'].nunique()} IDs, {len(gt)} GNSS fixes; "
+                    f"vehicle speed 0x0B4 bytes 5-6 and all four 0x0AA wheel words found, "
+                    f"R2 {worst:.4f} and up, in {took:.1f} s; {len(passing) - len(targets)} "
+                    f"other speed-correlated fields also pass")
+    check("a car's speed signals are found from a GPS log alone", found)
+
+    def native_scale():
+        cands = state.get("cands") or []
+        wheels = [c for c in cands if c["id"] == "0AA" and c.get("native_unit") == "km/h"]
+        if not wheels:
+            return False, "no wheel-speed candidate snapped to a km/h scale"
+        scales = {c["native_scale"] for c in wheels}
+        offsets = [c["native_offset"] for c in wheels]
+        ok = scales == {0.01} and all(abs(o - (-67.67)) < 1.0 for o in offsets)
+        return ok, (f"{len(wheels)} wheel words at {scales.pop()} km/h per bit, offsets "
+                    f"{min(offsets):.2f} to {max(offsets):.2f} km/h; openpilot's DBC says "
+                    f"0.01 and -67.67")
+    check("the wheel-speed scale comes back as the manufacturer wrote it", native_scale)
+
+    def clock():
+        off = find_time_offset(df, utc, speed, window_s=30.0)
+        same = find_time_offset(df, gt, speed, window_s=2.0, fine_step_s=0.02)
+        grid = np.arange(max(st.min(), gt.min()) + 2, min(st.max(), gt.max()) - 2, 0.01)
+        can = np.interp(grid, st, sv)
+        lags = np.arange(-1.0, 1.0, 0.01)
+        independent = float(lags[int(np.argmax([np.corrcoef(can, np.interp(grid + x, gt, speed))[0, 1]
+                                                 for x in lags]))])
+        err = off["lag_s"] - true_offset
+        ok = abs(err) < 0.3 and abs(same["lag_s"] - independent) < 0.06
+        return ok, (f"UTC reference placed within {err:+.3f} s of the true offset; on one "
+                    f"clock the search measures the receiver's latency as "
+                    f"{same['lag_s']:+.2f} s, and openpilot's own speed against GNSS, "
+                    f"without CanLab, gives {independent:+.2f} s")
+    check("a UTC-stamped reference is put on the capture's clock", clock)
+
+    def decodes():
+        cands = state.get("cands") or []
+        vehicle = [c for c in cands if c["id"] == "0B4" and c["start_bit"] == 40]
+        if not vehicle:
+            return False, "no 0x0B4 candidate"
+        sig = candidate_to_signal_def(vehicle[0], "SPEED")
+        rows = df[df["ID"] == "0B4"].iloc[::25]
+        errs = []
+        for r in rows.itertuples():
+            frame = bytes(int(getattr(r, f"B{i}")) for i in range(int(r.DLC)))
+            got = decode_frame([sig], "0B4", frame)["SPEED"]
+            if sig["unit"] == "km/h":
+                got /= 3.6
+            want = float(np.interp(r.Timestamp, st, sv))
+            if want > 3:
+                errs.append(abs(got - want) / want)
+        med = float(np.median(errs))
+        return med < 0.02, (f"the DBC signal it writes decodes {len(errs)} frames within "
+                            f"{100 * med:.2f}% of openpilot's own decode (median)")
+    check("the signal it writes decodes the car", decodes)
+
+
 def phase_safety():
     section("NOTHING TRANSMITTED")
 
@@ -736,7 +878,7 @@ def main() -> int:
     print(f"{len(have)} file(s): {', '.join(have)}")
 
     for phase in (phase_mdf4, phase_native_binary, phase_cross_format,
-                  phase_analysis, phase_new_features, phase_exports, phase_multiframe, phase_blocks, phase_safety):
+                  phase_analysis, phase_new_features, phase_exports, phase_multiframe, phase_blocks, phase_reference, phase_safety):
         phase()
 
     print("\n" + "=" * 70)

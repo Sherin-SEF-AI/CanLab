@@ -131,6 +131,7 @@ def calibrate_against_reference(
     dedup: bool = True,
     progress_cb=None,
     should_stop=None,
+    unit: str = "",
 ) -> list[dict]:
     """Search all (ID, byte-range, endianness) candidates for the field that best
     linearly explains the reference series.
@@ -193,25 +194,33 @@ def calibrate_against_reference(
 
                     # Snap the fitted line to a neat OEM scale/offset when that
                     # barely moves the decode (0.09983 -> 0.1, offset -> 0).
-                    snap = snap_calibration(scale, offset, r, v)
+                    snap = snap_calibration(scale, offset, r, v, unit=unit)
                     out_scale, out_offset, snapped = scale, offset, False
+                    native = None
                     if snap and snap["auto"]:
                         out_scale, out_offset, snapped = snap["scale"], snap["offset"], True
+                        if snap["native_unit"]:
+                            native = (snap["native_unit"], snap["native_scale"],
+                                      snap["native_offset"])
 
                     results.append({
                         "id":        can_id,
                         "start_bit": start_bit,
                         "length":    length,
                         "byte_order": "big" if big_endian else "little",
-                        "scale":     round(out_scale, 6),
-                        "offset":    round(out_offset, 4),
-                        "raw_scale": round(scale, 6),
+                        # significant figures, not decimal places: six
+                        # places turned a 1e-7 degree scale into zero
+                        "scale":     _sig(out_scale),
+                        "offset":    _sig(out_offset),
+                        "raw_scale": _sig(scale),
                         "snapped":   snapped,
                         "sentinels_masked": int((~keep).sum()),
                         "r2":        round(r2, 4),
                         "n":         int(len(r)),
                         "verdict":   "PASS" if r2 >= min_r2 else "UNCONFIRMED",
                         "lag_s":     round(float(lag_s), 3),
+                        **({"native_unit": native[0], "native_scale": _sig(native[1]),
+                            "native_offset": _sig(native[2])} if native else {}),
                     })
 
     if progress_cb is not None:
@@ -226,6 +235,14 @@ def calibrate_against_reference(
     if dedup:
         results = _dedup_overlaps(results)
     return results[:top_k]
+
+
+def _sig(x: float, digits: int = 7) -> float:
+    """Round to significant figures, so a small scale keeps its value."""
+    x = float(x)
+    if x == 0 or not np.isfinite(x):
+        return x
+    return float(f"{x:.{digits}g}")
 
 
 def _span(cand: dict) -> tuple[int, int]:
@@ -273,11 +290,20 @@ def candidate_to_signal_def(cand: dict, signal_name: str, unit: str = "") -> dic
     start_bit = int(cand["start_bit"])
     if cand.get("byte_order") == "big":
         start_bit = (start_bit // 8) * 8 + 7
+    # A scale that snapped in another unit (0.01 km/h against a reference in
+    # m/s) is written the way the manufacturer would have written it.
+    scale, offset = cand["scale"], cand["offset"]
+    if cand.get("native_unit"):
+        scale, offset = cand["native_scale"], cand["native_offset"]
+        unit = cand["native_unit"]
     detail = f"R2={cand['r2']}, n={cand['n']}, {cand['verdict']}"
     if cand.get("series"):
         detail = f"{cand['series']}, " + detail
     if cand.get("lag_s"):
         detail += f", lag {cand['lag_s']} s"
+    if cand.get("native_unit") and cand.get("unit"):
+        detail += (f", fitted against a reference in {cand['unit']} "
+                   f"({cand['scale']:g} {cand['unit']} per bit)")
     return {
         "message_id":  cand["id"],
         "signal_name": signal_name,
@@ -285,8 +311,8 @@ def candidate_to_signal_def(cand: dict, signal_name: str, unit: str = "") -> dic
         "length":      cand["length"],
         "byte_order":  cand["byte_order"],
         "value_type":  "unsigned",
-        "scale":       cand["scale"],
-        "offset":      cand["offset"],
+        "scale":       scale,
+        "offset":      offset,
         "min_val":     0,
         "max_val":     0,
         "unit":        unit or cand.get("unit", ""),
@@ -485,6 +511,7 @@ def calibrate_with_lag_search(frames_df: pd.DataFrame, series: ReferenceSeries, 
                               progress_cb=half(0), should_stop=should_stop)
     if should_stop is not None and should_stop():
         return []
+    kw.setdefault("unit", series.unit)
     cands = calibrate_against_reference(frames_df, series.ts, series.values,
                                         lag_s=offset["lag_s"], progress_cb=half(1),
                                         should_stop=should_stop, **kw)

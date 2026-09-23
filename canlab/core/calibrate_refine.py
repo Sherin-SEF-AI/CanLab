@@ -98,6 +98,22 @@ def mask_sentinels(raw: np.ndarray, length: int, k_band: float = 6.0,
 
 # ── Bias-gated OEM snapping of a fitted line ──────────────────────────────────
 
+#: Units a signal is often defined in, for a reference measured in another.
+#: A GPS logger reports m/s; a car's DBC says 0.01 km/h per bit. Each entry is
+#: (how many reference units one native unit is, the native unit's name).
+UNIT_CONVERSIONS = {
+    "m/s": ((1 / 3.6, "km/h"), (0.44704, "mph"), (1852 / 3600, "kn")),
+    "km/h": ((1.609344, "mph"), (1.852, "kn"), (3.6, "m/s")),
+    "mph": ((1 / 1.609344, "km/h"),),
+    "kn": ((1 / 1.852, "km/h"),),
+    "rad": ((np.pi / 180, "deg"),),
+    "deg": ((180 / np.pi, "rad"),),
+    "kPa": ((6.894757, "psi"), (100.0, "bar")),
+    "bar": ((0.01, "kPa"), (0.06894757, "psi")),
+    "psi": ((1 / 6.894757, "kPa"),),
+}
+
+
 def _snap_offset(off: float, rng: float) -> float:
     if abs(off) <= 0.02 * rng:
         return 0.0
@@ -106,13 +122,39 @@ def _snap_offset(off: float, rng: float) -> float:
     return float(off)
 
 
+def _nearest_nice(scale: float, tol: float, unit: str = "") -> tuple[float, float, str, float]:
+    """The neat scale closest to ``scale``, in the reference unit, trying the
+    reference unit itself and the units a signal is commonly defined in.
+
+    Returns (scale in the reference unit, relative error, native unit, scale
+    in the native unit). The native unit is "" when the plain reference unit
+    wins.
+    """
+    sign = -1.0 if scale < 0 else 1.0
+    best = (float(scale), float("inf"), "", float(scale))
+    sp = nice_scale(scale, tol=tol)
+    if sp["nice"]:
+        best = (sign * sp["nearest"], sp["rel_err"], "", sign * sp["nearest"])
+    for factor, native in UNIT_CONVERSIONS.get(unit, ()):
+        cand = nice_scale(scale / factor, tol=tol)
+        if cand["nice"] and cand["rel_err"] < best[1] - 1e-12:
+            best = (sign * cand["nearest"] * factor, cand["rel_err"], native,
+                    sign * cand["nearest"])
+    return best
+
+
 def snap_calibration(scale: float, offset: float, raw: np.ndarray, ref: np.ndarray,
-                     scale_tol: float = 0.03, bias_budget: float = 0.01) -> dict | None:
+                     scale_tol: float = 0.03, bias_budget: float = 0.01,
+                     unit: str = "") -> dict | None:
     """Snap a fitted (scale, offset) to neat OEM values, gated on systematic bias.
 
-    Returns {"scale","offset","scale_changed","offset_changed","bias_frac","auto"}
-    where auto=True means the snap barely moves the decode (safe to apply), or None
-    when there's nothing to round.
+    ``unit`` is the reference's unit. With it, a scale can snap in the unit
+    the signal is really defined in: 0.002784 m/s per bit is 0.01 km/h per
+    bit, which no round number in m/s would find.
+
+    Returns {"scale","offset","scale_changed","offset_changed","bias_frac","auto",
+    "native_unit","native_scale","native_offset"} where auto=True means the snap
+    barely moves the decode (safe to apply), or None when there's nothing to round.
     """
     raw = np.asarray(raw, dtype=np.float64)
     ref = np.asarray(ref, dtype=np.float64)
@@ -123,8 +165,7 @@ def snap_calibration(scale: float, offset: float, raw: np.ndarray, ref: np.ndarr
     rng = abs(scale) * float(np.ptp(raw))
     if rng == 0:
         return None
-    sp = nice_scale(scale, tol=scale_tol)
-    ns = (-1.0 if scale < 0 else 1.0) * sp["nearest"] if sp["nice"] else float(scale)
+    ns, _err, native, native_scale = _nearest_nice(scale, scale_tol, unit)
     scale_changed = ns != scale
     if scale_changed:
         no = _snap_offset(float(np.median(ref - ns * raw)), rng)
@@ -135,6 +176,9 @@ def snap_calibration(scale: float, offset: float, raw: np.ndarray, ref: np.ndarr
         return None
     diff = (ns - scale) * raw + (no - offset)
     bias_frac = float(np.max(np.abs(diff))) / rng
+    factor = ns / native_scale if native and native_scale else 1.0
     return {"scale": ns, "offset": no,
             "scale_changed": scale_changed, "offset_changed": offset_changed,
-            "bias_frac": round(bias_frac, 4), "auto": bias_frac <= bias_budget}
+            "bias_frac": round(bias_frac, 4), "auto": bias_frac <= bias_budget,
+            "native_unit": native, "native_scale": native_scale if native else ns,
+            "native_offset": no / factor if native else no}
