@@ -151,3 +151,99 @@ def test_nothing_is_transmitted_while_disarmed():
         assert bus.sent == []
     finally:
         safety.set_armed(True)
+
+
+# ── OBD-II the way J1979 intends ─────────────────────────────────────────────
+
+def _mask(*pids, base=0x00):
+    """A supported-PIDs mask for the window starting at ``base``."""
+    m = 0
+    for pid in pids:
+        m |= 1 << (32 - (pid - base))
+    return list(m.to_bytes(4, "big"))
+
+
+class _ScriptedCar:
+    """Answers like a car that supports four PIDs and has one stored and one
+    pending code. Anything else gets no reply, as on a real bus."""
+
+    ANSWERS = {
+        (0x01, 0x00): [0x41, 0x00, *_mask(0x0C, 0x0D, 0x20)],
+        (0x01, 0x20): [0x41, 0x20, *_mask(0x2F, 0x33, base=0x20)],
+        (0x01, 0x0C): [0x41, 0x0C, 0x1A, 0xF8],
+        (0x01, 0x0D): [0x41, 0x0D, 0x3C],
+        (0x01, 0x2F): [0x41, 0x2F, 0x80],
+        (0x01, 0x33): [0x41, 0x33, 0x65],
+        (0x03,): [0x43, 0x01, 0x01, 0x33],
+        (0x07,): [0x47, 0x01, 0x03, 0x01],
+    }
+
+    def __init__(self):
+        self.requests = []
+
+    def __call__(self, msg):
+        n = msg.data[0] & 0x0F
+        req = tuple(msg.data[1:1 + n])
+        self.requests.append(req)
+        key = req[:2] if req[0] == 0x01 else req[:1]
+        payload = self.ANSWERS.get(key)
+        return sf(0x7E8, payload) if payload else None
+
+
+def test_pid_scan_asks_what_is_supported_and_reads_only_that():
+    car = _ScriptedCar()
+    scanner = UDSScanner(RecordingBus(on_send=car), mode="PID")
+    got, notes = [], []
+    scanner.pid_result.connect(lambda pid, name, value, unit: got.append((pid, value, unit)))
+    scanner.status.connect(notes.append)
+    scanner._scan_pids()
+    assert car.requests == [(0x01, 0x00), (0x01, 0x20), (0x01, 0x0C), (0x01, 0x0D),
+                            (0x01, 0x2F), (0x01, 0x33)]
+    assert got == [(0x0C, 1726.0, "rpm"), (0x0D, 60.0, "km/h"),
+                   (0x2F, 50.2, "%"), (0x33, 101.0, "kPa")]
+    assert any("4 PIDs supported, reading 4" in n for n in notes)
+
+
+def test_pid_scan_stops_when_nothing_speaks_mode_01():
+    bus = RecordingBus()
+    scanner = UDSScanner(bus, mode="PID")
+    notes = []
+    scanner.status.connect(notes.append)
+    scanner._scan_pids()
+    assert len(bus.sent) == 1                       # one question, not seventy-eight
+    assert any("nothing speaks OBD-II" in n for n in notes)
+
+
+def test_dtcs_are_read_with_modes_03_and_07_before_uds():
+    car = _ScriptedCar()
+    scanner = UDSScanner(RecordingBus(on_send=car), mode="DTC")
+    got = []
+    scanner.dtc_result.connect(got.append)
+    scanner._read_dtc()
+    assert got == [["P0133", "P0301 (pending)"]]
+    assert scanner.dtc_answered
+    assert (0x19, 0x02, 0xFF) not in car.requests    # OBD-II answered, no UDS needed
+
+
+def test_no_answer_is_not_reported_as_no_codes():
+    bus = RecordingBus()
+    scanner = UDSScanner(bus, mode="DTC")
+    got = []
+    scanner.dtc_result.connect(got.append)
+    scanner._read_dtc()
+    assert got == [[]] and not scanner.dtc_answered
+    tried = [bytes(m.data[1:1 + m.data[0]]) for m in bus.sent]
+    assert tried == [b"\x03", b"\x07", b"\x19\x02\xff"]
+
+    from types import SimpleNamespace
+    from canlab.tabs.diagnostics_tab import DiagnosticsTab
+    shown = {}
+    fake = SimpleNamespace(
+        _dtc_worker=scanner,
+        dtc_text=SimpleNamespace(setPlainText=lambda t: shown.update(text=t)),
+        uds_log=SimpleNamespace(append=lambda t: None))
+    DiagnosticsTab._on_dtc_result(fake, [])
+    assert "not a clean result" in shown["text"]
+    scanner.dtc_answered = True
+    DiagnosticsTab._on_dtc_result(fake, [])
+    assert shown["text"] == "No DTCs stored or pending."
