@@ -177,14 +177,41 @@ batches, require every batch under 20 ms, and report the events by kind
 without asserting them (a per-byte baseline fitted on one minute flags the
 range changes of the next 22).
 
+### J1939 values that must agree
+
+`phase_j1939` in the stress run checks the J1939 layouts on the truck by
+readings that have to agree with each other rather than with an expected
+number: the brakes' EBC2 front axle speed against the engine's CCVS
+wheel-based speed (0.33 km/h apart over 1,957 pairs, r 0.9997); coolant, oil,
+barometer, battery and fuel level each physical and each from the message
+J1939-71 puts it in; absolute inlet pressure minus boost pressure equal to the
+barometer; VD and HRVD distance within the coarser counter's 125 m step; and
+lifetime distance over lifetime fuel against the ECU's own average economy.
+
+### Reference calibration on real cars
+
+`phase_reference` fetches comma.ai's comma2k19 example segment (MIT, about
+6 MB) into `<data-dir>/comma2k19`: a minute of a Toyota RAV4's CAN bus, a
+u-blox receiver, and openpilot's decoded speed. From the GNSS speed alone the
+calibrator must find 0x0B4 bytes 5-6 and the four 0x0AA wheel words, return
+the wheel scale as 0.01 km/h (openpilot's DBC), place a UTC-stamped reference
+within 0.3 s of the true clock offset, and write a signal that decodes the car
+within 2% of openpilot.
+
+`phase_openpilot` fetches a 2021 RAV4 drive from openpilot's public CI routes
+(8 MB, `rlog.bz2`) into `<data-dir>/openpilot`, opens it with the bundled
+schema (received frames and the panda's own transmissions must add up to
+pycapnp's count), and calibrates it against its own GPS. Both phases skip,
+rather than fail, when the download is not possible or pycapnp is missing.
+
 ## What this does not cover
 
 No real hardware is involved, so none of the following is verified here: a real
 ECU answering a UDS scan or a security-access seed, a physical CAN adapter, the
 gateway (which needs two channels), CAN FD (the capture is classic CAN), the AI
-providers (no key), openpilot rlog (no cereal schema), vision OCR, and the GUI
-as a person drives it, since these scripts call the same slots the buttons call
-rather than clicking.
+providers (no key), and the GUI as a person drives it, since these scripts call
+the same slots the buttons call rather than clicking. One physical adapter has
+been used outside these scripts: a CANalyst-II on a Tata Tigor EV.
 
 All five parsers must agree on the same capture: 12,974 frames and 180 IDs from
 the CSV, the candump log, BLF, ASC and pcap alike. A disagreement means one
