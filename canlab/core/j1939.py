@@ -69,7 +69,7 @@ def parse_j1939_id(arb_id: int) -> dict:
         da  = ps
 
     if is_nmea2000(pgn):
-        _name, single = _N2K_NAMES.get(pgn, (f"PGN {pgn}", True))
+        single = n2k_single_frame(pgn)
         return {
             "priority": priority,
             "pgn":      pgn,
@@ -100,7 +100,15 @@ def parse_j1939_id(arb_id: int) -> dict:
 def pgn_name(pgn: int) -> str:
     """The name of a PGN in whichever table owns it, or a placeholder."""
     if is_nmea2000(pgn):
-        return _N2K_NAMES.get(pgn, (f"PGN {pgn}", True))[0]
+        if pgn in _N2K_NAMES:
+            return _N2K_NAMES[pgn][0]
+        from canlab.core import n2k_db
+        found = n2k_db.name(pgn)
+        if found:
+            return found
+        if 130816 <= pgn <= 131071 or pgn == 126720:
+            return "Proprietary fast packet (manufacturer defined)"
+        return f"PGN {pgn}"
     entry = PGNS.get(pgn)
     if entry is not None:
         return entry.name
@@ -321,25 +329,51 @@ _N2K_DECODERS = {
 }
 
 
-def decode_n2k(pgn: int, data: bytes) -> dict:
+def n2k_single_frame(pgn: int) -> bool:
+    """Whether an NMEA 2000 PGN fits one frame; unknown ones are assumed to."""
+    if pgn in _N2K_NAMES:
+        return _N2K_NAMES[pgn][1]
+    from canlab.core import n2k_db
+    fast = n2k_db.is_fast_packet(pgn)
+    return True if fast is None else not fast
+
+
+def decode_n2k(pgn: int, data: bytes, reassembled: bool | None = None) -> dict:
     """Decode an NMEA 2000 PGN into {field: (value, unit)}.
 
-    Single-frame PGNs decode from their one frame. Fast-packet PGNs decode
-    only from a reassembled buffer longer than a frame; see _N2K_DECODERS.
+    The hand-written decoders, checked against frames from a real marine
+    recording, come first. Every other standard PGN is decoded from the table
+    distilled from canboat (core/n2k_db.py); on that same recording the two
+    agree on every value they share.
+
+    A fast-packet PGN is decoded only from a reassembled message: its single
+    frames carry a sequence byte and a length byte, so reading one alone
+    shifts every field. ``reassembled`` says which one ``data`` is; left as
+    None, a buffer longer than a frame is taken to be reassembled.
     """
+    data = bytes(data)
+    if reassembled is None:
+        reassembled = len(data) > 8
     decoder = _N2K_DECODERS.get(pgn)
     if decoder is not None:
-        return decoder(bytes(data)) if len(data) > 8 else {}
+        return decoder(data) if reassembled else {}
     fields = _N2K_FIELDS.get(pgn)
-    if not fields:
+    if fields:
+        out = {}
+        for name, (start, length, scale, offset, unit, signed) in fields.items():
+            raw = _n2k_value(data, start, length, signed)
+            if raw is None:
+                continue
+            # Rounded to the field's own resolution. A fixed six places turned
+            # a rate of turn of -0.0001047 rad/s into -0.000105 and cut a
+            # 1e-7 degree position to ten centimetres.
+            from canlab.core.n2k_db import _places
+            out[name] = (round(raw * scale + offset, _places(scale)), unit)
+        return out
+    if not n2k_single_frame(pgn) and not reassembled:
         return {}
-    out = {}
-    for name, (start, length, scale, offset, unit, signed) in fields.items():
-        raw = _n2k_value(data, start, length, signed)
-        if raw is None:
-            continue
-        out[name] = (round(raw * scale + offset, 6), unit)
-    return out
+    from canlab.core import n2k_db
+    return n2k_db.decode(pgn, data)
 
 
 # FMI (Failure Mode Identifier) short names — SAE J1939-73 Appendix A.
@@ -390,7 +424,7 @@ def decode_dm1(data: bytes) -> dict:
     return {"lamps": lamps, "dtcs": dtcs}
 
 
-def decode_pgn(pgn: int, data: bytes) -> dict:
+def decode_pgn(pgn: int, data: bytes, reassembled: bool | None = None) -> dict:
     """
     Decode the parameters of one message. Returns {name: (value, unit)}.
 
@@ -404,7 +438,7 @@ def decode_pgn(pgn: int, data: bytes) -> dict:
     PGNs by decode_n2k.
     """
     if is_nmea2000(pgn):
-        return decode_n2k(pgn, data)
+        return decode_n2k(pgn, data, reassembled)
     if pgn == 0xFECA:
         return decode_dm1(data)
     entry = PGNS.get(pgn)

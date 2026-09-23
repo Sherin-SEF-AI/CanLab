@@ -20,6 +20,8 @@ a = Analysis(
         (str(ROOT / "canlab.png"),             "canlab"             ),
         (str(ROOT / "assets"),                 "canlab/assets"      ),
         (str(ROOT / "sample_data"),            "canlab/sample_data" ),
+        # the NMEA 2000 table distilled from canboat, and its licence notice
+        (str(ROOT / "core" / "data"),          "canlab/core/data"   ),
         *pil_datas,
     ],
     hiddenimports=[

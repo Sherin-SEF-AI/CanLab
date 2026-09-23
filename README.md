@@ -907,6 +907,11 @@ scale snapping, are adapted from CSS Electronics'
 (MIT). The OEM checksum algorithms in `core/checksums.py` follow
 [commaai/opendbc](https://github.com/commaai/opendbc) (MIT).
 
+The NMEA 2000 definitions in `canlab/core/data/n2k_pgns.json` are distilled
+from [CANboat](https://github.com/canboat/canboat) (Apache License 2.0, Kees
+Verruijt) by `tools/build_n2k_table.py`; the licence and the changes made are
+in `canlab/core/data/CANBOAT-NOTICE.txt`.
+
 The SNIFFER tab and its notch, the capture splitter and the GVRET protocol
 follow [SavvyCAN](https://github.com/collin80/SavvyCAN) (MIT), whose sniffer
 window and Bisector are the originals and whose source documents the GVRET
