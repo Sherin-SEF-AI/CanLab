@@ -151,6 +151,9 @@ class UDSScanner(QThread):
         # "which services are supported" probe cannot reset ECUs or clear DTCs
         # on a live bus.
         self._allow_unsafe = allow_unsafe
+        #: After a DTC read: did any ECU answer? "No codes" and "no answer" are
+        #: different findings, and only the first means the car is clean.
+        self.dtc_answered = False
 
     def stop(self):
         self._running = False
@@ -209,8 +212,33 @@ class UDSScanner(QThread):
         return None
 
     def _scan_pids(self):
-        self.status.emit("Scanning OBD-II PIDs…")
-        for pid, entry in PID_TABLE.items():
+        """Ask which PIDs the vehicle supports, then read those.
+
+        This used to request every PID in the table, one timeout each, whether
+        or not the vehicle had it. The vehicle says which it supports in the
+        0x00, 0x20, ... masks; asking only for those is what J1979 intends and
+        is several times faster on a real car.
+        """
+        from canlab.core.obd2_pids import discover_supported
+        self.status.emit("Asking which OBD-II PIDs are supported…")
+
+        def ask(data):
+            resp = self._send_and_recv(data)
+            return resp.data if resp is not None else None
+
+        supported, answered = discover_supported(ask)
+        if not answered:
+            self.status.emit("No ECU answered PID 0x00, so nothing speaks OBD-II "
+                             "Mode 01 on this bus (or the bitrate is wrong).")
+            return
+        # 0x20, 0x40, ... only say "ask me about the next window"; not readings
+        readings = [pid for pid in supported if pid % 0x20]
+        wanted = [pid for pid in readings if pid in PID_TABLE]
+        unknown = [pid for pid in readings if pid not in PID_TABLE]
+        self.status.emit(f"{len(readings)} PIDs supported, reading {len(wanted)}"
+                         + (f"; {len(unknown)} have no decoder here" if unknown else ""))
+        for pid in wanted:
+            entry = PID_TABLE[pid]
             if not self._running:
                 break
             resp = self._send_and_recv(bytes([0x01, pid]))
@@ -226,9 +254,33 @@ class UDSScanner(QThread):
                                  entry.get("unit", "") or "")
 
     def _read_dtc(self):
-        self.status.emit("Reading DTCs (service 0x19)…")
-        resp = self._send_and_recv(bytes([0x19, 0x02, 0xFF]), timeout=0.5)
-        self.dtc_result.emit(decode_dtc_records(resp.data) if resp else [])
+        """Stored and pending codes the OBD-II way, then UDS if that fails.
+
+        Every OBD-II vehicle answers modes 03 (stored) and 07 (pending); only
+        UDS-capable ECUs answer service 0x19, which is what this used to send
+        alone, so an older car reported "no DTCs" when it had simply not been
+        asked in a language it speaks.
+        """
+        from canlab.core.obd2_pids import decode_obd_dtcs
+        codes: list[str] = []
+        self.dtc_answered = False
+        for mode, label in ((0x03, "stored"), (0x07, "pending")):
+            self.status.emit(f"Reading {label} DTCs (OBD-II mode {mode:02X})…")
+            resp = self._send_and_recv(bytes([mode]), timeout=0.5)
+            found = decode_obd_dtcs(resp.data, mode) if resp is not None else None
+            if found is None:
+                continue
+            self.dtc_answered = True
+            codes += found if mode == 0x03 else [f"{c} (pending)" for c in found]
+        if not self.dtc_answered:
+            self.status.emit("No answer to OBD-II modes 03/07; trying UDS 0x19…")
+            resp = self._send_and_recv(bytes([0x19, 0x02, 0xFF]), timeout=0.5)
+            if resp is not None and resp.data[:1] == b"\x59":
+                self.dtc_answered = True
+                codes = decode_dtc_records(resp.data)
+        if not self.dtc_answered:
+            self.status.emit("No ECU answered a DTC request.")
+        self.dtc_result.emit(codes)
 
     def _deep_scan(self):
         """

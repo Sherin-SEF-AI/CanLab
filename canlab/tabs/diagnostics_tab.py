@@ -477,11 +477,16 @@ class DiagnosticsTab(QWidget):
         self._dtc_worker.start()
 
     def _on_dtc_result(self, dtcs: list):
-        if not dtcs:
-            self.dtc_text.setPlainText("No DTCs found.")
-        else:
+        answered = getattr(self._dtc_worker, "dtc_answered", True)
+        if dtcs:
             self.dtc_text.setPlainText("  ".join(dtcs))
-        self.uds_log.append(f"DTCs: {dtcs}")
+        elif answered:
+            self.dtc_text.setPlainText("No DTCs stored or pending.")
+        else:
+            # Not "no DTCs": nothing replied, so nothing is known about them.
+            self.dtc_text.setPlainText("No ECU answered. Check the bitrate and that "
+                                       "the ignition is on; this is not a clean result.")
+        self.uds_log.append(f"DTCs: {dtcs}" if answered else "DTCs: no answer")
 
     def _clear_dtc(self):
         import can
