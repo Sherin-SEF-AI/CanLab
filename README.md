@@ -321,7 +321,7 @@ that fits it and report the scale and offset.
 | Vector BLF | via python-can `BLFReader`. |
 | Vector ASC | via python-can `ASCReader`. |
 | MDF4 `.mf4` / `.mdf` | CANedge and similar. Needs `pip install canlab[mdf]`. |
-| openpilot `.rlog` / `.qlog` | Needs pycapnp and the cereal `log.capnp` schema. Raises a clear error if either is missing. |
+| openpilot `rlog` / `qlog` | Plain, `.bz2` or `.zst`, named the way openpilot names them. Needs `pip install canlab[openpilot]` (pycapnp); the cereal schema ships with CanLab. Frames the panda transmitted are kept apart from the car's traffic, and the log's GPS can be used as a calibration reference. |
 
 Every parser produces the same columns: `Timestamp, ID, Bus, DLC, Extended,
 B0..B7`, widened to `B63` when FD frames are present, plus a per-ID `Delta`. The
@@ -337,7 +337,7 @@ None of this sends anything anywhere.
 | Feature | Module | Notes |
 |---|---|---|
 | Checksum algorithms | `core/checksums.py` | Parametrised CRC-8 plus OEM variants (Hyundai, Toyota, Honda, Subaru, AUTOSAR), checked against published check values and against commaai/opendbc. |
-| J1939 and NMEA 2000 | `core/j1939.py` | Both protocols share the 29-bit frame and split the identifier the same way, so the data page decides which PGN table applies: J1939 PGNs and SPNs, or NMEA 2000's own range with radians, metres per second and kelvin. Multi-frame PGNs are reassembled first (see below) and decoded whole; one frame of one is never decoded alone, because that gives a confident wrong answer. |
+| J1939 and NMEA 2000 | `core/j1939.py` | Both protocols share the 29-bit frame and split the identifier the same way, so the data page decides which PGN table applies: J1939 PGNs and SPNs, or NMEA 2000's own range with radians, metres per second and kelvin. Multi-frame PGNs are reassembled first (see below) and decoded whole; one frame of one is never decoded alone, because that gives a confident wrong answer. J1939: 26 PGNs decoded to 152 parameters by their SAE J1939-71 bit positions, 30 more named, the preferred source-address table, and the J1939 error and not-available ranges (`core/j1939_db.py`). NMEA 2000: every standard PGN canboat defines, 216 of them, from a table distilled from [canboat](https://github.com/canboat/canboat) (`core/n2k_db.py`), with the hand-written decoders taking precedence. |
 | Counter and checksum detection | `core/counter_checksum_detector.py` | Sweeps every message. Counters are whole-byte or per-nibble, with the modulus read from the values seen and reported only when a roll-over was actually observed. |
 | Checksum algorithm guesser | `core/checksum_guesser.py` | Takes one message and one byte and scores all twelve algorithms, fitting on the first 70% of the capture and validating on the rest. Reports both numbers. |
 | Byte role classifier | `core/signal_classifier.py` | COUNTER, CHECKSUM, BOOLEAN, PHYSICAL or PADDING per byte. |
@@ -478,11 +478,11 @@ period, so keep the window under half of it.
 
 | Protocol | Module | Notes |
 |---|---|---|
-| ISO-TP (ISO 15765-2) | `core/isotp.py` | Single and multi-frame transmit with the flow-control handshake and STmin, reassembly, CAN FD escape frames, functional addressing. |
+| ISO-TP (ISO 15765-2) | `core/isotp.py` | Single and multi-frame transmit with the flow-control handshake and STmin, reassembly, CAN FD escape frames, functional addressing. Tested against can-isotp, an independent implementation. |
 | UDS (ISO 14229) | `core/uds.py` | Read DTCs, read ECU identification, service scan (read-only by default), NRC 0x78 response-pending handling, periodic TesterPresent during long scans. |
 | Security access | `core/security_access.py` | Seed and key algorithms, scripted key functions, rate-limited brute force that stops on the ECU's attempt-limit response. |
-| J1939 | `core/j1939.py` | PGN decoding plus DM1 active-DTC decode (SPN, FMI, CM, OC). |
-| OBD-II (SAE J1979) | `core/obd2_pids.py` | PID table and supported-PID discovery across continuation windows. |
+| J1939 | `core/j1939.py`, `core/j1939_db.py` | PGN and SPN decoding by the J1939-71 layouts, DM1 active-DTC decode (SPN, FMI, CM, OC), and transport-protocol sessions observed without taking part. |
+| OBD-II (SAE J1979) | `core/obd2_pids.py` | 78 mode 01 PIDs. A scan asks which PIDs the vehicle supports and reads only those. DTCs are read with modes 03 and 07, the way every OBD-II vehicle answers, with UDS 0x19 as the fallback; a vehicle that does not answer is reported as silent, not clean. |
 | XCP over CAN | `core/xcp.py` | Read-only client (CONNECT, UPLOAD, SHORT_UPLOAD) and a measurement poller. No memory-write or programming commands are implemented. |
 | DoIP (ISO 13400) | `core/doip.py` | Vehicle discovery, routing activation, UDS over IP, on stdlib sockets. |
 
@@ -717,12 +717,12 @@ The unit suite uses fixtures and a generated sample. Separately, the whole
 application is run end to end over real vehicle recordings, because synthetic
 data agrees with whatever the code assumes.
 
-Two corpora, 93 checks:
+Two corpora and two public car logs, 99 checks:
 
 | Corpus | What it is | Checks |
 |---|---|---|
 | SavvyCAN examples | 12,974 frames, 180 IDs, 11-bit, one bus | 36 |
-| CANedge recordings and python-can format files | 2 to 154,896 frames, native MDF4, 11-bit and 29-bit, dual-bus, CAN FD and error frames | 57 |
+| CANedge recordings, python-can format files and comma.ai logs | 2 to 154,896 frames, native MDF4, 11-bit and 29-bit, dual-bus, CAN FD and error frames, and two Toyota RAV4 drives from comma.ai | 63 |
 
 The second corpus is other people's hardware output, none of it produced here:
 five CANedge logger recordings in native MDF4 from
@@ -748,7 +748,7 @@ the identifier. All are fixed and pinned by tests.
 A third run pushes the size instead of the variety. It merges the 145,534-frame
 J1939 truck log and the 154,896-frame two-channel car log into one 300,430-frame
 capture carrying 11-bit and 29-bit identifiers on three bus tags, then times
-every stage against a budget: 30 checks, all passing.
+every stage against a budget: 33 checks, all passing.
 
 | | |
 |---|---|
@@ -764,6 +764,28 @@ message, so a plausible diesel is external evidence rather than the code
 agreeing with itself. The run found a real defect too. The PGN scan crashed on
 any log containing an active fault code, because those decode to lamps and a
 list rather than to a value and a unit, and this truck sends 196 of them.
+
+An audit against SAE J1939-71 then found that the J1939 table itself was
+wrong in places that produce plausible numbers: coolant temperature read from
+half of the crankcase pressure, three parameter groups filed under the wrong
+PGN, battery voltage read from the current bytes, every switch decoded as a
+whole byte. The corrected layouts are checked on the truck by readings that
+must agree: the brakes' front axle speed and the engine's wheel-based speed
+differ by 0.33 km/h over 1,957 pairs, absolute inlet pressure minus boost is
+the barometer, two distance counters of different resolution agree within the
+coarser one's 125 m step, and lifetime distance over lifetime fuel is the ECU's
+own reported economy to within 0.5%.
+
+The reference calibrator is checked on two real cars from comma.ai (MIT): the
+comma2k19 example segment and a 2021 drive from openpilot's public CI routes,
+both a Toyota RAV4 with a GPS receiver. From the GPS speed alone it finds the
+vehicle speed in 0x0B4 bytes 5-6 in both, and on the comma2k19 segment all four
+wheel speeds in 0x0AA, returned at 0.01 km/h per bit, the figure in
+openpilot's DBC. Given the comma2k19 reference stamped in UTC against a capture
+on its own clock, it places the reference within 0.17 s of the true offset, and
+that residual is the receiver's latency: 0.16 s by a cross-correlation that
+does not use CanLab. In both drives the signal it writes decodes the car within
+0.9% of openpilot's own decode.
 
 The same recordings check the newer analysis. Multi-frame reassembly rebuilds
 the marine log's 60 GNSS fixes and 60 satellite lists with nothing dropped,
@@ -794,9 +816,16 @@ A recording of the run is
 
 ```bash
 pip install -e ".[dev]"
-QT_QPA_PLATFORM=offscreen python -m pytest -q     # 673 passed
+QT_QPA_PLATFORM=offscreen python -m pytest -q     # 753 passed
 ruff check canlab tests
 ```
+
+ISO-TP, UDS and J1939 transport are also tested against implementations this
+project did not write (`tests/test_interop.py`): can-isotp as the ECU,
+udsoncan's encoding and DTC parsing, and two can-j1939 nodes holding a real
+RTS/CTS session while CanLab listens. That found an ISO-TP timing defect a
+home-grown responder could not have: the first frame after each flow control
+was sent without the separation time the receiver asked for.
 
 The suite covers the log parsers against fixtures in the genuine formats; DBC
 encode and decode round trips through cantools (little-endian, big-endian,
@@ -850,8 +879,8 @@ batch stays flat as the capture grows. Memory is bounded by the ring buffer cap.
   Verify every result before trusting it.
 - The analysis suggests candidates. A confidence figure is a match fraction over
   the frames you loaded, not a statistical proof.
-- **openpilot rlog import** needs pycapnp plus the cereal schema. Without them
-  it raises rather than producing data.
+- **openpilot log import** needs pycapnp (`pip install canlab[openpilot]`); a
+  zstd-compressed log also needs `zstandard`. The schema ships with CanLab.
 - **MDF4** import needs `asammdf` (`pip install canlab[mdf]`).
 - CAN FD is parsed, stored, decoded, injected and replayed end to end, and the
   bit grid follows the message length. It has been tested on a virtual bus,
@@ -865,15 +894,24 @@ batch stays flat as the capture grows. Memory is bounded by the ring buffer cap.
 - The MCP server in the window has no authentication unless you set a token,
   and ChatGPT's connectors cannot send one. Keep it on loopback unless you
   accept that.
-- Adapter detection was verified with the virtual backend and with stand-ins
-  for the USB, serial and sysfs probes; no physical adapter was attached during
-  development.
+- One physical adapter has been used: a CANalyst-II on a Tata Tigor EV, which
+  was detected and captured 111,006 frames. It has no listen-only mode. Every
+  other adapter was verified only with the virtual backend and stand-ins for
+  the USB, serial and sysfs probes.
+- The UDS, ISO-TP, security-access and OBD-II requests are tested against
+  scripted responders and independent implementations, not against a real ECU.
+  No real OBD-II capture was available, so the PID formulas are checked against
+  SAE J1979's worked values.
 - The GVRET backend is written to the protocol in SavvyCAN's source and tested
   against byte streams built to that format, including a scripted board behind
   the bus object. It has not been run against a physical GVRET board.
-- J1939 RTS/CTS reassembly is observe-only and, because no recording in the
-  corpus contains an RTS/CTS session, tested against synthetic frames. BAM and
-  NMEA 2000 fast packets are tested on real recordings.
+- J1939 RTS/CTS reassembly is observe-only. No recording in the corpus contains
+  an RTS/CTS session, so it is tested against synthetic frames and against two
+  can-j1939 nodes on a virtual bus. BAM and NMEA 2000 fast packets are tested
+  on real recordings.
+- J1939 decoding covers 26 parameter groups. SAE sells the full list, and a PGN
+  that is not in the table is named when it is known and otherwise shown by
+  number, never guessed.
 - The capture kit has been run on python-can's virtual backend and a fake bus,
   not in a vehicle. The systemd unit is a starting point.
 - The reference calibrator's lag search is ambiguous for a periodic reference
@@ -911,6 +949,16 @@ The NMEA 2000 definitions in `canlab/core/data/n2k_pgns.json` are distilled
 from [CANboat](https://github.com/canboat/canboat) (Apache License 2.0, Kees
 Verruijt) by `tools/build_n2k_table.py`; the licence and the changes made are
 in `canlab/core/data/CANBOAT-NOTICE.txt`.
+
+openpilot logs are read with comma.ai's cereal schema
+([openpilot](https://github.com/commaai/openpilot) and
+[opendbc](https://github.com/commaai/opendbc), MIT), vendored with its notice
+under `canlab/core/data/cereal/`. The real-car calibration checks use comma.ai's
+[comma2k19](https://github.com/commaai/comma2k19) example segment (MIT) and a
+drive from openpilot's public CI routes. The interoperability tests run against
+[can-isotp](https://github.com/pylessard/python-can-isotp),
+[udsoncan](https://github.com/pylessard/python-udsoncan) and
+[can-j1939](https://github.com/juergenH87/python-can-j1939) (all MIT).
 
 The SNIFFER tab and its notch, the capture splitter and the GVRET protocol
 follow [SavvyCAN](https://github.com/collin80/SavvyCAN) (MIT), whose sniffer

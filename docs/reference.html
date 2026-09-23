@@ -28,7 +28,7 @@
 <p class="lede">The details that do not belong anywhere else.</p>
 
 <h2 id="log-formats">Log formats</h2>
-<div class="table-scroll"><table><thead><tr><th>Format</th><th>Notes</th></tr></thead><tbody><tr><td>SavvyCAN CSV</td><td>GVRET and SavvyCAN exports. Handles both the hex byte format real exports use and older decimal ones, and the trailing comma SavvyCAN writes after the last data byte.</td></tr><tr><td>candump <code>.log</code></td><td><code>candump -l</code> output, including CAN FD lines.</td></tr><tr><td>pcap / pcapng</td><td>Linux SocketCAN, link type 227, via dpkt.</td></tr><tr><td>Vector BLF</td><td>Through python-can's reader.</td></tr><tr><td>Vector ASC</td><td>Through python-can's reader.</td></tr><tr><td>MDF4 <code>.mf4</code> / <code>.mdf</code></td><td>CANedge and similar. Needs <code>asammdf</code>.</td></tr><tr><td>openpilot <code>.rlog</code> / <code>.qlog</code></td><td>Needs pycapnp and the cereal schema. Raises a clear error if either is missing rather than guessing.</td></tr></tbody></table></div>
+<div class="table-scroll"><table><thead><tr><th>Format</th><th>Notes</th></tr></thead><tbody><tr><td>SavvyCAN CSV</td><td>GVRET and SavvyCAN exports. Handles both the hex byte format real exports use and older decimal ones, and the trailing comma SavvyCAN writes after the last data byte.</td></tr><tr><td>candump <code>.log</code></td><td><code>candump -l</code> output, including CAN FD lines.</td></tr><tr><td>pcap / pcapng</td><td>Linux SocketCAN, link type 227, via dpkt.</td></tr><tr><td>Vector BLF</td><td>Through python-can's reader.</td></tr><tr><td>Vector ASC</td><td>Through python-can's reader.</td></tr><tr><td>MDF4 <code>.mf4</code> / <code>.mdf</code></td><td>CANedge and similar. Needs <code>asammdf</code>.</td></tr><tr><td>openpilot <code>rlog</code> / <code>qlog</code></td><td>Plain, <code>.bz2</code> or <code>.zst</code>. Needs <code>canlab[openpilot]</code>; the schema ships with CanLab. Frames the panda sent itself are kept apart from the car's traffic.</td></tr></tbody></table></div>
 <p>Every parser produces the same columns, so the rest of the application does
    not care where a capture came from: <code>Timestamp, ID, Bus, DLC,
    Extended, B0..B7</code>, plus a per-ID <code>Delta</code>.</p>
@@ -80,7 +80,7 @@
 
 <h2 id="testing">Testing</h2>
 <p>The suite runs headless:</p>
-<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 673 passed</code></pre>
+<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 753 passed</code></pre>
 <p>Tests that need an optional dependency skip cleanly when it is absent: the
    MDF4 importer without <code>asammdf</code>, the transport tests without the
    MCP SDK, the Lua dissector without a Lua runtime.</p>
@@ -99,11 +99,14 @@
       paths it covers.</li>
   <li><strong>ARXML export is experimental</strong> and is not validated
       against the AUTOSAR schema.</li>
-  <li><strong>openpilot rlog import</strong> needs pycapnp plus the cereal
-      schema; without them it raises rather than producing data.</li>
-  <li><strong>MDF4</strong> needs <code>asammdf</code>. <strong>Vision
-      OCR</strong> needs opencv, rapidocr and onnxruntime, which are heavy.</li>
-  <li><strong>CAN FD</strong> parsing and decoding is partial in places.</li>
+  <li><strong>openpilot logs</strong> need pycapnp
+      (<code>canlab[openpilot]</code>); the schema ships with CanLab.</li>
+  <li><strong>MDF4</strong> needs <code>asammdf</code>.</li>
+  <li><strong>CAN FD</strong> is parsed, decoded, injected and replayed end to
+      end, but has been tested on a virtual bus, not on FD hardware.</li>
+  <li><strong>No real ECU.</strong> UDS, ISO-TP, security access and OBD-II are
+      tested against scripted responders and independent implementations, not
+      against a vehicle's modules.</li>
   <li><strong>The gateway needs two hardware channels.</strong></li>
   <li><strong>The prebuilt binary is Linux x86_64 and unsigned.</strong> No
       macOS or Windows build; run from source there.</li>
@@ -121,6 +124,12 @@
    bus reverse engineering skills</a> (MIT). The OEM checksum algorithms in
    <code>core/checksums.py</code> follow
    <a href="https://github.com/commaai/opendbc">commaai/opendbc</a> (MIT).</p>
+<p>NMEA 2000 definitions are distilled from
+   <a href="https://github.com/canboat/canboat">canboat</a> (Apache 2.0).
+   openpilot logs are read with comma.ai's cereal schema (MIT), and the
+   real-car calibration checks use comma.ai's comma2k19 segment (MIT) and a
+   drive from openpilot's public CI routes. The interoperability tests run
+   against can-isotp, udsoncan and can-j1939 (all MIT).</p>
 <p>Built on python-can, cantools, PyQt6, pandas, NumPy and pyqtgraph.</p>
 
     </main>

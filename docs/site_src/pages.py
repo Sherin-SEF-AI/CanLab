@@ -163,14 +163,10 @@ cd CanLab/
     ["MDF4 logs", "<code>pip install asammdf</code>",
      "Opening <code>.mf4</code> and <code>.mdf</code> captures from CANedge "
      "and similar loggers."],
-    ["openpilot logs", "<code>pip install pycapnp</code> plus the cereal "
-     "<code>log.capnp</code> schema",
-     "Opening <code>.rlog</code> and <code>.qlog</code>. Without both it "
-     "raises a clear error rather than guessing."],
-    ["Vision OCR",
-     "<code>pip install opencv-python rapidocr onnxruntime</code>",
-     "Reading a reference value off a dashboard video for calibration. These "
-     "are large; skip unless you need it."],
+    ["openpilot logs", "<code>pip install canlab[openpilot]</code>",
+     "Opening openpilot's <code>rlog</code> and <code>qlog</code>, plain or "
+     "compressed. The cereal schema ships with CanLab. A "
+     "<code>.zst</code> log also needs <code>zstandard</code>."],
     ["MCP server", "<code>pip install mcp</code>",
      "Exposing the analysis as tools to an MCP client."],
     ["Panda", "<code>pip install pandacan</code>",
@@ -841,6 +837,10 @@ def build_pages_4(*, h2, table, repo):
    time, and reassembly of responses.</p>
 <p>You rarely touch this directly, but it is the layer everything else rides
    on, so when a scan returns nothing this is often where the problem is.</p>
+<p>It is tested against can-isotp, an independent implementation, in both
+   directions. That test found that the first consecutive frame after each flow
+   control went out without the separation time the receiver had asked for;
+   every consecutive frame is now timed against the one before it.</p>
 
 {h2("UDS")}
 <p><code>core/uds.py</code> implements ISO 14229 requests: read diagnostic
@@ -870,22 +870,35 @@ def build_pages_4(*, h2, table, repo):
 </div>
 
 {h2("OBD-II")}
-<p><code>core/obd2_pids.py</code> holds the canonical 26-PID table with
-   correct one- and two-byte decoders. Supported-PID discovery walks the
-   continuation windows rather than assuming the first 32, so PIDs above 0x20
-   are found.</p>
+<p><code>core/obd2_pids.py</code> decodes 78 mode 01 PIDs with the SAE J1979
+   formulas. A scan first asks the vehicle which PIDs it supports, walking the
+   continuation windows rather than assuming the first 32, and then reads only
+   those. Trouble codes are read with modes 03 (stored) and 07 (pending), which
+   every OBD-II vehicle answers, and UDS service 0x19 only if they get no reply.
+   A vehicle that answers nothing is reported as silent, not as clean.</p>
 <p>This is the one protocol where you can expect an answer from any compliant
    vehicle without knowing anything about it, which makes it a good first test
    that your interface and wiring work at all.</p>
 
 {h2("J1939 and NMEA 2000")}
 <p><code>core/j1939.py</code> decodes parameter group numbers for heavy
-   vehicles, and decodes DM1 active diagnostic trouble codes into SPN, FMI, CM
-   and OC fields.</p>
+   vehicles by the SAE J1939-71 bit layouts in <code>core/j1939_db.py</code>:
+   26 PGNs and 152 parameters, 30 more PGNs named, the preferred source-address
+   table, two-bit switch states, and the error and not-available ranges, which
+   are never shown as readings. DM1 active trouble codes decode into SPN, FMI,
+   CM and OC fields.</p>
+<p>An audit of the earlier table found values read from the wrong bytes and
+   the wrong messages, among them coolant temperature from half of the
+   crankcase pressure. On the real truck log the corrected layouts agree with
+   each other: the brakes' and the engine's road speeds differ by 0.33 km/h,
+   absolute inlet pressure minus boost is the barometer, and lifetime distance
+   over fuel matches the ECU's own economy.</p>
 <p>Marine NMEA 2000 uses the same 29-bit frame, so the data page decides which
-   table applies. Single-frame NMEA 2000 PGNs such as vessel heading, rate of
-   turn, rapid position, course and speed, wind and temperature are decoded.
-   Every layout is checked in the tests against frames from a real recording.</p>
+   table applies. Hand-written decoders, checked against frames from a real
+   recording, cover heading, rate of turn, position, course and speed, wind,
+   temperature and the GNSS fix; every other standard PGN, 216 in all, is
+   decoded from a table distilled from canboat (Apache 2.0). Where both exist
+   they agree on every value on the real recording.</p>
 <p>Messages that span several frames are reassembled by
    <code>core/multiframe.py</code> before decoding: J1939 transport protocol,
    both BAM broadcasts and RTS/CTS sessions between two other nodes (observed
@@ -896,8 +909,10 @@ def build_pages_4(*, h2, table, repo):
    of 135 bytes; on the truck log, 85 BAM broadcasts of engine and retarder
    configuration with nothing dropped. The PGN scan in INTELLIGENCE shows the
    reassembled messages; <code>list_pgns</code> and
-   <code>list_transport_messages</code> serve them over MCP. RTS/CTS is tested
-   against synthetic frames, because no recording in the corpus has one.</p>
+   <code>list_transport_messages</code> serve them over MCP. No recording in
+   the corpus has an RTS/CTS session, so that path is tested against synthetic
+   frames and against two can-j1939 nodes holding a real one on a virtual
+   bus.</p>
 
 {h2("Bus load and health")}
 <p>Two monitor sub-tabs. Load shows utilisation over time. Health tracks error
@@ -1176,9 +1191,10 @@ def register(app):
     ["Vector ASC", "Through python-can's reader."],
     ["MDF4 <code>.mf4</code> / <code>.mdf</code>",
      "CANedge and similar. Needs <code>asammdf</code>."],
-    ["openpilot <code>.rlog</code> / <code>.qlog</code>",
-     "Needs pycapnp and the cereal schema. Raises a clear error if either is "
-     "missing rather than guessing."],
+    ["openpilot <code>rlog</code> / <code>qlog</code>",
+     "Plain, <code>.bz2</code> or <code>.zst</code>. Needs "
+     "<code>canlab[openpilot]</code>; the schema ships with CanLab. Frames the "
+     "panda sent itself are kept apart from the car's traffic."],
 ])}
 <p>Every parser produces the same columns, so the rest of the application does
    not care where a capture came from: <code>Timestamp, ID, Bus, DLC,
@@ -1247,7 +1263,7 @@ def register(app):
 
 {h2("Testing")}
 <p>The suite runs headless:</p>
-<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 673 passed</code></pre>
+<pre><code>QT_QPA_PLATFORM=offscreen python -m pytest -q     # 753 passed</code></pre>
 <p>Tests that need an optional dependency skip cleanly when it is absent: the
    MDF4 importer without <code>asammdf</code>, the transport tests without the
    MCP SDK, the Lua dissector without a Lua runtime.</p>
@@ -1266,11 +1282,14 @@ def register(app):
       paths it covers.</li>
   <li><strong>ARXML export is experimental</strong> and is not validated
       against the AUTOSAR schema.</li>
-  <li><strong>openpilot rlog import</strong> needs pycapnp plus the cereal
-      schema; without them it raises rather than producing data.</li>
-  <li><strong>MDF4</strong> needs <code>asammdf</code>. <strong>Vision
-      OCR</strong> needs opencv, rapidocr and onnxruntime, which are heavy.</li>
-  <li><strong>CAN FD</strong> parsing and decoding is partial in places.</li>
+  <li><strong>openpilot logs</strong> need pycapnp
+      (<code>canlab[openpilot]</code>); the schema ships with CanLab.</li>
+  <li><strong>MDF4</strong> needs <code>asammdf</code>.</li>
+  <li><strong>CAN FD</strong> is parsed, decoded, injected and replayed end to
+      end, but has been tested on a virtual bus, not on FD hardware.</li>
+  <li><strong>No real ECU.</strong> UDS, ISO-TP, security access and OBD-II are
+      tested against scripted responders and independent implementations, not
+      against a vehicle's modules.</li>
   <li><strong>The gateway needs two hardware channels.</strong></li>
   <li><strong>The prebuilt binary is Linux x86_64 and unsigned.</strong> No
       macOS or Windows build; run from source there.</li>
@@ -1288,6 +1307,12 @@ def register(app):
    bus reverse engineering skills</a> (MIT). The OEM checksum algorithms in
    <code>core/checksums.py</code> follow
    <a href="https://github.com/commaai/opendbc">commaai/opendbc</a> (MIT).</p>
+<p>NMEA 2000 definitions are distilled from
+   <a href="https://github.com/canboat/canboat">canboat</a> (Apache 2.0).
+   openpilot logs are read with comma.ai's cereal schema (MIT), and the
+   real-car calibration checks use comma.ai's comma2k19 segment (MIT) and a
+   drive from openpilot's public CI routes. The interoperability tests run
+   against can-isotp, udsoncan and can-j1939 (all MIT).</p>
 <p>Built on python-can, cantools, PyQt6, pandas, NumPy and pyqtgraph.</p>
 """))
     pages.append((
