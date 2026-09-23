@@ -51,7 +51,7 @@ canlab-cli = "canlab.cli:main"
 include = ["canlab*"]
 
 [tool.setuptools.package-data]
-canlab = ["canlab.png", "assets/*.svg", "sample_data/*.csv", "examples/capture-kit/*"]
+canlab = ["canlab.png", "assets/*.svg", "sample_data/*.csv", "examples/capture-kit/*", "core/data/*"]
 
 [tool.ruff]
 line-length = 120

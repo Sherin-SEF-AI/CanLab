@@ -61,8 +61,17 @@ MAX_TP_BYTES = 1785
 MAX_FAST_PACKET_BYTES = 223
 
 #: NMEA 2000 PGNs the name table marks as multi-frame.
-FAST_PACKET_PGNS = frozenset(pgn for pgn, (_name, single) in _N2K_NAMES.items()
-                             if not single)
+def _fast_packet_pgns() -> frozenset:
+    """Every NMEA 2000 PGN sent as a fast packet: the hand-written table's,
+    and every other standard one canboat lists, so a message is reassembled
+    whether or not CanLab can decode it."""
+    from canlab.core import n2k_db
+    hand = {pgn for pgn, (_name, single) in _N2K_NAMES.items() if not single}
+    single = {pgn for pgn, (_name, s) in _N2K_NAMES.items() if s}
+    return frozenset(hand | (n2k_db.fast_packet_pgns() - single))
+
+
+FAST_PACKET_PGNS = _fast_packet_pgns()
 
 
 @dataclass
@@ -476,7 +485,7 @@ def summarize(messages) -> list[dict]:
             "bytes": last.size, "frames": last.frames,
             "first_t": items[0].t_start, "last_t": last.t_end,
             "last_data_hex": last.data.hex(" ").upper(),
-            "decoded": decode_pgn(pgn, last.data),
+            "decoded": decode_pgn(pgn, last.data, reassembled=True),
         })
     rows.sort(key=lambda r: (-r["count"], r["pgn"], r["sa"]))
     return rows
