@@ -99,6 +99,11 @@ INTERFACES: dict[str, InterfaceInfo] = {i.key: i for i in [
                         "to crash the device, so CanLab does not set it. Opening "
                         "this adapter means its controller acknowledges frames."),
     InterfaceInfo("neovi", "Intrepid neoVI / ValueCAN", "1", "index", requires="python-ics"),
+    InterfaceInfo("cansub", "CSS Electronics CANsub (USB or Ethernet)", "aabbccdd-usb.local@1", "name",
+                  requires="python-can-cansub", fd=True,
+                  notes="Channel is the device hostname or IP address and the CAN channel, e.g.\n"
+                        "<id>-usb.local@1 or <id>-eth.local@2 (ID on the device label). "
+                        "Detect finds it via mDNS."),
     InterfaceInfo("socketcand", "socketcand (a remote SocketCAN over TCP)", "can0", "host",
                   extra=(("host", "Host", "192.168.1.10"), ("port", "Port", 29536))),
     InterfaceInfo("udp_multicast", "UDP multicast (virtual bus across machines)",
@@ -310,6 +315,7 @@ _HINTS = (
     ("No module named 'gs_usb'", "pip install gs_usb (and libusb)"),
     ("No module named 'canalystii'", "pip install canalystii"),
     ("No module named 'ics'", "pip install python-ics"),
+    ('Unknown interface type "cansub"', "pip install python-can-cansub (Python 3.12 or newer)"),
     ("Permission denied", "on Linux add your user to the dialout group, then log in again"),
     # Reported from a bench: two tools, one adapter. libusb answers with a bare
     # errno and no explanation of who is holding the device.

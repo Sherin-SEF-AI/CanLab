@@ -16,7 +16,7 @@ from canlab.ui.widgets import set_status
 
 _DIR_OPTIONS    = ["A→B", "B→A", "Both"]
 _ACTION_OPTIONS = ["Pass", "Block", "Modify"]
-_IFACE_OPTIONS  = ["socketcan", "pcan", "kvaser", "virtual", "usb2can", "serial"]
+_IFACE_OPTIONS  = ["socketcan", "pcan", "kvaser", "cansub", "virtual", "usb2can", "serial"]
 
 
 class GatewayTab(QWidget):
