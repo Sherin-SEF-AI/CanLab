@@ -47,7 +47,8 @@ def test_every_python_can_backend_has_an_entry():
     # name through the dialog's backend list.
     for common in ("socketcan", "slcan", "gs_usb", "pcan", "kvaser", "vector", "virtual"):
         assert common in listed and common in VALID_INTERFACES
-    assert listed <= set(VALID_INTERFACES)
+    # cansub is a python-can plugin, installed with canlab[adapters] on Python 3.12 or newer
+    assert listed - {"cansub"} <= set(VALID_INTERFACES)
 
 
 # ── detecting ────────────────────────────────────────────────────────────────

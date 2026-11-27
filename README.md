@@ -626,12 +626,12 @@ comes with the fix (the `ip link` command, the pip package, the dialout group).
 
 Every backend python-can ships is selectable: SocketCAN, slcan, gs_usb, PCAN,
 Kvaser, Vector, IXXAT, USB2CAN, Seeed, Robotell, serial, CANalyst-II, neoVI,
-socketcand, UDP multicast and virtual, plus **GVRET**, which CanLab adds
+CSS Electronics CANsub, socketcand, UDP multicast and virtual, plus **GVRET**, which CanLab adds
 itself. GVRET is what SavvyCAN's own hardware runs, so a Macchina M2 or A0, an
 EVTV CANDue or an ESP32RET board works here too; give it a serial port, or
 `<ip>:23` for a board on WiFi. The dialog shows what each one expects
 as a channel and which driver or package it needs. `pip install canlab[adapters]`
-adds pyserial (slcan) and gs_usb; vendor drivers (PCAN-Basic, CANlib, XL) come
+adds pyserial (slcan), gs_usb and python-can-cansub (CANsub, Python 3.12+); vendor drivers (PCAN-Basic, CANlib, XL) come
 from the vendor. Detection and the adapter model are tested against stand-ins
 for the probes; opening is tested for real on python-can's virtual bus.
 

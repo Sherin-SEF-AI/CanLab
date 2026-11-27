@@ -3,7 +3,7 @@
 
 import sys
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metadata
 
 ROOT = Path("canlab")
 
@@ -19,6 +19,13 @@ try:
 except Exception:
     capnp_datas, capnp_binaries, capnp_hiddenimports = [], [], []
 
+# python-can-cansub (CSS Electronics CANsub) is a python-can plugin: python-can finds it through its
+# entry point, so its package metadata is bundled along with the module when it is installed.
+try:
+    cansub_datas, cansub_hiddenimports = copy_metadata("python-can-cansub"), ["python_can_cansub.cansub"]
+except Exception:
+    cansub_datas, cansub_hiddenimports = [], []
+
 a = Analysis(
     [str(ROOT / "main.py")],
     pathex=["."],
@@ -31,6 +38,7 @@ a = Analysis(
         (str(ROOT / "core" / "data"),          "canlab/core/data"   ),
         *pil_datas,
         *capnp_datas,
+        *cansub_datas,
     ],
     hiddenimports=[
         *collect_submodules("canlab"),
@@ -72,6 +80,7 @@ a = Analysis(
         "anthropic", "anthropic.types", "anthropic._models",
         *pil_hiddenimports,
         *capnp_hiddenimports,
+        *cansub_hiddenimports,
     ],
     excludes=[
         "tkinter",

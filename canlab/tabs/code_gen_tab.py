@@ -98,7 +98,7 @@ class CodeGenTab(QWidget):
         grp_iface = QGroupBox("INTERFACE")
         grp_i_lay = QVBoxLayout(grp_iface)
         self.iface_combo = QComboBox()
-        self.iface_combo.addItems(["socketcan", "pcan", "kvaser", "virtual"])
+        self.iface_combo.addItems(["socketcan", "pcan", "kvaser", "cansub", "virtual"])
         grp_i_lay.addWidget(self.iface_combo)
         self.channel_edit = QLineEdit("can0")
         grp_i_lay.addWidget(QLabel("Channel:"))

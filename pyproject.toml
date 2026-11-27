@@ -33,8 +33,8 @@ rest = ["fastapi==0.139.0", "uvicorn==0.51.0", "pydantic==2.13.4"]
 mcp = ["mcp==1.28.1"]
 # openpilot rlog/qlog import; the schema ships with CanLab
 openpilot = ["pycapnp==2.2.4"]
-# Serial (slcan) and candleLight (gs_usb) adapters; the other backends need vendor drivers.
-adapters = ["pyserial==3.5", "gs_usb==0.3.1"]
+# Serial (slcan), candleLight (gs_usb) and CSS Electronics CANsub adapters; the other backends need vendor drivers.
+adapters = ["pyserial==3.5", "gs_usb==0.3.1", "python-can-cansub==2026.9.28; python_version >= '3.12'"]
 dev = ["pytest==9.1.1", "ruff==0.16.7", "httpx==0.28.1", "pyinstaller", "lupa",
        # independent implementations the transmit side is tested against
        "can-isotp==2.0.7", "udsoncan==1.26.1", "can-j1939==2.0.12", "msgpack"]
